@@ -1,0 +1,28 @@
+# Rust build output
+/target/
+
+# Rust backup files
+**/*.rs.bk
+
+# OS files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor / IDE local state
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local env / logs
+.env
+.env.*
+*.log
+
+# Test / profiling artifacts
+*.profraw
+*.profdata
+coverage/
+tarpaulin-report.html
