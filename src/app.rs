@@ -1,50 +1,33 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use egui::{Color32, ViewportId};
-use egui_wgpu::{Renderer as EguiRenderer, RendererOptions, ScreenDescriptor};
-use egui_winit::State as EguiWinitState;
+use egui_wgpu::ScreenDescriptor;
 use winit::{
     application::ApplicationHandler,
-    event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
-    event_loop::{ActiveEventLoop, EventLoop},
-    keyboard::{KeyCode, PhysicalKey},
+    event::{StartCause, WindowEvent},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowAttributes},
 };
 
 use crate::{
+    constants::WINDOW_TITLE,
+    input::PaintInputController,
     macos_pressure::{MacosPressureMonitor, PressureStateHandle},
-    renderer::{PaintRenderer, StrokePoint},
+    renderer::PaintRenderer,
+    ui::{self, GuiLayer, PanelSnapshot},
 };
-
-const WINDOW_TITLE: &str = "minipaint-rs";
-const DEFAULT_BRUSH_SIZE: f32 = 300.0;
-const MIN_BRUSH_SIZE: f32 = 1.0;
-const MAX_BRUSH_SIZE: f32 = 2000.0;
-const MIN_PRESSURE_SIZE: f32 = 0.45;
-const MIN_PRESSURE_OPACITY: f32 = 0.08;
-const PRESSURE_OPACITY_GAMMA: f32 = 1.35;
-
-struct GuiState {
-    context: egui::Context,
-    state: EguiWinitState,
-    renderer: EguiRenderer,
-    brush_color: Color32,
-    brush_size: f32,
-}
 
 pub struct App {
     window: Option<Arc<Window>>,
     paint: Option<PaintRenderer>,
-    gui: Option<GuiState>,
+    gui: Option<GuiLayer>,
+    input: PaintInputController,
     pressure_state: PressureStateHandle,
     _pressure_monitor: Option<MacosPressureMonitor>,
-    cursor_pos: [f32; 2],
-    is_drawing: bool,
-    is_panning: bool,
-    is_space_down: bool,
-    last_point: Option<StrokePoint>,
-    last_pan_pos: [f32; 2],
     last_frame: Instant,
+    next_repaint: Option<Instant>,
     frame_ms: f32,
     fps: f32,
 }
@@ -55,15 +38,11 @@ impl Default for App {
             window: None,
             paint: None,
             gui: None,
+            input: PaintInputController::default(),
             pressure_state: PressureStateHandle::default(),
             _pressure_monitor: None,
-            cursor_pos: [0.0, 0.0],
-            is_drawing: false,
-            is_panning: false,
-            is_space_down: false,
-            last_point: None,
-            last_pan_pos: [0.0, 0.0],
             last_frame: Instant::now(),
+            next_repaint: None,
             frame_ms: 0.0,
             fps: 0.0,
         }
@@ -93,32 +72,13 @@ impl ApplicationHandler for App {
                 .expect("failed to initialize pressure monitor");
         let paint = pollster::block_on(PaintRenderer::new(window.clone()))
             .expect("failed to initialize wgpu paint renderer");
-        let egui_context = egui::Context::default();
-        let egui_state = EguiWinitState::new(
-            egui_context.clone(),
-            ViewportId::ROOT,
-            window.as_ref(),
-            Some(window.scale_factor() as f32),
-            window.theme(),
-            Some(paint.device().limits().max_texture_dimension_2d as usize),
-        );
-        let egui_renderer = EguiRenderer::new(
-            paint.device(),
-            paint.surface_format(),
-            RendererOptions::default(),
-        );
+        let gui = GuiLayer::new(window.as_ref(), &paint);
 
         self.window = Some(window.clone());
         self.paint = Some(paint);
+        self.gui = Some(gui);
         self.pressure_state = pressure_state;
         self._pressure_monitor = pressure_monitor;
-        self.gui = Some(GuiState {
-            context: egui_context,
-            state: egui_state,
-            renderer: egui_renderer,
-            brush_color: Color32::from_rgb(170, 187, 204),
-            brush_size: DEFAULT_BRUSH_SIZE,
-        });
         self.last_frame = Instant::now();
         window.request_redraw();
     }
@@ -136,147 +96,66 @@ impl ApplicationHandler for App {
             return;
         }
 
-        let Some(gui) = self.gui.as_mut() else {
-            return;
-        };
-        let egui_response = gui.state.on_window_event(window.as_ref(), &event);
-        if egui_response.repaint {
-            window.request_redraw();
-        }
-
-        if !egui_response.consumed {
-            self.handle_paint_input(&event);
-        }
-
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => {
-                if let Some(paint) = self.paint.as_mut() {
-                    paint.resize(size);
+            WindowEvent::RedrawRequested => self.render(window.as_ref()),
+            event => {
+                let Some(gui) = self.gui.as_mut() else {
+                    return;
+                };
+                let egui_response = gui.state.on_window_event(window.as_ref(), &event);
+                let mut needs_redraw = egui_response.repaint;
+                let egui_consumed = egui_response.consumed;
+
+                if !egui_consumed {
+                    if let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_ref()) {
+                        needs_redraw |= self.input.handle_event(
+                            &event,
+                            paint,
+                            gui.brush,
+                            &self.pressure_state,
+                        );
+                    }
                 }
-                window.request_redraw();
-            }
-            WindowEvent::ScaleFactorChanged { .. } => {
-                if let Some(paint) = self.paint.as_mut() {
-                    paint.resize(window.inner_size());
+
+                match event {
+                    WindowEvent::Resized(size) => {
+                        if let Some(paint) = self.paint.as_mut() {
+                            paint.resize(size);
+                        }
+                        needs_redraw = true;
+                    }
+                    WindowEvent::ScaleFactorChanged { .. } => {
+                        if let Some(paint) = self.paint.as_mut() {
+                            paint.resize(window.inner_size());
+                        }
+                        needs_redraw = true;
+                    }
+                    _ => {}
                 }
-                window.request_redraw();
+
+                if needs_redraw {
+                    self.next_repaint = None;
+                    window.request_redraw();
+                }
             }
-            WindowEvent::RedrawRequested => {
-                self.render(window.as_ref());
-                window.request_redraw();
-            }
-            _ => {}
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(window) = self.window.as_ref() {
-            window.request_redraw();
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
+        if matches!(cause, StartCause::ResumeTimeReached { .. }) && self.next_repaint.is_some() {
+            self.request_scheduled_redraw(event_loop);
         }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.update_control_flow(event_loop);
     }
 }
 
 impl App {
-    fn handle_paint_input(&mut self, event: &WindowEvent) {
-        let Some(paint) = self.paint.as_mut() else {
-            return;
-        };
-        let Some(gui) = self.gui.as_ref() else {
-            return;
-        };
-        let pressure_state = self.pressure_state.clone();
-
-        match event {
-            WindowEvent::CursorMoved { position, .. } => {
-                let next = [position.x as f32, position.y as f32];
-                self.cursor_pos = next;
-
-                if self.is_panning {
-                    paint.pan_by_window_delta([
-                        next[0] - self.last_pan_pos[0],
-                        next[1] - self.last_pan_pos[1],
-                    ]);
-                    self.last_pan_pos = next;
-                    return;
-                }
-
-                if self.is_drawing {
-                    let point =
-                        stroke_point_from_window(paint, next, gui.brush_size, &pressure_state);
-                    if let Some(previous) = self.last_point {
-                        paint.stamp_line(previous, point, color32_to_rgba(gui.brush_color));
-                    }
-                    self.last_point = Some(point);
-                }
-            }
-            WindowEvent::MouseInput { state, button, .. } => match (state, button) {
-                (ElementState::Pressed, MouseButton::Left) if self.is_space_down => {
-                    self.is_panning = true;
-                    self.last_pan_pos = self.cursor_pos;
-                }
-                (ElementState::Pressed, MouseButton::Left) => {
-                    let point = stroke_point_from_window(
-                        paint,
-                        self.cursor_pos,
-                        gui.brush_size,
-                        &pressure_state,
-                    );
-                    self.is_drawing = true;
-                    self.last_point = Some(point);
-                    paint.begin_stroke();
-                    paint.queue_stamp(point, color32_to_rgba(gui.brush_color));
-                }
-                (ElementState::Pressed, MouseButton::Middle | MouseButton::Right) => {
-                    self.is_panning = true;
-                    self.last_pan_pos = self.cursor_pos;
-                }
-                (ElementState::Released, _) => {
-                    if self.is_drawing {
-                        paint.end_stroke();
-                    }
-                    self.is_drawing = false;
-                    self.is_panning = false;
-                    self.last_point = None;
-                }
-                _ => {}
-            },
-            WindowEvent::MouseWheel { delta, .. } => {
-                let scroll = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => *y,
-                    MouseScrollDelta::PixelDelta(pos) => -(pos.y as f32) / 120.0,
-                };
-                if scroll != 0.0 {
-                    let factor = if scroll > 0.0 { 1.1 } else { 0.9 };
-                    paint.apply_zoom_at(factor, self.cursor_pos);
-                }
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                if event.physical_key == PhysicalKey::Code(KeyCode::Space) {
-                    self.is_space_down = event.state == ElementState::Pressed;
-                    if !self.is_space_down {
-                        self.is_panning = false;
-                    }
-                }
-            }
-            WindowEvent::CursorLeft { .. } => {
-                if self.is_drawing {
-                    paint.end_stroke();
-                }
-                self.is_drawing = false;
-                self.is_panning = false;
-                self.last_point = None;
-            }
-            _ => {}
-        }
-    }
-
     fn render(&mut self, window: &Window) {
-        let now = Instant::now();
-        let dt = now.duration_since(self.last_frame).as_secs_f32();
-        self.last_frame = now;
-        self.frame_ms = dt * 1000.0;
-        self.fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
+        self.update_frame_timing();
 
         let Some(paint) = self.paint.as_mut() else {
             return;
@@ -288,65 +167,28 @@ impl App {
             return;
         }
 
-        let raw_input = gui.state.take_egui_input(window);
-        let stats_before = paint.stats();
-        let document_size = paint.document_size();
-        let zoom = paint.zoom();
-        let offset = paint.offset();
-        let frame_ms = self.frame_ms;
-        let fps = self.fps;
-        let pressure = self.pressure_state.brush_pressure();
-        let pen_active = self.pressure_state.is_pen_active();
-        let full_output = gui.context.run_ui(raw_input, |ui| {
-            egui::Window::new("minipaint-rs")
-                .default_pos([12.0, 12.0])
-                .default_width(260.0)
-                .show(ui.ctx(), |ui| {
-                    ui.label("Minimal wgpu brush performance port");
-                    ui.separator();
-                    ui.add(
-                        egui::Slider::new(&mut gui.brush_size, MIN_BRUSH_SIZE..=MAX_BRUSH_SIZE)
-                            .text("Brush size")
-                            .suffix(" px"),
-                    );
-                    egui::color_picker::color_picker_color32(
-                        ui,
-                        &mut gui.brush_color,
-                        egui::color_picker::Alpha::Opaque,
-                    );
-                    ui.horizontal(|ui| {
-                        if ui.button("Clear").clicked() {
-                            paint.clear_canvas();
-                        }
-                        if ui.button("Fit").clicked() {
-                            paint.fit_to_screen();
-                        }
-                        if ui.button("100%").clicked() {
-                            paint.zoom_to_100();
-                        }
-                    });
-                    ui.separator();
-                    ui.label(format!(
-                        "Canvas: {} × {}",
-                        document_size[0], document_size[1]
-                    ));
-                    ui.label(format!("Zoom: {:.1}%", zoom * 100.0));
-                    ui.label(format!("Offset: {:.0}, {:.0}", offset[0], offset[1]));
-                    ui.label(format!(
-                        "Pressure: {} {:.0}%",
-                        if pen_active { "pen" } else { "mouse/fallback" },
-                        pressure * 100.0,
-                    ));
-                    ui.label(format!("Frame: {:.2} ms ({:.0} FPS)", frame_ms, fps));
-                    ui.label(format!("Stamps/frame: {}", stats_before.stamps_last_frame));
-                    ui.label(format!("Pending stamps: {}", stats_before.pending_stamps));
-                    ui.label(format!("Total stamps: {}", stats_before.total_stamps));
-                    ui.separator();
-                    ui.small(
-                        "Paint: left drag · Pan: middle/right drag or Space+left · Zoom: wheel",
-                    );
-                });
-        });
+        let snapshot = PanelSnapshot {
+            document_size: paint.document_size(),
+            zoom: paint.zoom(),
+            offset: paint.offset(),
+            pressure: self.pressure_state.brush_pressure(),
+            pen_active: self.pressure_state.is_pen_active(),
+            frame_ms: self.frame_ms,
+            fps: self.fps,
+            stats: paint.stats(),
+        };
+        let (full_output, actions) = gui.run_panel(window, snapshot);
+        if actions.clear {
+            paint.clear_canvas();
+        }
+        if actions.fit {
+            paint.fit_to_screen();
+        }
+        if actions.zoom_100 {
+            paint.zoom_to_100();
+        }
+
+        let repaint_delay = ui::repaint_delay(&full_output);
         gui.state
             .handle_platform_output(window, full_output.platform_output);
 
@@ -379,6 +221,7 @@ impl App {
             });
 
         paint.render_to_view(&mut encoder, &view);
+        let canvas_needs_redraw = paint.has_pending_stamps();
 
         let screen_descriptor = ScreenDescriptor {
             size_in_pixels: paint.surface_size(),
@@ -423,43 +266,54 @@ impl App {
         for id in &full_output.textures_delta.free {
             gui.renderer.free_texture(id);
         }
+
+        self.update_repaint_schedule(repaint_delay, window, canvas_needs_redraw);
     }
-}
 
-fn stroke_point_from_window(
-    paint: &PaintRenderer,
-    window_point: [f32; 2],
-    brush_size: f32,
-    pressure_state: &PressureStateHandle,
-) -> StrokePoint {
-    let doc = paint.window_to_document(window_point);
-    let pressure = pressure_state.brush_pressure();
-    StrokePoint {
-        x: doc[0],
-        y: doc[1],
-        radius: pressure_radius(brush_size, pressure),
-        opacity: pressure_opacity(pressure),
+    fn update_frame_timing(&mut self) {
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_frame).as_secs_f32();
+        self.last_frame = now;
+        self.frame_ms = dt * 1000.0;
+        self.fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
     }
-}
 
-fn pressure_radius(brush_size: f32, pressure: f32) -> f32 {
-    let pressure = pressure.clamp(0.0, 1.0);
-    let pressure_scale = MIN_PRESSURE_SIZE + (1.0 - MIN_PRESSURE_SIZE) * pressure;
-    brush_size * pressure_scale * 0.5
-}
+    fn update_repaint_schedule(
+        &mut self,
+        repaint_delay: Duration,
+        window: &Window,
+        force_immediate: bool,
+    ) {
+        if force_immediate || repaint_delay.is_zero() {
+            self.next_repaint = None;
+            window.request_redraw();
+        } else if repaint_delay == Duration::MAX {
+            self.next_repaint = None;
+        } else {
+            self.next_repaint = Instant::now().checked_add(repaint_delay);
+        }
+    }
 
-fn pressure_opacity(pressure: f32) -> f32 {
-    let pressure = pressure.clamp(0.0, 1.0);
-    MIN_PRESSURE_OPACITY + (1.0 - MIN_PRESSURE_OPACITY) * pressure.powf(PRESSURE_OPACITY_GAMMA)
-}
+    fn request_scheduled_redraw(&mut self, event_loop: &ActiveEventLoop) {
+        self.next_repaint = None;
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+        event_loop.set_control_flow(ControlFlow::Wait);
+    }
 
-fn color32_to_rgba(color: Color32) -> [f32; 4] {
-    [
-        color.r() as f32 / 255.0,
-        color.g() as f32 / 255.0,
-        color.b() as f32 / 255.0,
-        1.0,
-    ]
+    fn update_control_flow(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(next_repaint) = self.next_repaint else {
+            event_loop.set_control_flow(ControlFlow::Wait);
+            return;
+        };
+
+        if next_repaint <= Instant::now() {
+            self.request_scheduled_redraw(event_loop);
+        } else {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(next_repaint));
+        }
+    }
 }
 
 pub fn run() {

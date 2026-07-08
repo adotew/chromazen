@@ -1,27 +1,20 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
-pub const DEFAULT_CANVAS_WIDTH: u32 = 4000;
-pub const DEFAULT_CANVAS_HEIGHT: u32 = 4000;
-const MIN_ZOOM: f32 = 0.01;
-const MAX_ZOOM: f32 = 32.0;
-const MAX_STAMPS_PER_FRAME: usize = 1024;
-const MIN_STAMP_SPACING: f32 = 1.0;
-const STAMP_SPACING_RATIO: f32 = 0.25;
-const BRUSH_STAMP_ASPECT: f32 = 1.0;
-const DOCUMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+mod stamps;
+mod view;
 
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct StampRaw {
-    center: [f32; 2],
-    half_size: [f32; 2],
-    color: [f32; 4],
-    bounds: [f32; 4],
-}
+pub use crate::brush::StrokePoint;
+use crate::constants::{DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH};
+use self::{
+    stamps::{MAX_STAMPS_PER_FRAME, StampQueue, StampRaw},
+    view::PaintView,
+};
+
+const DOCUMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -37,106 +30,6 @@ struct ViewUniform {
     offset: [f32; 2],
     paint_dims: [f32; 2],
     padding: [f32; 2],
-}
-
-#[derive(Clone, Copy)]
-struct Stamp {
-    x: f32,
-    y: f32,
-    radius: f32,
-    rgba: [f32; 4],
-}
-
-#[derive(Default)]
-struct StampQueue {
-    pending: VecDeque<Stamp>,
-    distance_since_last_stamp: f32,
-}
-
-impl StampQueue {
-    fn clear(&mut self) {
-        self.pending.clear();
-        self.distance_since_last_stamp = 0.0;
-    }
-
-    fn queue_stamp(&mut self, stamp: Stamp, width: u32, height: u32) -> bool {
-        let bounds = get_stamp_bounds(stamp.x, stamp.y, stamp.radius, width, height);
-        if stamp.x + bounds.half_width < 0.0
-            || stamp.y + bounds.half_height < 0.0
-            || stamp.x - bounds.half_width >= width as f32
-            || stamp.y - bounds.half_height >= height as f32
-            || bounds.max_x < bounds.min_x
-            || bounds.max_y < bounds.min_y
-        {
-            return false;
-        }
-
-        self.pending.push_back(stamp);
-        true
-    }
-
-    fn stamp_line(
-        &mut self,
-        from: StrokePoint,
-        to: StrokePoint,
-        rgba: [f32; 4],
-        width: u32,
-        height: u32,
-    ) -> usize {
-        let dx = to.x - from.x;
-        let dy = to.y - from.y;
-        let dist = dx.hypot(dy);
-        if dist == 0.0 {
-            return 0;
-        }
-
-        let mut queued = 0;
-        let mut travelled = 0.0;
-        while travelled < dist {
-            let spacing_t = travelled / dist;
-            let spacing_radius = lerp(from.radius, to.radius, spacing_t);
-            let spacing = get_stamp_spacing(spacing_radius);
-            let distance_to_next_stamp = (spacing - self.distance_since_last_stamp).max(0.0);
-            let remaining_distance = dist - travelled;
-
-            if distance_to_next_stamp > remaining_distance {
-                self.distance_since_last_stamp += remaining_distance;
-                return queued;
-            }
-
-            travelled += distance_to_next_stamp;
-            let t = travelled / dist;
-            let radius = lerp(from.radius, to.radius, t);
-            let opacity = lerp(from.opacity, to.opacity, t);
-            let x = from.x + dx * t;
-            let y = from.y + dy * t;
-            let mut color = rgba;
-            color[3] = opacity;
-            if self.queue_stamp(
-                Stamp {
-                    x,
-                    y,
-                    radius,
-                    rgba: color,
-                },
-                width,
-                height,
-            ) {
-                queued += 1;
-            }
-            self.distance_since_last_stamp = 0.0;
-        }
-
-        queued
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct StrokePoint {
-    pub x: f32,
-    pub y: f32,
-    pub radius: f32,
-    pub opacity: f32,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -162,8 +55,7 @@ pub struct PaintRenderer {
     stamp_pipeline: wgpu::RenderPipeline,
     blit_pipeline: wgpu::RenderPipeline,
     stamp_queue: StampQueue,
-    zoom: f32,
-    offset: [f32; 2],
+    view: PaintView,
     stats: PaintStats,
 }
 
@@ -509,8 +401,7 @@ impl PaintRenderer {
             stamp_pipeline,
             blit_pipeline,
             stamp_queue: StampQueue::default(),
-            zoom: 1.0,
-            offset: [0.0, 0.0],
+            view: PaintView::default(),
             stats: PaintStats::default(),
         };
         renderer.fit_to_screen();
@@ -534,13 +425,17 @@ impl PaintRenderer {
         self.document_size
     }
     pub fn zoom(&self) -> f32 {
-        self.zoom
+        self.view.zoom()
     }
     pub fn offset(&self) -> [f32; 2] {
-        self.offset
+        self.view.offset()
     }
     pub fn stats(&self) -> PaintStats {
         self.stats
+    }
+
+    pub fn has_pending_stamps(&self) -> bool {
+        self.stamp_queue.has_pending()
     }
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
@@ -553,64 +448,37 @@ impl PaintRenderer {
     }
 
     pub fn fit_to_screen(&mut self) {
-        let zoom = (self.config.width as f32 / self.document_size[0] as f32)
-            .min(self.config.height as f32 / self.document_size[1] as f32)
-            .clamp(MIN_ZOOM, MAX_ZOOM);
-        self.zoom = zoom;
-        let visible_width = self.config.width as f32 / zoom;
-        let visible_height = self.config.height as f32 / zoom;
-        self.offset = [
-            (self.document_size[0] as f32 - visible_width) * 0.5,
-            (self.document_size[1] as f32 - visible_height) * 0.5,
-        ];
+        self.view.fit_to_screen(self.surface_size(), self.document_size);
     }
 
     pub fn zoom_to_100(&mut self) {
-        self.zoom = 1.0;
-        self.offset = [0.0, 0.0];
+        self.view.zoom_to_100();
     }
 
     pub fn apply_zoom_at(&mut self, factor: f32, cursor: [f32; 2]) {
-        let old = self.zoom;
-        let new = (old * factor).clamp(MIN_ZOOM, MAX_ZOOM);
-        if (new - old).abs() <= f32::EPSILON {
-            return;
-        }
-        self.zoom = new;
-        self.offset[0] += cursor[0] * (1.0 / old - 1.0 / new);
-        self.offset[1] += cursor[1] * (1.0 / old - 1.0 / new);
+        self.view.apply_zoom_at(factor, cursor);
     }
 
     pub fn pan_by_window_delta(&mut self, delta: [f32; 2]) {
-        self.offset[0] -= delta[0] / self.zoom;
-        self.offset[1] -= delta[1] / self.zoom;
+        self.view.pan_by_window_delta(delta);
     }
 
     pub fn window_to_document(&self, point: [f32; 2]) -> [f32; 2] {
-        [
-            point[0] / self.zoom + self.offset[0],
-            point[1] / self.zoom + self.offset[1],
-        ]
+        self.view.window_to_document(point)
     }
 
     pub fn begin_stroke(&mut self) {
-        self.stamp_queue.distance_since_last_stamp = 0.0;
+        self.stamp_queue.reset_spacing();
     }
 
     pub fn end_stroke(&mut self) {
-        self.stamp_queue.distance_since_last_stamp = 0.0;
+        self.stamp_queue.reset_spacing();
     }
 
     pub fn queue_stamp(&mut self, point: StrokePoint, color: [f32; 4]) -> bool {
-        let mut rgba = color;
-        rgba[3] = point.opacity;
-        self.stamp_queue.queue_stamp(
-            Stamp {
-                x: point.x,
-                y: point.y,
-                radius: point.radius,
-                rgba,
-            },
+        self.stamp_queue.queue_point(
+            point,
+            color,
             self.document_size[0],
             self.document_size[1],
         )
@@ -667,7 +535,7 @@ impl PaintRenderer {
         self.stats.stamps_last_frame = 0;
         let count = self.flush_stamps(encoder);
         self.stats.stamps_last_frame = count;
-        self.stats.pending_stamps = self.stamp_queue.pending.len();
+        self.stats.pending_stamps = self.stamp_queue.pending_len();
         self.stats.total_stamps += count as u64;
         self.write_view_uniform();
 
@@ -698,20 +566,16 @@ impl PaintRenderer {
     }
 
     fn flush_stamps(&mut self, encoder: &mut wgpu::CommandEncoder) -> usize {
-        let count = self.stamp_queue.pending.len().min(MAX_STAMPS_PER_FRAME);
+        let raw = self.stamp_queue.drain_raw(
+            self.document_size[0],
+            self.document_size[1],
+            MAX_STAMPS_PER_FRAME,
+        );
+        let count = raw.len();
         if count == 0 {
             return 0;
         }
 
-        let mut raw = Vec::with_capacity(count);
-        for _ in 0..count {
-            let stamp = self.stamp_queue.pending.pop_front().expect("count checked");
-            raw.push(stamp_to_raw(
-                stamp,
-                self.document_size[0],
-                self.document_size[1],
-            ));
-        }
         self.queue
             .write_buffer(&self.stamp_buffer, 0, bytemuck::cast_slice(&raw));
 
@@ -742,8 +606,8 @@ impl PaintRenderer {
             &self.view_uniform_buffer,
             0,
             bytemuck::bytes_of(&ViewUniform {
-                scale: [1.0 / self.zoom, 1.0 / self.zoom],
-                offset: self.offset,
+                scale: [1.0 / self.view.zoom(), 1.0 / self.view.zoom()],
+                offset: self.view.offset(),
                 paint_dims: [self.document_size[0] as f32, self.document_size[1] as f32],
                 padding: [0.0, 0.0],
             }),
@@ -775,58 +639,3 @@ fn create_paint_texture(
     (texture, view)
 }
 
-fn stamp_to_raw(stamp: Stamp, width: u32, height: u32) -> StampRaw {
-    let bounds = get_stamp_bounds(stamp.x, stamp.y, stamp.radius, width, height);
-    StampRaw {
-        center: [stamp.x, stamp.y],
-        half_size: [bounds.half_width, bounds.half_height],
-        color: stamp.rgba,
-        bounds: [
-            bounds.min_x as f32,
-            bounds.min_y as f32,
-            bounds.max_x as f32,
-            bounds.max_y as f32,
-        ],
-    }
-}
-
-struct StampBounds {
-    min_x: i32,
-    max_x: i32,
-    min_y: i32,
-    max_y: i32,
-    half_width: f32,
-    half_height: f32,
-}
-
-fn get_stamp_half_size(radius: f32) -> (f32, f32) {
-    if BRUSH_STAMP_ASPECT >= 1.0 {
-        (radius, radius / BRUSH_STAMP_ASPECT)
-    } else {
-        (radius * BRUSH_STAMP_ASPECT, radius)
-    }
-}
-
-fn get_stamp_bounds(x: f32, y: f32, radius: f32, width: u32, height: u32) -> StampBounds {
-    let (half_width, half_height) = get_stamp_half_size(radius);
-    let min_x = 0.max((x - half_width).floor() as i32);
-    let max_x = (width as i32 - 1).min((x + half_width).ceil() as i32);
-    let min_y = 0.max((y - half_height).floor() as i32);
-    let max_y = (height as i32 - 1).min((y + half_height).ceil() as i32);
-    StampBounds {
-        min_x,
-        max_x,
-        min_y,
-        max_y,
-        half_width,
-        half_height,
-    }
-}
-
-fn get_stamp_spacing(radius: f32) -> f32 {
-    MIN_STAMP_SPACING.max(radius * STAMP_SPACING_RATIO)
-}
-
-fn lerp(a: f32, b: f32, t: f32) -> f32 {
-    a + (b - a) * t
-}
