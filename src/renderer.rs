@@ -75,7 +75,14 @@ impl StampQueue {
         true
     }
 
-    fn stamp_line(&mut self, from: StrokePoint, to: StrokePoint, rgba: [f32; 4], width: u32, height: u32) -> usize {
+    fn stamp_line(
+        &mut self,
+        from: StrokePoint,
+        to: StrokePoint,
+        rgba: [f32; 4],
+        width: u32,
+        height: u32,
+    ) -> usize {
         let dx = to.x - from.x;
         let dy = to.y - from.y;
         let dist = dx.hypot(dy);
@@ -105,7 +112,16 @@ impl StampQueue {
             let y = from.y + dy * t;
             let mut color = rgba;
             color[3] = opacity;
-            if self.queue_stamp(Stamp { x, y, radius, rgba: color }, width, height) {
+            if self.queue_stamp(
+                Stamp {
+                    x,
+                    y,
+                    radius,
+                    rgba: color,
+                },
+                width,
+                height,
+            ) {
                 queued += 1;
             }
             self.distance_since_last_stamp = 0.0;
@@ -221,13 +237,18 @@ impl PaintRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let brush_image = image::load_from_memory(include_bytes!("../assets/charcoal-removebg-preview.png"))
-            .map_err(|err| format!("failed to load brush stamp: {err}"))?
-            .to_rgba8();
+        let brush_image =
+            image::load_from_memory(include_bytes!("../assets/charcoal-removebg-preview.png"))
+                .map_err(|err| format!("failed to load brush stamp: {err}"))?
+                .to_rgba8();
         let brush_size = brush_image.dimensions();
         let brush_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("brush stamp texture"),
-            size: wgpu::Extent3d { width: brush_size.0, height: brush_size.1, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: brush_size.0,
+                height: brush_size.1,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -248,7 +269,11 @@ impl PaintRenderer {
                 bytes_per_row: Some(4 * brush_size.0),
                 rows_per_image: Some(brush_size.1),
             },
-            wgpu::Extent3d { width: brush_size.0, height: brush_size.1, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: brush_size.0,
+                height: brush_size.1,
+                depth_or_array_layers: 1,
+            },
         );
         let brush_texture_view = brush_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let brush_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -264,49 +289,128 @@ impl PaintRenderer {
             ..Default::default()
         });
 
-        let stamp_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("stamp bind group layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
-                wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { multisampled: false, view_dimension: wgpu::TextureViewDimension::D2, sample_type: wgpu::TextureSampleType::Float { filterable: true } }, count: None },
-                wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::VERTEX, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
-                wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::VERTEX, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None },
-            ],
-        });
+        let stamp_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("stamp bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
         let stamp_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("stamp bind group"),
             layout: &stamp_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::Sampler(&brush_sampler) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&brush_texture_view) },
-                wgpu::BindGroupEntry { binding: 2, resource: stamp_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: stamp_uniform_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&brush_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&brush_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: stamp_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: stamp_uniform_buffer.as_entire_binding(),
+                },
             ],
         });
 
-        let blit_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("blit bind group layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
-                wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { multisampled: false, view_dimension: wgpu::TextureViewDimension::D2, sample_type: wgpu::TextureSampleType::Float { filterable: true } }, count: None },
-                wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None },
-            ],
-        });
+        let blit_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("blit bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
         let blit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("blit bind group"),
             layout: &blit_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::Sampler(&paint_sampler) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&paint_texture_view) },
-                wgpu::BindGroupEntry { binding: 2, resource: view_uniform_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&paint_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&paint_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: view_uniform_buffer.as_entire_binding(),
+                },
             ],
         });
 
-        let stamp_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("stamp pipeline layout"),
-            bind_group_layouts: &[Some(&stamp_bind_group_layout)],
-            immediate_size: 0,
-        });
+        let stamp_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("stamp pipeline layout"),
+                bind_group_layouts: &[Some(&stamp_bind_group_layout)],
+                immediate_size: 0,
+            });
         let blit_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("blit pipeline layout"),
             bind_group_layouts: &[Some(&blit_bind_group_layout)],
@@ -324,7 +428,12 @@ impl PaintRenderer {
         let stamp_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("stamp pipeline"),
             layout: Some(&stamp_pipeline_layout),
-            vertex: wgpu::VertexState { module: &stamp_shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
+            vertex: wgpu::VertexState {
+                module: &stamp_shader,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
             fragment: Some(wgpu::FragmentState {
                 module: &stamp_shader,
                 entry_point: Some("fs"),
@@ -332,13 +441,24 @@ impl PaintRenderer {
                 targets: &[Some(wgpu::ColorTargetState {
                     format: DOCUMENT_FORMAT,
                     blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent { operation: wgpu::BlendOperation::Add, src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha },
-                        alpha: wgpu::BlendComponent { operation: wgpu::BlendOperation::Add, src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha },
+                        color: wgpu::BlendComponent {
+                            operation: wgpu::BlendOperation::Add,
+                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            operation: wgpu::BlendOperation::Add,
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        },
                     }),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
@@ -347,14 +467,26 @@ impl PaintRenderer {
         let blit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("blit pipeline"),
             layout: Some(&blit_pipeline_layout),
-            vertex: wgpu::VertexState { module: &blit_shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
+            vertex: wgpu::VertexState {
+                module: &blit_shader,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
             fragment: Some(wgpu::FragmentState {
                 module: &blit_shader,
                 entry_point: Some("fs"),
                 compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState { format: surface_format, blend: Some(wgpu::BlendState::REPLACE), write_mask: wgpu::ColorWrites::ALL })],
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
             }),
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
@@ -386,14 +518,30 @@ impl PaintRenderer {
         Ok(renderer)
     }
 
-    pub fn device(&self) -> &wgpu::Device { &self.device }
-    pub fn queue(&self) -> &wgpu::Queue { &self.queue }
-    pub fn surface_format(&self) -> wgpu::TextureFormat { self.config.format }
-    pub fn surface_size(&self) -> [u32; 2] { [self.config.width, self.config.height] }
-    pub fn document_size(&self) -> [u32; 2] { self.document_size }
-    pub fn zoom(&self) -> f32 { self.zoom }
-    pub fn offset(&self) -> [f32; 2] { self.offset }
-    pub fn stats(&self) -> PaintStats { self.stats }
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+    pub fn surface_format(&self) -> wgpu::TextureFormat {
+        self.config.format
+    }
+    pub fn surface_size(&self) -> [u32; 2] {
+        [self.config.width, self.config.height]
+    }
+    pub fn document_size(&self) -> [u32; 2] {
+        self.document_size
+    }
+    pub fn zoom(&self) -> f32 {
+        self.zoom
+    }
+    pub fn offset(&self) -> [f32; 2] {
+        self.offset
+    }
+    pub fn stats(&self) -> PaintStats {
+        self.stats
+    }
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         if size.width == 0 || size.height == 0 {
@@ -439,7 +587,10 @@ impl PaintRenderer {
     }
 
     pub fn window_to_document(&self, point: [f32; 2]) -> [f32; 2] {
-        [point[0] / self.zoom + self.offset[0], point[1] / self.zoom + self.offset[1]]
+        [
+            point[0] / self.zoom + self.offset[0],
+            point[1] / self.zoom + self.offset[1],
+        ]
     }
 
     pub fn begin_stroke(&mut self) {
@@ -454,19 +605,34 @@ impl PaintRenderer {
         let mut rgba = color;
         rgba[3] = point.opacity;
         self.stamp_queue.queue_stamp(
-            Stamp { x: point.x, y: point.y, radius: point.radius, rgba },
+            Stamp {
+                x: point.x,
+                y: point.y,
+                radius: point.radius,
+                rgba,
+            },
             self.document_size[0],
             self.document_size[1],
         )
     }
 
     pub fn stamp_line(&mut self, from: StrokePoint, to: StrokePoint, color: [f32; 4]) -> usize {
-        self.stamp_queue.stamp_line(from, to, color, self.document_size[0], self.document_size[1])
+        self.stamp_queue.stamp_line(
+            from,
+            to,
+            color,
+            self.document_size[0],
+            self.document_size[1],
+        )
     }
 
     pub fn clear_canvas(&mut self) {
         self.stamp_queue.clear();
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("clear canvas encoder") });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("clear canvas encoder"),
+            });
         {
             let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("clear canvas pass"),
@@ -474,7 +640,10 @@ impl PaintRenderer {
                     view: &self.paint_texture_view,
                     resolve_target: None,
                     depth_slice: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::WHITE), store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                        store: wgpu::StoreOp::Store,
+                    },
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
@@ -508,7 +677,15 @@ impl PaintRenderer {
                 view,
                 resolve_target: None,
                 depth_slice: None,
-                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.5, g: 0.5, b: 0.5, a: 1.0 }), store: wgpu::StoreOp::Store },
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.5,
+                        g: 0.5,
+                        b: 0.5,
+                        a: 1.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
             })],
             depth_stencil_attachment: None,
             timestamp_writes: None,
@@ -529,9 +706,14 @@ impl PaintRenderer {
         let mut raw = Vec::with_capacity(count);
         for _ in 0..count {
             let stamp = self.stamp_queue.pending.pop_front().expect("count checked");
-            raw.push(stamp_to_raw(stamp, self.document_size[0], self.document_size[1]));
+            raw.push(stamp_to_raw(
+                stamp,
+                self.document_size[0],
+                self.document_size[1],
+            ));
         }
-        self.queue.write_buffer(&self.stamp_buffer, 0, bytemuck::cast_slice(&raw));
+        self.queue
+            .write_buffer(&self.stamp_buffer, 0, bytemuck::cast_slice(&raw));
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("stamp pass"),
@@ -539,7 +721,10 @@ impl PaintRenderer {
                 view: &self.paint_texture_view,
                 resolve_target: None,
                 depth_slice: None,
-                ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
             })],
             depth_stencil_attachment: None,
             timestamp_writes: None,
@@ -566,15 +751,24 @@ impl PaintRenderer {
     }
 }
 
-fn create_paint_texture(device: &wgpu::Device, size: [u32; 2]) -> (wgpu::Texture, wgpu::TextureView) {
+fn create_paint_texture(
+    device: &wgpu::Device,
+    size: [u32; 2],
+) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("paint texture"),
-        size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: size[0],
+            height: size[1],
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: DOCUMENT_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -587,7 +781,12 @@ fn stamp_to_raw(stamp: Stamp, width: u32, height: u32) -> StampRaw {
         center: [stamp.x, stamp.y],
         half_size: [bounds.half_width, bounds.half_height],
         color: stamp.rgba,
-        bounds: [bounds.min_x as f32, bounds.min_y as f32, bounds.max_x as f32, bounds.max_y as f32],
+        bounds: [
+            bounds.min_x as f32,
+            bounds.min_y as f32,
+            bounds.max_x as f32,
+            bounds.max_y as f32,
+        ],
     }
 }
 
@@ -614,7 +813,14 @@ fn get_stamp_bounds(x: f32, y: f32, radius: f32, width: u32, height: u32) -> Sta
     let max_x = (width as i32 - 1).min((x + half_width).ceil() as i32);
     let min_y = 0.max((y - half_height).floor() as i32);
     let max_y = (height as i32 - 1).min((y + half_height).ceil() as i32);
-    StampBounds { min_x, max_x, min_y, max_y, half_width, half_height }
+    StampBounds {
+        min_x,
+        max_x,
+        min_y,
+        max_y,
+        half_width,
+        half_height,
+    }
 }
 
 fn get_stamp_spacing(radius: f32) -> f32 {
