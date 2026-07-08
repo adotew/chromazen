@@ -26,3 +26,6 @@
 *.profdata
 coverage/
 tarpaulin-report.html
+
+# Local planning docs
+/docs/
