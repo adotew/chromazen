@@ -113,6 +113,7 @@ impl ApplicationHandler for App {
                             &event,
                             paint,
                             gui.brush,
+                            gui.stroke_smoothing,
                             &self.pressure_state,
                         );
                     }

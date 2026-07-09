@@ -7,7 +7,7 @@ use crate::{
     brush::{BrushSettings, StrokePoint},
     macos_pressure::PressureStateHandle,
     renderer::PaintRenderer,
-    stroke_smoothing::StrokeSmoother,
+    stroke_smoothing::{StrokeSmoother, StrokeSmoothingOptions},
 };
 
 #[derive(Debug, Default)]
@@ -19,6 +19,7 @@ pub struct PaintInputController {
     last_point: Option<StrokePoint>,
     last_pan_pos: [f32; 2],
     smoother: StrokeSmoother,
+    smoothing_options: StrokeSmoothingOptions,
 }
 
 impl PaintInputController {
@@ -27,6 +28,7 @@ impl PaintInputController {
         event: &WindowEvent,
         paint: &mut PaintRenderer,
         brush: BrushSettings,
+        smoothing_options: StrokeSmoothingOptions,
         pressure_state: &PressureStateHandle,
     ) -> bool {
         match event {
@@ -49,8 +51,12 @@ impl PaintInputController {
 
                 if self.is_drawing {
                     let point = self.stroke_point_from_window(paint, next, brush, pressure_state);
-                    let smoothed_points = self.smoother.push(point);
-                    let queued = self.queue_smoothed_points(paint, smoothed_points, brush.rgba());
+                    let queued = if self.smoothing_options.enabled {
+                        let smoothed_points = self.smoother.push(point, self.smoothing_options);
+                        self.queue_smoothed_points(paint, smoothed_points, brush.rgba())
+                    } else {
+                        self.queue_direct_point(paint, point, brush.rgba())
+                    };
                     return queued > 0;
                 }
 
@@ -71,6 +77,7 @@ impl PaintInputController {
                     );
                     self.is_drawing = true;
                     self.last_point = Some(point);
+                    self.smoothing_options = smoothing_options;
                     self.smoother.begin(point);
                     paint.begin_stroke();
                     paint.queue_stamp(point, brush.rgba())
@@ -121,6 +128,23 @@ impl PaintInputController {
         brush.stroke_point(doc, pressure_state.brush_pressure())
     }
 
+    fn queue_direct_point(
+        &mut self,
+        paint: &mut PaintRenderer,
+        point: StrokePoint,
+        color: [f32; 4],
+    ) -> usize {
+        let queued = if let Some(previous) = self.last_point {
+            paint.stamp_line(previous, point, color)
+        } else if paint.queue_stamp(point, color) {
+            1
+        } else {
+            0
+        };
+        self.last_point = Some(point);
+        queued
+    }
+
     fn queue_smoothed_points(
         &mut self,
         paint: &mut PaintRenderer,
@@ -141,8 +165,13 @@ impl PaintInputController {
 
     fn end_stroke(&mut self, paint: &mut PaintRenderer, color: [f32; 4]) -> bool {
         let queued = if self.is_drawing {
-            let smoothed_points = self.smoother.finish();
-            let queued = self.queue_smoothed_points(paint, smoothed_points, color);
+            let queued = if self.smoothing_options.enabled {
+                let smoothed_points = self.smoother.finish(self.smoothing_options);
+                self.queue_smoothed_points(paint, smoothed_points, color)
+            } else {
+                self.smoother.reset();
+                0
+            };
             paint.end_stroke();
             queued
         } else {

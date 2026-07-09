@@ -9,6 +9,7 @@ use crate::{
     brush::BrushSettings,
     constants::{MAX_BRUSH_SIZE, MIN_BRUSH_SIZE},
     renderer::{PaintRenderer, PaintStats},
+    stroke_smoothing::StrokeSmoothingOptions,
 };
 
 pub struct GuiLayer {
@@ -16,6 +17,7 @@ pub struct GuiLayer {
     pub state: EguiWinitState,
     pub renderer: EguiRenderer,
     pub brush: BrushSettings,
+    pub stroke_smoothing: StrokeSmoothingOptions,
 }
 
 #[derive(Clone, Copy)]
@@ -59,6 +61,7 @@ impl GuiLayer {
             state,
             renderer,
             brush: BrushSettings::default(),
+            stroke_smoothing: StrokeSmoothingOptions::default(),
         }
     }
 
@@ -88,6 +91,16 @@ impl GuiLayer {
                         &mut self.brush.color,
                         egui::color_picker::Alpha::Opaque,
                     );
+                    ui.separator();
+                    ui.checkbox(&mut self.stroke_smoothing.enabled, "Stroke smoothing");
+                    ui.add_enabled(
+                        self.stroke_smoothing.enabled,
+                        egui::Slider::new(&mut self.stroke_smoothing.strength, 0.0..=1.0)
+                            .text("Smoothing strength"),
+                    );
+                    ui.add_enabled_ui(self.stroke_smoothing.enabled, |ui| {
+                        ui.checkbox(&mut self.stroke_smoothing.jitter_filter, "Stabilize jitter");
+                    });
                     ui.horizontal(|ui| {
                         if ui.button("Clear").clicked() {
                             actions.clear = true;
@@ -111,7 +124,11 @@ impl GuiLayer {
                     ));
                     ui.label(format!(
                         "Pressure: {} {:.0}%",
-                        if snapshot.pen_active { "pen" } else { "mouse/fallback" },
+                        if snapshot.pen_active {
+                            "pen"
+                        } else {
+                            "mouse/fallback"
+                        },
                         snapshot.pressure * 100.0,
                     ));
                     ui.label(format!(
