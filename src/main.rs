@@ -4,6 +4,7 @@ mod constants;
 mod input;
 mod macos_pressure;
 mod renderer;
+mod stroke_smoothing;
 mod ui;
 
 fn main() {

@@ -7,6 +7,7 @@ use crate::{
     brush::{BrushSettings, StrokePoint},
     macos_pressure::PressureStateHandle,
     renderer::PaintRenderer,
+    stroke_smoothing::StrokeSmoother,
 };
 
 #[derive(Debug, Default)]
@@ -17,6 +18,7 @@ pub struct PaintInputController {
     is_space_down: bool,
     last_point: Option<StrokePoint>,
     last_pan_pos: [f32; 2],
+    smoother: StrokeSmoother,
 }
 
 impl PaintInputController {
@@ -47,12 +49,8 @@ impl PaintInputController {
 
                 if self.is_drawing {
                     let point = self.stroke_point_from_window(paint, next, brush, pressure_state);
-                    let queued = if let Some(previous) = self.last_point {
-                        paint.stamp_line(previous, point, brush.rgba())
-                    } else {
-                        0
-                    };
-                    self.last_point = Some(point);
+                    let smoothed_points = self.smoother.push(point);
+                    let queued = self.queue_smoothed_points(paint, smoothed_points, brush.rgba());
                     return queued > 0;
                 }
 
@@ -73,6 +71,7 @@ impl PaintInputController {
                     );
                     self.is_drawing = true;
                     self.last_point = Some(point);
+                    self.smoother.begin(point);
                     paint.begin_stroke();
                     paint.queue_stamp(point, brush.rgba())
                 }
@@ -81,10 +80,7 @@ impl PaintInputController {
                     self.last_pan_pos = self.cursor_pos;
                     false
                 }
-                (ElementState::Released, _) => {
-                    self.end_stroke(paint);
-                    false
-                }
+                (ElementState::Released, _) => self.end_stroke(paint, brush.rgba()),
                 _ => false,
             },
             WindowEvent::MouseWheel { delta, .. } => {
@@ -109,10 +105,7 @@ impl PaintInputController {
                 }
                 false
             }
-            WindowEvent::CursorLeft { .. } => {
-                self.end_stroke(paint);
-                false
-            }
+            WindowEvent::CursorLeft { .. } => self.end_stroke(paint, brush.rgba()),
             _ => false,
         }
     }
@@ -128,12 +121,37 @@ impl PaintInputController {
         brush.stroke_point(doc, pressure_state.brush_pressure())
     }
 
-    fn end_stroke(&mut self, paint: &mut PaintRenderer) {
-        if self.is_drawing {
-            paint.end_stroke();
+    fn queue_smoothed_points(
+        &mut self,
+        paint: &mut PaintRenderer,
+        points: Vec<StrokePoint>,
+        color: [f32; 4],
+    ) -> usize {
+        let mut queued = 0;
+        for point in points {
+            if let Some(previous) = self.last_point {
+                queued += paint.stamp_line(previous, point, color);
+            } else if paint.queue_stamp(point, color) {
+                queued += 1;
+            }
+            self.last_point = Some(point);
         }
+        queued
+    }
+
+    fn end_stroke(&mut self, paint: &mut PaintRenderer, color: [f32; 4]) -> bool {
+        let queued = if self.is_drawing {
+            let smoothed_points = self.smoother.finish();
+            let queued = self.queue_smoothed_points(paint, smoothed_points, color);
+            paint.end_stroke();
+            queued
+        } else {
+            self.smoother.reset();
+            0
+        };
         self.is_drawing = false;
         self.is_panning = false;
         self.last_point = None;
+        queued > 0
     }
 }
