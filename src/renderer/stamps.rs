@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::brush::StrokePoint;
+use crate::paint::StrokePoint;
 
 pub(crate) const MAX_STAMPS_PER_FRAME: usize = 1024;
 const MIN_STAMP_SPACING: f32 = 1.0;
@@ -211,7 +211,7 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stroke_smoothing::StrokeSmoother;
+    use crate::paint::StrokeSmoother;
 
     fn point(x: f32, y: f32) -> StrokePoint {
         StrokePoint {

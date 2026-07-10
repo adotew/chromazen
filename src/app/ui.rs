@@ -6,10 +6,8 @@ use egui_winit::State as EguiWinitState;
 use winit::window::Window;
 
 use crate::{
-    brush::BrushSettings,
-    constants::{MAX_BRUSH_SIZE, MIN_BRUSH_SIZE},
+    paint::{BrushSettings, MAX_BRUSH_SIZE, MIN_BRUSH_SIZE, StrokeSmoothingOptions},
     renderer::{PaintRenderer, PaintStats},
-    stroke_smoothing::StrokeSmoothingOptions,
 };
 
 pub struct GuiLayer {

@@ -1,3 +1,6 @@
+mod input;
+mod ui;
+
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -11,13 +14,16 @@ use winit::{
     window::{Window, WindowAttributes},
 };
 
-use crate::{
-    constants::WINDOW_TITLE,
+use self::{
     input::PaintInputController,
-    macos_pressure::{MacosPressureMonitor, PressureStateHandle},
-    renderer::PaintRenderer,
-    ui::{self, GuiLayer, PanelSnapshot},
+    ui::{GuiLayer, PanelSnapshot},
 };
+use crate::{
+    platform::{MacosPressureMonitor, PressureStateHandle},
+    renderer::PaintRenderer,
+};
+
+const WINDOW_TITLE: &str = "minipaint-rs";
 
 pub struct App {
     window: Option<Arc<Window>>,

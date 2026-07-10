@@ -1,5 +1,9 @@
 use egui::Color32;
 
+pub(crate) const DEFAULT_BRUSH_SIZE: f32 = 300.0;
+pub(crate) const MIN_BRUSH_SIZE: f32 = 1.0;
+pub(crate) const MAX_BRUSH_SIZE: f32 = 2000.0;
+
 const MIN_PRESSURE_SIZE: f32 = 0.45;
 const MIN_PRESSURE_OPACITY: f32 = 0.08;
 const PRESSURE_OPACITY_GAMMA: f32 = 1.35;
@@ -14,7 +18,7 @@ impl Default for BrushSettings {
     fn default() -> Self {
         Self {
             color: Color32::from_rgb(170, 187, 204),
-            size: crate::constants::DEFAULT_BRUSH_SIZE,
+            size: DEFAULT_BRUSH_SIZE,
         }
     }
 }

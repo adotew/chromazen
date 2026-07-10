@@ -4,10 +4,9 @@ use winit::{
 };
 
 use crate::{
-    brush::{BrushSettings, StrokePoint},
-    macos_pressure::PressureStateHandle,
+    paint::{BrushSettings, StrokePoint, StrokeSmoother, StrokeSmoothingOptions},
+    platform::PressureStateHandle,
     renderer::PaintRenderer,
-    stroke_smoothing::{StrokeSmoother, StrokeSmoothingOptions},
 };
 
 #[derive(Debug, Default)]

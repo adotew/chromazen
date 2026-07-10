@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::brush::StrokePoint;
+use super::StrokePoint;
 
 const CENTRIPETAL_ALPHA: f32 = 0.5;
 const PARAMETER_EPSILON: f32 = 1.0e-4;
