@@ -93,6 +93,13 @@ impl GuiLayer {
                     );
                     ui.separator();
                     ui.checkbox(&mut self.stroke_smoothing.enabled, "Stroke smoothing");
+                    ui.add_enabled(
+                        self.stroke_smoothing.enabled,
+                        egui::Slider::new(&mut self.stroke_smoothing.strength, 0.0..=1.0)
+                            .text("Smoothing strength")
+                            .fixed_decimals(2),
+                    )
+                    .on_hover_text("0 is linear; 1 is full Catmull–Rom smoothing");
                     ui.horizontal(|ui| {
                         if ui.button("Clear").clicked() {
                             actions.clear = true;

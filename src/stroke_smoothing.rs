@@ -14,11 +14,21 @@ const MAX_CURVE_SAMPLES: usize = 96;
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct StrokeSmoothingOptions {
     pub enabled: bool,
+    pub strength: f32,
 }
 
 impl Default for StrokeSmoothingOptions {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            strength: 0.8,
+        }
+    }
+}
+
+impl StrokeSmoothingOptions {
+    pub(crate) fn is_active(self) -> bool {
+        self.enabled && self.strength > f32::EPSILON
     }
 }
 
@@ -30,18 +40,36 @@ struct CurveInterval {
     error: f32,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct StrokeSmoother {
     points: VecDeque<StrokePoint>,
     first_segment_emitted: bool,
     latest_raw_point: Option<StrokePoint>,
+    strength: f32,
+}
+
+impl Default for StrokeSmoother {
+    fn default() -> Self {
+        Self {
+            points: VecDeque::new(),
+            first_segment_emitted: false,
+            latest_raw_point: None,
+            strength: 1.0,
+        }
+    }
 }
 
 impl StrokeSmoother {
+    #[cfg(test)]
     pub(crate) fn begin(&mut self, point: StrokePoint) {
+        self.begin_with_strength(point, 1.0);
+    }
+
+    pub(crate) fn begin_with_strength(&mut self, point: StrokePoint, strength: f32) {
         self.reset();
         self.latest_raw_point = Some(point);
         self.points.push_back(point);
+        self.strength = strength.clamp(0.0, 1.0);
     }
 
     pub(crate) fn push(&mut self, point: StrokePoint) -> Vec<StrokePoint> {
@@ -69,21 +97,23 @@ impl StrokeSmoother {
 
         match self.points.len() {
             0 | 1 => {}
-            2 => smoothed.extend(sample_segment(
+            2 => smoothed.extend(sample_segment_with_strength(
                 extrapolate_before(self.points[0], self.points[1]),
                 self.points[0],
                 self.points[1],
                 extrapolate_after(self.points[0], self.points[1]),
+                self.strength,
             )),
             len if self.first_segment_emitted => {
                 let previous = self.points[len - 3];
                 let from = self.points[len - 2];
                 let to = self.points[len - 1];
-                smoothed.extend(sample_segment(
+                smoothed.extend(sample_segment_with_strength(
                     previous,
                     from,
                     to,
                     extrapolate_after(from, to),
+                    self.strength,
                 ));
             }
             _ => {}
@@ -97,6 +127,7 @@ impl StrokeSmoother {
         self.points.clear();
         self.first_segment_emitted = false;
         self.latest_raw_point = None;
+        self.strength = 1.0;
     }
 
     fn coalesce_stationary_duplicate(&self, point: StrokePoint) -> bool {
@@ -110,19 +141,21 @@ impl StrokeSmoother {
             0..=2 => Vec::new(),
             3 if !self.first_segment_emitted => {
                 self.first_segment_emitted = true;
-                sample_segment(
+                sample_segment_with_strength(
                     extrapolate_before(self.points[0], self.points[1]),
                     self.points[0],
                     self.points[1],
                     self.points[2],
+                    self.strength,
                 )
             }
             4.. => {
-                let smoothed = sample_segment(
+                let smoothed = sample_segment_with_strength(
                     self.points[0],
                     self.points[1],
                     self.points[2],
                     self.points[3],
+                    self.strength,
                 );
                 self.points.pop_front();
                 smoothed
@@ -132,16 +165,27 @@ impl StrokeSmoother {
     }
 }
 
+fn sample_segment_with_strength(
+    p0: StrokePoint,
+    p1: StrokePoint,
+    p2: StrokePoint,
+    p3: StrokePoint,
+    strength: f32,
+) -> Vec<StrokePoint> {
+    adaptive_sample_parameters(p0, p1, p2, p3)
+        .into_iter()
+        .map(|u| stroke_point_at(p0, p1, p2, p3, strength, u))
+        .collect()
+}
+
+#[cfg(test)]
 fn sample_segment(
     p0: StrokePoint,
     p1: StrokePoint,
     p2: StrokePoint,
     p3: StrokePoint,
 ) -> Vec<StrokePoint> {
-    adaptive_sample_parameters(p0, p1, p2, p3)
-        .into_iter()
-        .map(|u| stroke_point_at(p0, p1, p2, p3, u))
-        .collect()
+    sample_segment_with_strength(p0, p1, p2, p3, 1.0)
 }
 
 fn adaptive_sample_parameters(
@@ -223,9 +267,17 @@ fn stroke_point_at(
     p1: StrokePoint,
     p2: StrokePoint,
     p3: StrokePoint,
+    strength: f32,
     u: f32,
 ) -> StrokePoint {
-    let position = curve_position(p0, p1, p2, p3, u);
+    let u = u.clamp(0.0, 1.0);
+    let curved = curve_position(p0, p1, p2, p3, u);
+    let linear = [lerp(p1.x, p2.x, u), lerp(p1.y, p2.y, u)];
+    let strength = strength.clamp(0.0, 1.0);
+    let position = [
+        lerp(linear[0], curved[0], strength),
+        lerp(linear[1], curved[1], strength),
+    ];
     StrokePoint {
         x: position[0],
         y: position[1],
@@ -639,6 +691,25 @@ mod tests {
         );
         assert!(close(emitted.last().expect("endpoint").x, p2.x));
         assert!(close(emitted.last().expect("endpoint").y, p2.y));
+    }
+
+    #[test]
+    fn smoothing_strength_blends_linear_and_curved_positions() {
+        let p0 = point(-100.0, 0.0);
+        let p1 = point(0.0, 0.0);
+        let p2 = point(100.0, 0.0);
+        let p3 = point(200.0, 100.0);
+        let u = 0.5;
+
+        let linear = stroke_point_at(p0, p1, p2, p3, 0.0, u);
+        let half = stroke_point_at(p0, p1, p2, p3, 0.5, u);
+        let full = stroke_point_at(p0, p1, p2, p3, 1.0, u);
+
+        assert!(close(linear.x, 50.0));
+        assert!(close(linear.y, 0.0));
+        assert!(full.y.abs() > 0.01);
+        assert!(close(half.x, lerp(linear.x, full.x, 0.5)));
+        assert!(close(half.y, lerp(linear.y, full.y, 0.5)));
     }
 
     #[test]
