@@ -50,7 +50,13 @@ impl StampQueue {
         self.distance_since_last_stamp = 0.0;
     }
 
-    pub(crate) fn queue_point(&mut self, point: StrokePoint, mut rgba: [f32; 4], width: u32, height: u32) -> bool {
+    pub(crate) fn queue_point(
+        &mut self,
+        point: StrokePoint,
+        mut rgba: [f32; 4],
+        width: u32,
+        height: u32,
+    ) -> bool {
         rgba[3] = point.opacity;
         self.queue_stamp(
             Stamp {
@@ -205,10 +211,50 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stroke_smoothing::StrokeSmoother;
+
+    fn point(x: f32, y: f32) -> StrokePoint {
+        StrokePoint {
+            x,
+            y,
+            radius: 10.0,
+            opacity: 1.0,
+        }
+    }
 
     #[test]
     fn stamp_spacing_has_a_one_pixel_floor() {
         assert_eq!(get_stamp_spacing(0.5), 1.0);
         assert_eq!(get_stamp_spacing(20.0), 5.0);
+    }
+
+    #[test]
+    fn smoothed_polyline_preserves_continuous_dab_spacing() {
+        let input = [
+            point(100.0, 100.0),
+            point(250.0, 100.0),
+            point(400.0, 250.0),
+            point(550.0, 250.0),
+        ];
+        let mut smoother = StrokeSmoother::default();
+        let mut path = vec![input[0]];
+        smoother.begin(input[0]);
+        for point in input.into_iter().skip(1) {
+            path.extend(smoother.push(point));
+        }
+        path.extend(smoother.finish());
+
+        let mut queue = StampQueue::default();
+        let color = [0.0, 0.0, 0.0, 1.0];
+        assert!(queue.queue_point(path[0], color, 1000, 1000));
+        for segment in path.windows(2) {
+            queue.stamp_line(segment[0], segment[1], color, 1000, 1000);
+        }
+
+        let expected_spacing = get_stamp_spacing(input[0].radius);
+        assert!(queue.pending.len() > 100);
+        assert!(queue.pending.iter().zip(queue.pending.iter().skip(1)).all(
+            |(from, to)| (to.x - from.x).hypot(to.y - from.y) <= expected_spacing + 1.0e-3
+        ));
     }
 }

@@ -4,99 +4,91 @@ use crate::brush::StrokePoint;
 
 const CENTRIPETAL_ALPHA: f32 = 0.5;
 const PARAMETER_EPSILON: f32 = 1.0e-4;
-const PARAM_U_EPSILON: f32 = 1.0e-5;
-
-const MIN_INPUT_DISTANCE_PX: f32 = 0.75;
-const MIN_RADIUS_DELTA_PX: f32 = 0.25;
-const MIN_OPACITY_DELTA: f32 = 0.015;
+const MIN_RADIUS_DELTA_PX: f32 = 0.4;
+const MIN_OPACITY_DELTA: f32 = 0.025;
 
 const CURVE_FLATNESS_PX: f32 = 0.35;
 const MAX_ADAPTIVE_DEPTH: usize = 10;
 const MAX_CURVE_SAMPLES: usize = 96;
 
-const POSITION_FILTER_ALPHA: f32 = 0.65;
-const PRESSURE_FILTER_ALPHA: f32 = 0.45;
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct StrokeSmoothingOptions {
     pub enabled: bool,
-    pub strength: f32,
-    pub jitter_filter: bool,
 }
 
 impl Default for StrokeSmoothingOptions {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            strength: 0.8,
-            jitter_filter: false,
-        }
+        Self { enabled: true }
     }
 }
 
-impl StrokeSmoothingOptions {
-    fn clamped_strength(self) -> f32 {
-        if self.enabled {
-            self.strength.clamp(0.0, 1.0)
-        } else {
-            0.0
-        }
-    }
+#[derive(Clone, Copy, Debug)]
+struct CurveInterval {
+    u0: f32,
+    u1: f32,
+    depth: usize,
+    error: f32,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct StrokeSmoother {
     points: VecDeque<StrokePoint>,
     first_segment_emitted: bool,
-    filtered_point: Option<StrokePoint>,
-    last_raw_point: Option<StrokePoint>,
+    latest_raw_point: Option<StrokePoint>,
 }
 
 impl StrokeSmoother {
     pub(crate) fn begin(&mut self, point: StrokePoint) {
         self.reset();
-        self.filtered_point = Some(point);
-        self.last_raw_point = Some(point);
+        self.latest_raw_point = Some(point);
         self.points.push_back(point);
     }
 
-    pub(crate) fn push(
-        &mut self,
-        point: StrokePoint,
-        options: StrokeSmoothingOptions,
-    ) -> Vec<StrokePoint> {
-        let point = self.prepare_point(point, options);
-        if self.coalesce_near_duplicate(point) {
+    pub(crate) fn push(&mut self, point: StrokePoint) -> Vec<StrokePoint> {
+        self.latest_raw_point = Some(point);
+        if self.coalesce_stationary_duplicate(point) {
             return Vec::new();
         }
 
         self.points.push_back(point);
-        self.emit_available_segment(options.clamped_strength())
+        self.emit_available_segment()
     }
 
-    pub(crate) fn finish(&mut self, options: StrokeSmoothingOptions) -> Vec<StrokePoint> {
-        if options.jitter_filter {
-            self.snap_pending_endpoint_to_raw_input();
+    pub(crate) fn finish(&mut self) -> Vec<StrokePoint> {
+        let mut smoothed = Vec::new();
+
+        if let Some(latest_raw_point) = self.latest_raw_point
+            && self
+                .points
+                .back()
+                .is_none_or(|&last| !same_stroke_point(last, latest_raw_point))
+        {
+            self.points.push_back(latest_raw_point);
+            smoothed.extend(self.emit_available_segment());
         }
 
-        let strength = options.clamped_strength();
-        let smoothed = match self.points.len() {
-            0 | 1 => Vec::new(),
-            2 => sample_segment(
+        match self.points.len() {
+            0 | 1 => {}
+            2 => smoothed.extend(sample_segment(
                 extrapolate_before(self.points[0], self.points[1]),
                 self.points[0],
                 self.points[1],
                 extrapolate_after(self.points[0], self.points[1]),
-                strength,
-            ),
+            )),
             len if self.first_segment_emitted => {
                 let previous = self.points[len - 3];
                 let from = self.points[len - 2];
                 let to = self.points[len - 1];
-                sample_segment(previous, from, to, extrapolate_after(from, to), strength)
+                smoothed.extend(sample_segment(
+                    previous,
+                    from,
+                    to,
+                    extrapolate_after(from, to),
+                ));
             }
-            _ => Vec::new(),
-        };
+            _ => {}
+        }
+
         self.reset();
         smoothed
     }
@@ -104,56 +96,16 @@ impl StrokeSmoother {
     pub(crate) fn reset(&mut self) {
         self.points.clear();
         self.first_segment_emitted = false;
-        self.filtered_point = None;
-        self.last_raw_point = None;
+        self.latest_raw_point = None;
     }
 
-    fn prepare_point(
-        &mut self,
-        raw_point: StrokePoint,
-        options: StrokeSmoothingOptions,
-    ) -> StrokePoint {
-        self.last_raw_point = Some(raw_point);
-
-        if !options.jitter_filter {
-            self.filtered_point = Some(raw_point);
-            return raw_point;
-        }
-
-        let filtered = self
-            .filtered_point
-            .map_or(raw_point, |previous| StrokePoint {
-                x: lerp(previous.x, raw_point.x, POSITION_FILTER_ALPHA),
-                y: lerp(previous.y, raw_point.y, POSITION_FILTER_ALPHA),
-                radius: lerp(previous.radius, raw_point.radius, PRESSURE_FILTER_ALPHA).max(0.0),
-                opacity: lerp(previous.opacity, raw_point.opacity, PRESSURE_FILTER_ALPHA)
-                    .clamp(0.0, 1.0),
-            });
-        self.filtered_point = Some(filtered);
-        filtered
+    fn coalesce_stationary_duplicate(&self, point: StrokePoint) -> bool {
+        self.points
+            .back()
+            .is_some_and(|&last| is_redundant_stationary_sample(last, point))
     }
 
-    fn coalesce_near_duplicate(&mut self, point: StrokePoint) -> bool {
-        let Some(&last) = self.points.back() else {
-            return false;
-        };
-        if !is_near_duplicate(last, point) {
-            return false;
-        }
-
-        if self.pending_endpoint_can_be_replaced() {
-            if let Some(last) = self.points.back_mut() {
-                *last = point;
-            }
-        }
-        true
-    }
-
-    fn pending_endpoint_can_be_replaced(&self) -> bool {
-        self.points.len() >= 2
-    }
-
-    fn emit_available_segment(&mut self, strength: f32) -> Vec<StrokePoint> {
+    fn emit_available_segment(&mut self) -> Vec<StrokePoint> {
         match self.points.len() {
             0..=2 => Vec::new(),
             3 if !self.first_segment_emitted => {
@@ -163,7 +115,6 @@ impl StrokeSmoother {
                     self.points[0],
                     self.points[1],
                     self.points[2],
-                    strength,
                 )
             }
             4.. => {
@@ -172,23 +123,11 @@ impl StrokeSmoother {
                     self.points[1],
                     self.points[2],
                     self.points[3],
-                    strength,
                 );
                 self.points.pop_front();
                 smoothed
             }
             _ => Vec::new(),
-        }
-    }
-
-    fn snap_pending_endpoint_to_raw_input(&mut self) {
-        let Some(raw_point) = self.last_raw_point else {
-            return;
-        };
-        if self.pending_endpoint_can_be_replaced() {
-            if let Some(last) = self.points.back_mut() {
-                *last = raw_point;
-            }
         }
     }
 }
@@ -198,49 +137,64 @@ fn sample_segment(
     p1: StrokePoint,
     p2: StrokePoint,
     p3: StrokePoint,
-    strength: f32,
 ) -> Vec<StrokePoint> {
-    let mut params = Vec::new();
-    adaptive_sample_segment(p0, p1, p2, p3, strength, 0.0, 1.0, 0, &mut params);
-    ensure_final_sample(&mut params);
-
-    params
+    adaptive_sample_parameters(p0, p1, p2, p3)
         .into_iter()
-        .map(|u| stroke_point_at(p0, p1, p2, p3, strength, u))
+        .map(|u| stroke_point_at(p0, p1, p2, p3, u))
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
-fn adaptive_sample_segment(
+fn adaptive_sample_parameters(
     p0: StrokePoint,
     p1: StrokePoint,
     p2: StrokePoint,
     p3: StrokePoint,
-    strength: f32,
+) -> Vec<f32> {
+    let mut intervals = vec![curve_interval(p0, p1, p2, p3, 0.0, 1.0, 0)];
+
+    while intervals.len() < MAX_CURVE_SAMPLES {
+        let Some((index, _)) = intervals
+            .iter()
+            .enumerate()
+            .filter(|(_, interval)| {
+                interval.depth < MAX_ADAPTIVE_DEPTH && interval.error > CURVE_FLATNESS_PX
+            })
+            .max_by(|(_, a), (_, b)| a.error.total_cmp(&b.error))
+        else {
+            break;
+        };
+
+        let interval = intervals[index];
+        let mid = (interval.u0 + interval.u1) * 0.5;
+        let next_depth = interval.depth + 1;
+        intervals[index] = curve_interval(p0, p1, p2, p3, interval.u0, mid, next_depth);
+        intervals.insert(
+            index + 1,
+            curve_interval(p0, p1, p2, p3, mid, interval.u1, next_depth),
+        );
+    }
+
+    intervals.into_iter().map(|interval| interval.u1).collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn curve_interval(
+    p0: StrokePoint,
+    p1: StrokePoint,
+    p2: StrokePoint,
+    p3: StrokePoint,
     u0: f32,
     u1: f32,
     depth: usize,
-    params: &mut Vec<f32>,
-) {
-    if params.len() >= MAX_CURVE_SAMPLES {
-        return;
+) -> CurveInterval {
+    let start = curve_position(p0, p1, p2, p3, u0);
+    let end = curve_position(p0, p1, p2, p3, u1);
+    CurveInterval {
+        u0,
+        u1,
+        depth,
+        error: curve_flatness(p0, p1, p2, p3, u0, u1, start, end),
     }
-
-    let start = curve_position(p0, p1, p2, p3, strength, u0);
-    let end = curve_position(p0, p1, p2, p3, strength, u1);
-    let flatness = curve_flatness(p0, p1, p2, p3, strength, u0, u1, start, end);
-
-    if flatness <= CURVE_FLATNESS_PX
-        || depth >= MAX_ADAPTIVE_DEPTH
-        || params.len() + 1 >= MAX_CURVE_SAMPLES
-    {
-        push_param(params, u1);
-        return;
-    }
-
-    let mid = (u0 + u1) * 0.5;
-    adaptive_sample_segment(p0, p1, p2, p3, strength, u0, mid, depth + 1, params);
-    adaptive_sample_segment(p0, p1, p2, p3, strength, mid, u1, depth + 1, params);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -249,7 +203,6 @@ fn curve_flatness(
     p1: StrokePoint,
     p2: StrokePoint,
     p3: StrokePoint,
-    strength: f32,
     u0: f32,
     u1: f32,
     start: [f32; 2],
@@ -261,32 +214,8 @@ fn curve_flatness(
 
     [quarter, mid, three_quarter]
         .into_iter()
-        .map(|u| distance_to_line_segment(curve_position(p0, p1, p2, p3, strength, u), start, end))
+        .map(|u| distance_to_line_segment(curve_position(p0, p1, p2, p3, u), start, end))
         .fold(0.0, f32::max)
-}
-
-fn ensure_final_sample(params: &mut Vec<f32>) {
-    if params
-        .last()
-        .is_some_and(|&last| (last - 1.0).abs() <= PARAM_U_EPSILON)
-    {
-        return;
-    }
-
-    if params.len() >= MAX_CURVE_SAMPLES {
-        params.pop();
-    }
-    params.push(1.0);
-}
-
-fn push_param(params: &mut Vec<f32>, u: f32) {
-    if params
-        .last()
-        .is_some_and(|&last| (u - last).abs() <= PARAM_U_EPSILON)
-    {
-        return;
-    }
-    params.push(u.clamp(0.0, 1.0));
 }
 
 fn stroke_point_at(
@@ -294,10 +223,9 @@ fn stroke_point_at(
     p1: StrokePoint,
     p2: StrokePoint,
     p3: StrokePoint,
-    strength: f32,
     u: f32,
 ) -> StrokePoint {
-    let position = curve_position(p0, p1, p2, p3, strength, u);
+    let position = curve_position(p0, p1, p2, p3, u);
     StrokePoint {
         x: position[0],
         y: position[1],
@@ -311,21 +239,9 @@ fn curve_position(
     p1: StrokePoint,
     p2: StrokePoint,
     p3: StrokePoint,
-    strength: f32,
     u: f32,
 ) -> [f32; 2] {
-    let u = u.clamp(0.0, 1.0);
-    let linear = [lerp(p1.x, p2.x, u), lerp(p1.y, p2.y, u)];
-    let strength = strength.clamp(0.0, 1.0);
-    if strength <= 0.0 {
-        return linear;
-    }
-
-    let curved = centripetal_catmull_rom_position(p0, p1, p2, p3, u);
-    [
-        lerp(linear[0], curved[0], strength),
-        lerp(linear[1], curved[1], strength),
-    ]
+    centripetal_catmull_rom_position(p0, p1, p2, p3, u.clamp(0.0, 1.0))
 }
 
 fn centripetal_catmull_rom_position(
@@ -425,10 +341,15 @@ fn distance_to_line_segment(point: [f32; 2], start: [f32; 2], end: [f32; 2]) -> 
     distance_xy(point, projected)
 }
 
-fn is_near_duplicate(a: StrokePoint, b: StrokePoint) -> bool {
-    distance(a, b) <= MIN_INPUT_DISTANCE_PX
+fn is_redundant_stationary_sample(a: StrokePoint, b: StrokePoint) -> bool {
+    a.x == b.x
+        && a.y == b.y
         && (a.radius - b.radius).abs() <= MIN_RADIUS_DELTA_PX
         && (a.opacity - b.opacity).abs() <= MIN_OPACITY_DELTA
+}
+
+fn same_stroke_point(a: StrokePoint, b: StrokePoint) -> bool {
+    a.x == b.x && a.y == b.y && a.radius == b.radius && a.opacity == b.opacity
 }
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
@@ -448,16 +369,31 @@ mod tests {
         }
     }
 
-    fn options() -> StrokeSmoothingOptions {
-        StrokeSmoothingOptions {
-            enabled: true,
-            strength: 1.0,
-            jitter_filter: false,
-        }
-    }
-
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 1.0e-4
+    }
+
+    fn max_polyline_error(
+        p0: StrokePoint,
+        p1: StrokePoint,
+        p2: StrokePoint,
+        p3: StrokePoint,
+        emitted: &[StrokePoint],
+    ) -> f32 {
+        let mut polyline = Vec::with_capacity(emitted.len() + 1);
+        polyline.push([p1.x, p1.y]);
+        polyline.extend(emitted.iter().map(|point| [point.x, point.y]));
+
+        (0..=4096)
+            .map(|index| {
+                let u = index as f32 / 4096.0;
+                let curve_point = curve_position(p0, p1, p2, p3, u);
+                polyline
+                    .windows(2)
+                    .map(|segment| distance_to_line_segment(curve_point, segment[0], segment[1]))
+                    .fold(f32::INFINITY, f32::min)
+            })
+            .fold(0.0, f32::max)
     }
 
     #[test]
@@ -477,6 +413,29 @@ mod tests {
     }
 
     #[test]
+    fn adjacent_segments_have_continuous_tangent_directions() {
+        let points = [
+            point(-30.0, 20.0),
+            point(0.0, 0.0),
+            point(35.0, 50.0),
+            point(120.0, 70.0),
+            point(180.0, 10.0),
+        ];
+        let epsilon = 1.0e-3;
+        let knot = curve_position(points[0], points[1], points[2], points[3], 1.0);
+        let before = curve_position(points[0], points[1], points[2], points[3], 1.0 - epsilon);
+        let after = curve_position(points[1], points[2], points[3], points[4], epsilon);
+        let left = [knot[0] - before[0], knot[1] - before[1]];
+        let right = [after[0] - knot[0], after[1] - knot[1]];
+        let cross = (left[0] * right[1] - left[1] * right[0]).abs();
+        let lengths = left[0].hypot(left[1]) * right[0].hypot(right[1]);
+        let dot = left[0] * right[0] + left[1] * right[1];
+
+        assert!(cross / lengths < 0.01);
+        assert!(dot > 0.0);
+    }
+
+    #[test]
     fn smoother_waits_for_one_future_point_then_flushes_end() {
         let mut smoother = StrokeSmoother::default();
         let p0 = point(0.0, 0.0);
@@ -484,14 +443,14 @@ mod tests {
         let p2 = point(20.0, 10.0);
 
         smoother.begin(p0);
-        assert!(smoother.push(p1, options()).is_empty());
+        assert!(smoother.push(p1).is_empty());
 
-        let first = smoother.push(p2, options());
+        let first = smoother.push(p2);
         let first_end = first.last().expect("first segment should be emitted");
         assert!(close(first_end.x, p1.x));
         assert!(close(first_end.y, p1.y));
 
-        let final_segment = smoother.finish(options());
+        let final_segment = smoother.finish();
         let final_end = final_segment
             .last()
             .expect("final segment should be flushed");
@@ -500,48 +459,123 @@ mod tests {
     }
 
     #[test]
-    fn near_duplicate_points_replace_unemitted_endpoint() {
+    fn subpixel_movements_create_control_points() {
+        let mut smoother = StrokeSmoother::default();
+        let start = point(0.0, 0.0);
+        let first = point(0.4, 0.0);
+        let second = point(0.8, 0.0);
+        smoother.begin(start);
+
+        assert!(smoother.push(first).is_empty());
+        let emitted = smoother.push(second);
+
+        let first_end = emitted.last().expect("subpixel segment should be emitted");
+        assert!(close(first_end.x, first.x));
+        let final_segment = smoother.finish();
+        let final_end = final_segment.last().expect("tail should be emitted");
+        assert!(close(final_end.x, second.x));
+    }
+
+    #[test]
+    fn short_backtracking_preserves_the_turning_point() {
+        let mut smoother = StrokeSmoother::default();
+        let start = point(0.0, 0.0);
+        let turn = point(1.0, 0.0);
+        smoother.begin(start);
+
+        assert!(smoother.push(turn).is_empty());
+        let outward_segment = smoother.push(start);
+        let outward_end = outward_segment
+            .last()
+            .expect("short outward segment should be emitted");
+        assert!(close(outward_end.x, turn.x));
+        assert!(close(outward_end.y, turn.y));
+
+        let return_segment = smoother.finish();
+        let return_end = return_segment
+            .last()
+            .expect("short return segment should be emitted");
+        assert!(close(return_end.x, start.x));
+        assert!(close(return_end.y, start.y));
+    }
+
+    #[test]
+    fn curved_small_events_are_not_collapsed_into_one_chord() {
+        let mut smoother = StrokeSmoother::default();
+        let start = point(0.0, 0.0);
+        let first_control = point(1.6, 0.0);
+        smoother.begin(start);
+
+        let mut emitted = Vec::new();
+        for raw in [
+            point(0.4, 0.0),
+            point(0.8, 0.0),
+            point(1.2, 0.0),
+            first_control,
+            point(1.9, 0.3),
+            point(2.2, 0.6),
+            point(2.5, 0.9),
+            point(2.5, 1.3),
+            point(2.4, 1.7),
+            point(2.2, 2.1),
+            point(1.9, 2.4),
+        ] {
+            emitted.extend(smoother.push(raw));
+        }
+        emitted.extend(smoother.finish());
+
+        assert!(
+            emitted
+                .iter()
+                .any(|point| close(point.x, first_control.x) && close(point.y, first_control.y))
+        );
+        assert!(emitted.iter().any(|point| point.y > 2.0));
+    }
+
+    #[test]
+    fn coalesced_stationary_endpoint_is_flushed_exactly() {
         let mut smoother = StrokeSmoother::default();
         let p0 = point(0.0, 0.0);
         let p1 = point(10.0, 0.0);
-        let p1_latest = point(10.25, 0.2);
+        let mut p1_latest = p1;
+        p1_latest.radius += 0.2;
 
         smoother.begin(p0);
-        assert!(smoother.push(p1, options()).is_empty());
-        assert!(smoother.push(p1_latest, options()).is_empty());
+        assert!(smoother.push(p1).is_empty());
+        assert!(smoother.push(p1_latest).is_empty());
 
-        let final_segment = smoother.finish(options());
+        let final_segment = smoother.finish();
         let final_end = final_segment
             .last()
             .expect("coalesced endpoint should be flushed");
         assert!(close(final_end.x, p1_latest.x));
         assert!(close(final_end.y, p1_latest.y));
+        assert!(close(final_end.radius, p1_latest.radius));
     }
 
     #[test]
-    fn pressure_changes_are_not_coalesced_as_duplicates() {
+    fn cumulative_pressure_changes_create_a_control_point() {
         let mut smoother = StrokeSmoother::default();
         let p0 = point(0.0, 0.0);
         let p1 = point(10.0, 0.0);
-        let mut p2 = point(10.1, 0.0);
-        p2.radius = p1.radius + MIN_RADIUS_DELTA_PX * 2.0;
-
         smoother.begin(p0);
-        assert!(smoother.push(p1, options()).is_empty());
-        assert!(!smoother.push(p2, options()).is_empty());
+        assert!(smoother.push(p1).is_empty());
 
-        let final_segment = smoother.finish(options());
-        let final_end = final_segment
-            .last()
-            .expect("pressure change endpoint should be flushed");
-        assert!(close(final_end.x, p2.x));
-        assert!(close(final_end.radius, p2.radius));
+        for radius_delta in [0.1, 0.2, 0.3] {
+            let mut pressure_point = p1;
+            pressure_point.radius += radius_delta;
+            assert!(smoother.push(pressure_point).is_empty());
+        }
+
+        let mut accepted_pressure_point = p1;
+        accepted_pressure_point.radius += 0.5;
+        assert!(!smoother.push(accepted_pressure_point).is_empty());
     }
 
     #[test]
     fn duplicate_points_do_not_emit_nans() {
         let p = point(5.0, 5.0);
-        let emitted = sample_segment(p, p, p, p, 1.0);
+        let emitted = sample_segment(p, p, p, p);
 
         assert!(!emitted.is_empty());
         assert!(emitted.iter().all(|point| {
@@ -566,7 +600,6 @@ mod tests {
             p1,
             p2,
             extrapolate_after(p1, p2),
-            1.0,
         );
 
         assert!(
@@ -583,7 +616,6 @@ mod tests {
             point(10.0, 0.0),
             point(1000.0, 0.0),
             point(1010.0, 0.0),
-            1.0,
         );
 
         assert_eq!(emitted.len(), 1);
@@ -592,71 +624,54 @@ mod tests {
     }
 
     #[test]
-    fn curved_segments_emit_more_samples_than_straight_segments() {
-        let straight = sample_segment(
-            point(0.0, 0.0),
-            point(10.0, 0.0),
-            point(1000.0, 0.0),
-            point(1010.0, 0.0),
-            1.0,
-        );
-        let curved = sample_segment(
-            point(0.0, 0.0),
-            point(0.0, 100.0),
-            point(100.0, 100.0),
-            point(100.0, 0.0),
-            1.0,
-        );
-
-        assert!(curved.len() > straight.len());
-        assert!(curved.len() <= MAX_CURVE_SAMPLES);
-    }
-
-    #[test]
-    fn smoothing_strength_zero_falls_back_to_linear_positions() {
-        let p0 = point(0.0, 100.0);
+    fn sparse_fast_turn_emits_a_curve_instead_of_one_chord() {
+        let p0 = point(-100.0, 0.0);
         let p1 = point(0.0, 0.0);
         let p2 = point(100.0, 0.0);
-        let p3 = point(100.0, 100.0);
+        let p3 = point(200.0, 100.0);
+        let emitted = sample_segment(p0, p1, p2, p3);
 
-        let midpoint = curve_position(p0, p1, p2, p3, 0.0, 0.5);
-
-        assert!(close(midpoint[0], 50.0));
-        assert!(close(midpoint[1], 0.0));
-    }
-
-    #[test]
-    fn adaptive_sampling_is_capped() {
-        let emitted = sample_segment(
-            point(0.0, 0.0),
-            point(0.0, 5000.0),
-            point(5000.0, 5000.0),
-            point(5000.0, 0.0),
-            1.0,
+        assert!(emitted.len() > 1);
+        assert!(
+            emitted[..emitted.len() - 1]
+                .iter()
+                .any(|point| point.y.abs() > 0.01)
         );
-
-        assert!(emitted.len() <= MAX_CURVE_SAMPLES);
+        assert!(close(emitted.last().expect("endpoint").x, p2.x));
+        assert!(close(emitted.last().expect("endpoint").y, p2.y));
     }
 
     #[test]
-    fn jitter_filter_snaps_final_endpoint_to_raw_input() {
-        let mut smoother = StrokeSmoother::default();
-        let mut options = options();
-        options.jitter_filter = true;
+    fn normal_canvas_curve_respects_flatness_tolerance() {
+        let controls = [
+            point(0.0, 0.0),
+            point(0.0, 4000.0),
+            point(4000.0, 4000.0),
+            point(4000.0, 0.0),
+        ];
+        let emitted = sample_segment(controls[0], controls[1], controls[2], controls[3]);
+        let error =
+            max_polyline_error(controls[0], controls[1], controls[2], controls[3], &emitted);
 
-        let p0 = point(0.0, 0.0);
-        let p1 = point(100.0, 0.0);
-        let p2 = point(200.0, 0.0);
+        assert!(error <= CURVE_FLATNESS_PX, "flattening error: {error}");
+    }
 
-        smoother.begin(p0);
-        assert!(smoother.push(p1, options).is_empty());
-        smoother.push(p2, options);
+    #[test]
+    fn balanced_sampling_degrades_evenly_when_capped() {
+        let controls = [
+            point(0.0, 0.0),
+            point(0.0, 10_000.0),
+            point(10_000.0, 10_000.0),
+            point(10_000.0, 0.0),
+        ];
+        let params = adaptive_sample_parameters(controls[0], controls[1], controls[2], controls[3]);
+        let emitted = sample_segment(controls[0], controls[1], controls[2], controls[3]);
+        let error =
+            max_polyline_error(controls[0], controls[1], controls[2], controls[3], &emitted);
 
-        let final_segment = smoother.finish(options);
-        let final_end = final_segment
-            .last()
-            .expect("final raw endpoint should be emitted");
-        assert!(close(final_end.x, p2.x));
-        assert!(close(final_end.y, p2.y));
+        assert_eq!(params.len(), MAX_CURVE_SAMPLES);
+        assert!(params.windows(2).all(|window| window[0] < window[1]));
+        assert!(close(*params.last().expect("final parameter"), 1.0));
+        assert!(error < 1.0, "capped flattening error: {error}");
     }
 }

@@ -107,16 +107,16 @@ impl ApplicationHandler for App {
                 let mut needs_redraw = egui_response.repaint;
                 let egui_consumed = egui_response.consumed;
 
-                if !egui_consumed {
-                    if let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_ref()) {
-                        needs_redraw |= self.input.handle_event(
-                            &event,
-                            paint,
-                            gui.brush,
-                            gui.stroke_smoothing,
-                            &self.pressure_state,
-                        );
-                    }
+                if !egui_consumed
+                    && let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_ref())
+                {
+                    needs_redraw |= self.input.handle_event(
+                        &event,
+                        paint,
+                        gui.brush,
+                        gui.stroke_smoothing,
+                        &self.pressure_state,
+                    );
                 }
 
                 match event {

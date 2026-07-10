@@ -7,12 +7,12 @@ use winit::{dpi::PhysicalSize, window::Window};
 mod stamps;
 mod view;
 
-pub use crate::brush::StrokePoint;
-use crate::constants::{DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH};
 use self::{
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue, StampRaw},
     view::PaintView,
 };
+pub use crate::brush::StrokePoint;
+use crate::constants::{DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH};
 
 const DOCUMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
@@ -448,7 +448,8 @@ impl PaintRenderer {
     }
 
     pub fn fit_to_screen(&mut self) {
-        self.view.fit_to_screen(self.surface_size(), self.document_size);
+        self.view
+            .fit_to_screen(self.surface_size(), self.document_size);
     }
 
     pub fn zoom_to_100(&mut self) {
@@ -476,12 +477,8 @@ impl PaintRenderer {
     }
 
     pub fn queue_stamp(&mut self, point: StrokePoint, color: [f32; 4]) -> bool {
-        self.stamp_queue.queue_point(
-            point,
-            color,
-            self.document_size[0],
-            self.document_size[1],
-        )
+        self.stamp_queue
+            .queue_point(point, color, self.document_size[0], self.document_size[1])
     }
 
     pub fn stamp_line(&mut self, from: StrokePoint, to: StrokePoint, color: [f32; 4]) -> usize {
@@ -638,4 +635,3 @@ fn create_paint_texture(
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
 }
-

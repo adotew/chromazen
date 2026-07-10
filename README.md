@@ -12,6 +12,7 @@ Implemented:
 - pressure-sensitive brush size/opacity on macOS via AppKit tablet/pressure events
 - mouse/fallback input remains full-size and fully opaque
 - instanced GPU brush stamping with the same core stamp shader/blend approach as `minipaint`
+- optional centripetal Catmull–Rom stroke smoothing for fast, sparse input
 - wheel zoom, pan, clear, fit, 100% zoom
 
 Run:
@@ -25,4 +26,4 @@ Controls:
 - Left drag: paint
 - Wheel: zoom around cursor
 - Middle/right drag or Space + left drag: pan
-- Use the egui panel for brush size/color, pressure readout, and stats
+- Use the egui panel for brush size/color, stroke smoothing, pressure readout, and stats

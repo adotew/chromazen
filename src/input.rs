@@ -52,7 +52,7 @@ impl PaintInputController {
                 if self.is_drawing {
                     let point = self.stroke_point_from_window(paint, next, brush, pressure_state);
                     let queued = if self.smoothing_options.enabled {
-                        let smoothed_points = self.smoother.push(point, self.smoothing_options);
+                        let smoothed_points = self.smoother.push(point);
                         self.queue_smoothed_points(paint, smoothed_points, brush.rgba())
                     } else {
                         self.queue_direct_point(paint, point, brush.rgba())
@@ -112,7 +112,9 @@ impl PaintInputController {
                 }
                 false
             }
-            WindowEvent::CursorLeft { .. } => self.end_stroke(paint, brush.rgba()),
+            WindowEvent::CursorLeft { .. } | WindowEvent::Focused(false) => {
+                self.end_stroke(paint, brush.rgba())
+            }
             _ => false,
         }
     }
@@ -166,7 +168,7 @@ impl PaintInputController {
     fn end_stroke(&mut self, paint: &mut PaintRenderer, color: [f32; 4]) -> bool {
         let queued = if self.is_drawing {
             let queued = if self.smoothing_options.enabled {
-                let smoothed_points = self.smoother.finish(self.smoothing_options);
+                let smoothed_points = self.smoother.finish();
                 self.queue_smoothed_points(paint, smoothed_points, color)
             } else {
                 self.smoother.reset();

@@ -93,14 +93,6 @@ impl GuiLayer {
                     );
                     ui.separator();
                     ui.checkbox(&mut self.stroke_smoothing.enabled, "Stroke smoothing");
-                    ui.add_enabled(
-                        self.stroke_smoothing.enabled,
-                        egui::Slider::new(&mut self.stroke_smoothing.strength, 0.0..=1.0)
-                            .text("Smoothing strength"),
-                    );
-                    ui.add_enabled_ui(self.stroke_smoothing.enabled, |ui| {
-                        ui.checkbox(&mut self.stroke_smoothing.jitter_filter, "Stabilize jitter");
-                    });
                     ui.horizontal(|ui| {
                         if ui.button("Clear").clicked() {
                             actions.clear = true;
