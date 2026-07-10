@@ -38,11 +38,6 @@ impl PaintView {
         ];
     }
 
-    pub(crate) fn zoom_to_100(&mut self) {
-        self.zoom = 1.0;
-        self.offset = [0.0, 0.0];
-    }
-
     pub(crate) fn apply_zoom_at(&mut self, factor: f32, cursor: [f32; 2]) {
         let old = self.zoom;
         let new = (old * factor).clamp(MIN_ZOOM, MAX_ZOOM);

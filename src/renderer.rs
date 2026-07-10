@@ -34,20 +34,12 @@ struct ViewUniform {
     padding: [f32; 2],
 }
 
-#[derive(Default, Clone, Copy)]
-pub struct PaintStats {
-    pub stamps_last_frame: usize,
-    pub pending_stamps: usize,
-    pub total_stamps: u64,
-}
-
 pub struct PaintRenderer {
     gpu: GpuContext,
     document_size: [u32; 2],
     resources: RenderResources,
     stamp_queue: StampQueue,
     view: PaintView,
-    stats: PaintStats,
 }
 
 impl PaintRenderer {
@@ -66,7 +58,6 @@ impl PaintRenderer {
             resources,
             stamp_queue: StampQueue::default(),
             view: PaintView::default(),
-            stats: PaintStats::default(),
         };
         renderer.fit_to_screen();
         renderer.clear_canvas();
@@ -85,19 +76,9 @@ impl PaintRenderer {
     pub fn surface_size(&self) -> [u32; 2] {
         self.gpu.surface_size()
     }
-    pub fn document_size(&self) -> [u32; 2] {
-        self.document_size
-    }
     pub fn zoom(&self) -> f32 {
         self.view.zoom()
     }
-    pub fn offset(&self) -> [f32; 2] {
-        self.view.offset()
-    }
-    pub fn stats(&self) -> PaintStats {
-        self.stats
-    }
-
     pub fn has_pending_stamps(&self) -> bool {
         self.stamp_queue.has_pending()
     }
@@ -109,10 +90,6 @@ impl PaintRenderer {
     pub fn fit_to_screen(&mut self) {
         self.view
             .fit_to_screen(self.surface_size(), self.document_size);
-    }
-
-    pub fn zoom_to_100(&mut self) {
-        self.view.zoom_to_100();
     }
 
     pub fn apply_zoom_at(&mut self, factor: f32, cursor: [f32; 2]) {
@@ -177,7 +154,6 @@ impl PaintRenderer {
             });
         }
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
-        self.stats = PaintStats::default();
     }
 
     pub fn acquire_frame(&self) -> wgpu::CurrentSurfaceTexture {
@@ -189,11 +165,7 @@ impl PaintRenderer {
     }
 
     pub fn render_to_view(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
-        self.stats.stamps_last_frame = 0;
-        let count = self.flush_stamps(encoder);
-        self.stats.stamps_last_frame = count;
-        self.stats.pending_stamps = self.stamp_queue.pending_len();
-        self.stats.total_stamps += count as u64;
+        self.flush_stamps(encoder);
         self.write_view_uniform();
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -222,7 +194,7 @@ impl PaintRenderer {
         pass.draw(0..3, 0..1);
     }
 
-    fn flush_stamps(&mut self, encoder: &mut wgpu::CommandEncoder) -> usize {
+    fn flush_stamps(&mut self, encoder: &mut wgpu::CommandEncoder) {
         let raw = self.stamp_queue.drain_raw(
             self.document_size[0],
             self.document_size[1],
@@ -230,7 +202,7 @@ impl PaintRenderer {
         );
         let count = raw.len();
         if count == 0 {
-            return 0;
+            return;
         }
 
         self.gpu
@@ -256,7 +228,6 @@ impl PaintRenderer {
         pass.set_pipeline(&self.resources.stamp_pipeline);
         pass.set_bind_group(0, &self.resources.stamp_bind_group, &[]);
         pass.draw(0..6, 0..count as u32);
-        count
     }
 
     fn write_view_uniform(&self) {

@@ -14,10 +14,7 @@ use winit::{
     window::{Window, WindowAttributes},
 };
 
-use self::{
-    input::PaintInputController,
-    ui::{GuiLayer, PanelSnapshot},
-};
+use self::{input::PaintInputController, ui::GuiLayer};
 use crate::{
     platform::{MacosPressureMonitor, PressureStateHandle},
     renderer::PaintRenderer,
@@ -25,6 +22,7 @@ use crate::{
 
 const WINDOW_TITLE: &str = "minipaint-rs";
 
+#[derive(Default)]
 pub struct App {
     window: Option<Arc<Window>>,
     paint: Option<PaintRenderer>,
@@ -32,27 +30,7 @@ pub struct App {
     input: PaintInputController,
     pressure_state: PressureStateHandle,
     _pressure_monitor: Option<MacosPressureMonitor>,
-    last_frame: Instant,
     next_repaint: Option<Instant>,
-    frame_ms: f32,
-    fps: f32,
-}
-
-impl Default for App {
-    fn default() -> Self {
-        Self {
-            window: None,
-            paint: None,
-            gui: None,
-            input: PaintInputController::default(),
-            pressure_state: PressureStateHandle::default(),
-            _pressure_monitor: None,
-            last_frame: Instant::now(),
-            next_repaint: None,
-            frame_ms: 0.0,
-            fps: 0.0,
-        }
-    }
 }
 
 impl ApplicationHandler for App {
@@ -85,7 +63,6 @@ impl ApplicationHandler for App {
         self.gui = Some(gui);
         self.pressure_state = pressure_state;
         self._pressure_monitor = pressure_monitor;
-        self.last_frame = Instant::now();
         window.request_redraw();
     }
 
@@ -162,8 +139,6 @@ impl ApplicationHandler for App {
 
 impl App {
     fn render(&mut self, window: &Window) {
-        self.update_frame_timing();
-
         let Some(paint) = self.paint.as_mut() else {
             return;
         };
@@ -174,27 +149,7 @@ impl App {
             return;
         }
 
-        let snapshot = PanelSnapshot {
-            document_size: paint.document_size(),
-            zoom: paint.zoom(),
-            offset: paint.offset(),
-            pressure: self.pressure_state.brush_pressure(),
-            pen_active: self.pressure_state.is_pen_active(),
-            frame_ms: self.frame_ms,
-            fps: self.fps,
-            stats: paint.stats(),
-        };
-        let (full_output, actions) = gui.run_panel(window, snapshot);
-        if actions.clear {
-            paint.clear_canvas();
-        }
-        if actions.fit {
-            paint.fit_to_screen();
-        }
-        if actions.zoom_100 {
-            paint.zoom_to_100();
-        }
-
+        let full_output = gui.run(window);
         let repaint_delay = ui::repaint_delay(&full_output);
         gui.state
             .handle_platform_output(window, full_output.platform_output);
@@ -275,14 +230,6 @@ impl App {
         }
 
         self.update_repaint_schedule(repaint_delay, window, canvas_needs_redraw);
-    }
-
-    fn update_frame_timing(&mut self) {
-        let now = Instant::now();
-        let dt = now.duration_since(self.last_frame).as_secs_f32();
-        self.last_frame = now;
-        self.frame_ms = dt * 1000.0;
-        self.fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
     }
 
     fn update_repaint_schedule(

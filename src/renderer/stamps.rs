@@ -38,10 +38,6 @@ impl StampQueue {
         self.distance_since_last_stamp = 0.0;
     }
 
-    pub(crate) fn pending_len(&self) -> usize {
-        self.pending.len()
-    }
-
     pub(crate) fn has_pending(&self) -> bool {
         !self.pending.is_empty()
     }

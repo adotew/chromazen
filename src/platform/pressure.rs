@@ -31,10 +31,6 @@ impl PressureStateHandle {
         }
     }
 
-    pub fn is_pen_active(&self) -> bool {
-        self.0.lock().expect("pressure state poisoned").pen_active
-    }
-
     fn note_pen_pressure(&self, pressure: f32, active: bool) -> bool {
         let mut state = self.0.lock().expect("pressure state poisoned");
         let pressure = pressure.clamp(0.0, 1.0);
