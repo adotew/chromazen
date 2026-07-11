@@ -12,7 +12,7 @@ use self::{
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue},
     view::PaintView,
 };
-use crate::{gpu::GpuContext, paint::StrokePoint};
+use crate::{config::LoadedBrushPreset, gpu::GpuContext, paint::StrokePoint};
 
 const DEFAULT_CANVAS_WIDTH: u32 = 4000;
 const DEFAULT_CANVAS_HEIGHT: u32 = 4000;
@@ -43,14 +43,23 @@ pub struct PaintRenderer {
 }
 
 impl PaintRenderer {
-    pub async fn new(window: Arc<Window>) -> Result<Self, String> {
+    pub async fn new(
+        window: Arc<Window>,
+        brush_preset: &LoadedBrushPreset,
+    ) -> Result<Self, String> {
         let gpu = GpuContext::new(window).await?;
         let device = gpu.device();
         let queue = gpu.queue();
         let surface_format = gpu.surface_format();
 
         let document_size = [DEFAULT_CANVAS_WIDTH, DEFAULT_CANVAS_HEIGHT];
-        let resources = RenderResources::new(device, queue, document_size, surface_format)?;
+        let resources = RenderResources::new(
+            device,
+            queue,
+            document_size,
+            surface_format,
+            brush_preset.stamp_image.as_ref(),
+        )?;
 
         let mut renderer = Self {
             gpu,

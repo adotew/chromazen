@@ -21,6 +21,7 @@ impl RenderResources {
         queue: &wgpu::Queue,
         document_size: [u32; 2],
         surface_format: wgpu::TextureFormat,
+        preset_stamp: Option<&image::RgbaImage>,
     ) -> Result<Self, String> {
         let (paint_texture, paint_texture_view) = create_paint_texture(device, document_size);
 
@@ -49,10 +50,17 @@ impl RenderResources {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let brush_image =
-            image::load_from_memory(include_bytes!("../../assets/charcoal-removebg-preview.png"))
-                .map_err(|err| format!("failed to load brush stamp: {err}"))?
-                .to_rgba8();
+        let bundled_brush;
+        let brush_image = if let Some(preset_stamp) = preset_stamp {
+            preset_stamp
+        } else {
+            bundled_brush = image::load_from_memory(include_bytes!(
+                "../../assets/charcoal-removebg-preview.png"
+            ))
+            .map_err(|err| format!("failed to load bundled brush stamp: {err}"))?
+            .to_rgba8();
+            &bundled_brush
+        };
         let brush_size = brush_image.dimensions();
         let brush_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("brush stamp texture"),

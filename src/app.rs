@@ -16,7 +16,7 @@ use winit::{
 
 use self::{input::PaintInputController, ui::GuiLayer};
 use crate::{
-    config::{AppConfig, ConfigStore},
+    config::{AppConfig, ConfigStore, LoadedBrushPreset},
     platform::{MacosPressureMonitor, PressureStateHandle},
     renderer::PaintRenderer,
 };
@@ -33,6 +33,7 @@ pub struct App {
     next_repaint: Option<Instant>,
     config_store: Option<ConfigStore>,
     config: AppConfig,
+    brush_preset: LoadedBrushPreset,
     config_load_error: Option<String>,
 }
 
@@ -57,7 +58,7 @@ impl ApplicationHandler for App {
         let pressure_monitor =
             MacosPressureMonitor::install(window.clone(), pressure_state.clone())
                 .expect("failed to initialize pressure monitor");
-        let paint = pollster::block_on(PaintRenderer::new(window.clone()))
+        let paint = pollster::block_on(PaintRenderer::new(window.clone(), &self.brush_preset))
             .expect("failed to initialize wgpu paint renderer");
         let gui = GuiLayer::new(
             window.as_ref(),
@@ -149,6 +150,7 @@ impl App {
     fn new(
         config_store: Option<ConfigStore>,
         config: AppConfig,
+        brush_preset: LoadedBrushPreset,
         config_load_error: Option<String>,
     ) -> Self {
         Self {
@@ -161,6 +163,7 @@ impl App {
             next_repaint: None,
             config_store,
             config,
+            brush_preset,
             config_load_error,
         }
     }
@@ -317,7 +320,7 @@ impl App {
 }
 
 pub fn run() {
-    let (config_store, config, config_load_error) = match ConfigStore::discover() {
+    let (config_store, config, mut config_load_error) = match ConfigStore::discover() {
         Ok(store) => match store.load_app_config() {
             Ok(config) => (Some(store), config, None),
             Err(error) => {
@@ -331,7 +334,30 @@ pub fn run() {
         }
     };
 
+    let brush_preset = if let Some(store) = &config_store {
+        let catalog = store.discover_brushes();
+        for warning in &catalog.warnings {
+            log::warn!("failed to discover brush: {warning}");
+        }
+        log::debug!("discovered {} brush preset(s)", catalog.brushes.len());
+
+        match store.load_brush(&config.active_brush) {
+            Ok(brush) => brush,
+            Err(error) => {
+                log::error!("failed to load brush preset: {error}");
+                let message = format!("Could not load brush '{}': {error}", config.active_brush);
+                config_load_error = Some(match config_load_error {
+                    Some(existing) => format!("{existing}\n{message}"),
+                    None => message,
+                });
+                LoadedBrushPreset::bundled_charcoal()
+            }
+        }
+    } else {
+        LoadedBrushPreset::bundled_charcoal()
+    };
+
     let event_loop = EventLoop::new().expect("failed to create event loop");
-    let mut app = App::new(config_store, config, config_load_error);
+    let mut app = App::new(config_store, config, brush_preset, config_load_error);
     event_loop.run_app(&mut app).expect("event loop error");
 }

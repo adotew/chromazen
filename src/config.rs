@@ -11,6 +11,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::paint::{MAX_BRUSH_SIZE, MIN_BRUSH_SIZE};
 
+mod brush;
+
+use brush::{BUNDLED_BRUSH_ID, discover_user_brushes, load_user_brush};
+pub(crate) use brush::{BrushCatalog, LoadedBrushPreset};
+
 const APP_NAME: &str = "minipaint";
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CURRENT_SCHEMA_VERSION: u32 = 1;
@@ -102,6 +107,22 @@ impl ConfigStore {
 
     pub(crate) fn config_path(&self) -> PathBuf {
         self.root.join(CONFIG_FILE_NAME)
+    }
+
+    pub(crate) fn brushes_path(&self) -> PathBuf {
+        self.root.join("brushes")
+    }
+
+    pub(crate) fn load_brush(&self, id: &str) -> Result<LoadedBrushPreset, ConfigError> {
+        let config_path = self.brushes_path().join(id).join("brush.toml");
+        if id == BUNDLED_BRUSH_ID && !config_path.exists() {
+            return Ok(LoadedBrushPreset::bundled_charcoal());
+        }
+        load_user_brush(&self.brushes_path(), id)
+    }
+
+    pub(crate) fn discover_brushes(&self) -> BrushCatalog {
+        discover_user_brushes(&self.brushes_path())
     }
 
     pub(crate) fn load_app_config(&self) -> Result<AppConfig, ConfigError> {
@@ -267,5 +288,67 @@ mod tests {
         fs::write(store.config_path(), "unknown_setting = true\n").expect("write config");
 
         assert!(store.load_app_config().is_err());
+    }
+
+    #[test]
+    fn bundled_charcoal_is_available_without_user_files() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+
+        let brush = store.load_brush("charcoal").expect("bundled brush");
+
+        assert_eq!(brush.id, "charcoal");
+        assert!(brush.stamp_image.is_none());
+    }
+
+    #[test]
+    fn user_brush_loads_stamp_relative_to_preset() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+        write_test_brush(&store, "pencil", "name = \"Pencil\"\nstamp = \"tip.png\"\n");
+
+        let brush = store.load_brush("pencil").expect("user brush");
+
+        assert_eq!(brush.preset.name, "Pencil");
+        assert_eq!(brush.stamp_image.expect("stamp").dimensions(), (2, 3));
+    }
+
+    #[test]
+    fn stamp_paths_cannot_escape_brush_directory() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+        let brush_dir = store.brushes_path().join("unsafe");
+        fs::create_dir_all(&brush_dir).expect("brush directory");
+        fs::write(
+            brush_dir.join("brush.toml"),
+            "name = \"Unsafe\"\nstamp = \"../outside.png\"\n",
+        )
+        .expect("brush config");
+
+        assert!(store.load_brush("unsafe").is_err());
+    }
+
+    #[test]
+    fn malformed_brush_does_not_hide_valid_brushes() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+        write_test_brush(&store, "pencil", "name = \"Pencil\"\nstamp = \"tip.png\"\n");
+        let broken_dir = store.brushes_path().join("broken");
+        fs::create_dir_all(&broken_dir).expect("broken brush directory");
+        fs::write(broken_dir.join("brush.toml"), "not valid = [").expect("broken config");
+
+        let catalog = store.discover_brushes();
+
+        assert!(catalog.brushes.iter().any(|brush| brush.id == "pencil"));
+        assert_eq!(catalog.warnings.len(), 1);
+    }
+
+    fn write_test_brush(store: &ConfigStore, id: &str, config: &str) {
+        let brush_dir = store.brushes_path().join(id);
+        fs::create_dir_all(&brush_dir).expect("brush directory");
+        fs::write(brush_dir.join("brush.toml"), config).expect("brush config");
+        image::RgbaImage::from_pixel(2, 3, image::Rgba([0, 0, 0, 255]))
+            .save(brush_dir.join("tip.png"))
+            .expect("stamp image");
     }
 }

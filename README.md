@@ -27,6 +27,16 @@ Settings are loaded from `config.toml` in the platform configuration directory. 
 - macOS: `~/Library/Application Support/minipaint/config.toml`
 - Windows: the user's roaming application-data directory
 
+Custom brush presets can be installed under `brushes/<id>/` in that directory:
+
+```text
+brushes/pencil/
+├── brush.toml
+└── tip.png
+```
+
+Set `active_brush = "pencil"` in `config.toml`. The preset's `stamp` path is resolved relative to `brush.toml`; invalid presets fall back to the bundled charcoal brush.
+
 Controls:
 
 - Left drag: paint
