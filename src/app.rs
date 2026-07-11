@@ -38,9 +38,32 @@ pub struct App {
     config: AppConfig,
     brush_preset: LoadedBrushPreset,
     brush_catalog: Option<BrushCatalog>,
-    pending_brush: Option<LoadedBrushPreset>,
-    pending_reloaded_config: Option<AppConfig>,
+    pending_brush_change: Option<PendingBrushChange>,
     config_load_error: Option<String>,
+}
+
+struct PendingBrushChange {
+    brush: LoadedBrushPreset,
+    reloaded_config: Option<AppConfig>,
+    warning: Option<String>,
+}
+
+impl PendingBrushChange {
+    fn switch(brush: LoadedBrushPreset) -> Self {
+        Self {
+            brush,
+            reloaded_config: None,
+            warning: None,
+        }
+    }
+
+    fn reload(config: AppConfig, brush: LoadedBrushPreset, warning: Option<String>) -> Self {
+        Self {
+            brush,
+            reloaded_config: Some(config),
+            warning,
+        }
+    }
 }
 
 impl ApplicationHandler for App {
@@ -174,8 +197,7 @@ impl App {
             config,
             brush_preset,
             brush_catalog: Some(brush_catalog),
-            pending_brush: None,
-            pending_reloaded_config: None,
+            pending_brush_change: None,
             config_load_error,
         }
     }
@@ -212,9 +234,9 @@ impl App {
         if let Some(action) = gui.take_action() {
             settings_action_processed = true;
             let result = match (&self.config_store, action) {
-                (Some(store), GuiAction::SwitchBrush(id)) => store
-                    .load_brush(&id)
-                    .map(|loaded| self.pending_brush = Some(loaded)),
+                (Some(store), GuiAction::SwitchBrush(id)) => store.load_brush(&id).map(|brush| {
+                    self.pending_brush_change = Some(PendingBrushChange::switch(brush));
+                }),
                 (Some(store), GuiAction::SavePreset(preset)) => store
                     .save_brush_preset(&self.brush_preset.id, &preset)
                     .map(|()| {
@@ -223,21 +245,32 @@ impl App {
                     }),
                 (Some(store), GuiAction::SavePresetAs { id, preset }) => store
                     .duplicate_brush(&self.brush_preset, &id, &preset)
-                    .map(|loaded| self.pending_brush = Some(loaded)),
+                    .map(|brush| {
+                        self.pending_brush_change = Some(PendingBrushChange::switch(brush));
+                    }),
                 (Some(store), GuiAction::DeletePreset) => store
                     .delete_brush(&self.brush_preset.id)
-                    .map(|()| self.pending_brush = Some(LoadedBrushPreset::bundled_charcoal())),
-                (Some(store), GuiAction::ReloadFromDisk) => store
-                    .load_app_config()
-                    .and_then(|config| {
-                        store
-                            .load_brush(&config.active_brush)
-                            .map(|brush| (config, brush))
-                    })
-                    .map(|(config, brush)| {
-                        self.pending_reloaded_config = Some(config);
-                        self.pending_brush = Some(brush);
+                    .map(|()| {
+                        self.pending_brush_change = Some(PendingBrushChange::switch(
+                            LoadedBrushPreset::bundled_charcoal(),
+                        ));
                     }),
+                (Some(store), GuiAction::ReloadFromDisk) => {
+                    store.load_app_config().map(|config| {
+                        let (brush, warning) = match store.load_brush(&config.active_brush) {
+                            Ok(brush) => (brush, None),
+                            Err(error) => {
+                                let warning = format!(
+                                    "Could not reload brush '{}': {error}. Using bundled Charcoal instead.",
+                                    config.active_brush
+                                );
+                                (LoadedBrushPreset::bundled_charcoal(), Some(warning))
+                            }
+                        };
+                        self.pending_brush_change =
+                            Some(PendingBrushChange::reload(config, brush, warning));
+                    })
+                },
                 (Some(store), GuiAction::OpenConfigDirectory) => store
                     .open_config_directory()
                     .map(|()| gui.show_success("Opened the configuration folder")),
@@ -328,36 +361,40 @@ impl App {
         }
 
         let mut brush_switched = false;
-        if !canvas_needs_redraw && let Some(loaded) = self.pending_brush.take() {
+        if !canvas_needs_redraw && let Some(change) = self.pending_brush_change.take() {
+            let PendingBrushChange {
+                brush: loaded,
+                reloaded_config,
+                warning: reload_warning,
+            } = change;
             match paint.set_brush_preset(&loaded) {
                 Ok(()) => {
                     let catalog = self
                         .config_store
                         .as_ref()
                         .map_or_else(BrushCatalog::default, ConfigStore::discover_brushes);
+                    let mut warnings = catalog.warnings.clone();
+                    if let Some(warning) = reload_warning {
+                        log::warn!("{warning}");
+                        warnings.insert(0, warning);
+                    }
                     for warning in &catalog.warnings {
                         log::warn!("failed to discover brush: {warning}");
                     }
-                    let catalog_warning = (!catalog.warnings.is_empty()).then(|| {
-                        format!(
-                            "Some brush presets could not be loaded:\n{}",
-                            catalog.warnings.join("\n")
-                        )
-                    });
+                    let combined_warning = (!warnings.is_empty()).then(|| warnings.join("\n"));
                     self.config.active_brush.clone_from(&loaded.id);
                     gui.apply_brush_preset(&loaded, catalog);
-                    if let Some(config) = self.pending_reloaded_config.take() {
+                    if let Some(config) = reloaded_config {
                         self.config = config;
                         gui.settings_reloaded(&self.config);
                     }
-                    if let Some(warning) = catalog_warning {
+                    if let Some(warning) = combined_warning {
                         gui.show_error(warning);
                     }
                     self.brush_preset = loaded;
                     brush_switched = true;
                 }
                 Err(error) => {
-                    self.pending_reloaded_config = None;
                     log::error!("failed to switch brush texture: {error}");
                     gui.show_error(error);
                 }
