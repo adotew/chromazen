@@ -348,6 +348,16 @@ mod tests {
     }
 
     #[test]
+    fn subpixel_minimum_brush_spacing_is_rejected() {
+        let mut preset = brush::BrushPreset::default();
+        preset.spacing.minimum = 0.5;
+
+        let error = preset.validate().expect_err("subpixel spacing");
+
+        assert!(error.to_string().contains("spacing.minimum"));
+    }
+
+    #[test]
     fn unsupported_brush_schema_is_rejected() {
         let temp = tempfile::tempdir().expect("temp directory");
         let store = ConfigStore::from_root(temp.path());

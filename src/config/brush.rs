@@ -60,7 +60,7 @@ impl BrushPreset {
             ));
         }
         validate_finite_non_negative("spacing.ratio", self.spacing.ratio)?;
-        validate_finite_positive("spacing.minimum", self.spacing.minimum)?;
+        validate_finite_at_least("spacing.minimum", self.spacing.minimum, 1.0)?;
         validate_unit("pressure.min_size", self.pressure.min_size)?;
         validate_unit("pressure.min_opacity", self.pressure.min_opacity)?;
         validate_finite_positive("pressure.opacity_gamma", self.pressure.opacity_gamma)?;
@@ -438,6 +438,15 @@ fn validate_finite_non_negative(field: &str, value: f32) -> Result<(), ConfigErr
     if !value.is_finite() || value < 0.0 {
         return Err(ConfigError::new(format!(
             "{field} must be finite and non-negative"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_finite_at_least(field: &str, value: f32, minimum: f32) -> Result<(), ConfigError> {
+    if !value.is_finite() || value < minimum {
+        return Err(ConfigError::new(format!(
+            "{field} must be finite and at least {minimum}"
         )));
     }
     Ok(())
