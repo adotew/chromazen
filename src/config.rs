@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 mod brush;
 
 use brush::{BUNDLED_BRUSH_ID, discover_user_brushes, load_user_brush};
-pub(crate) use brush::{BrushCatalog, BrushPreset, BrushSummary, LoadedBrushPreset};
+pub(crate) use brush::{BrushCatalog, BrushSummary, LoadedBrushPreset};
 
 const APP_NAME: &str = "minipaint-rs";
 const CONFIG_FILE_NAME: &str = "config.toml";
@@ -24,6 +24,7 @@ pub(crate) struct AppConfig {
     pub(crate) schema_version: u32,
     pub(crate) active_brush: String,
     pub(crate) brush: CurrentBrushConfig,
+    pub(crate) smoothing: SmoothingConfig,
 }
 
 impl Default for AppConfig {
@@ -32,6 +33,7 @@ impl Default for AppConfig {
             schema_version: CURRENT_SCHEMA_VERSION,
             active_brush: "charcoal".to_owned(),
             brush: CurrentBrushConfig::default(),
+            smoothing: SmoothingConfig::default(),
         }
     }
 }
@@ -47,7 +49,31 @@ impl AppConfig {
         if self.active_brush.trim().is_empty() {
             return Err(ConfigError::new("active_brush must not be empty"));
         }
-        self.brush.validate()
+        self.brush.validate()?;
+        self.smoothing.validate()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct SmoothingConfig {
+    pub(crate) strength: f32,
+}
+
+impl Default for SmoothingConfig {
+    fn default() -> Self {
+        Self { strength: 0.8 }
+    }
+}
+
+impl SmoothingConfig {
+    fn validate(&self) -> Result<(), ConfigError> {
+        if !self.strength.is_finite() || self.strength <= 0.0 || self.strength > 1.0 {
+            return Err(ConfigError::new(
+                "smoothing.strength must be greater than 0 and at most 1",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -109,10 +135,6 @@ impl ConfigStore {
         self.root.join("brushes")
     }
 
-    pub(crate) fn brush_config_path(&self, id: &str) -> PathBuf {
-        self.brushes_path().join(id).join("brush.toml")
-    }
-
     pub(crate) fn open_config_directory(&self) -> Result<(), ConfigError> {
         fs::create_dir_all(&self.root).map_err(|error| {
             ConfigError::io("create configuration directory for", &self.root, error)
@@ -130,27 +152,6 @@ impl ConfigStore {
 
     pub(crate) fn discover_brushes(&self) -> BrushCatalog {
         discover_user_brushes(&self.brushes_path())
-    }
-
-    pub(crate) fn save_brush_preset(
-        &self,
-        id: &str,
-        preset: &BrushPreset,
-    ) -> Result<(), ConfigError> {
-        brush::save_user_brush(&self.brushes_path(), id, preset)
-    }
-
-    pub(crate) fn duplicate_brush(
-        &self,
-        source: &LoadedBrushPreset,
-        id: &str,
-        preset: &BrushPreset,
-    ) -> Result<LoadedBrushPreset, ConfigError> {
-        brush::duplicate_user_brush(&self.brushes_path(), source, id, preset)
-    }
-
-    pub(crate) fn delete_brush(&self, id: &str) -> Result<(), ConfigError> {
-        brush::delete_user_brush(&self.brushes_path(), id)
     }
 
     pub(crate) fn load_app_config(&self) -> Result<AppConfig, ConfigError> {
@@ -259,6 +260,7 @@ mod tests {
         assert_eq!(config.brush.size, 425.0);
         assert_eq!(config.brush.color, CurrentBrushConfig::default().color);
         assert_eq!(config.active_brush, "charcoal");
+        assert_eq!(config.smoothing, SmoothingConfig::default());
     }
 
     #[test]
@@ -314,6 +316,22 @@ mod tests {
         let error = store.load_app_config().expect_err("future schema");
 
         assert!(error.to_string().contains("unsupported schema_version 2"));
+    }
+
+    #[test]
+    fn invalid_smoothing_strength_is_rejected() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+        for strength in [0.0, 1.5] {
+            fs::write(
+                store.config_path(),
+                format!("[smoothing]\nstrength = {strength}\n"),
+            )
+            .expect("write config");
+
+            let error = store.load_app_config().expect_err("invalid config");
+            assert!(error.to_string().contains("smoothing.strength"));
+        }
     }
 
     #[test]
@@ -389,6 +407,22 @@ mod tests {
     }
 
     #[test]
+    fn legacy_per_brush_smoothing_is_accepted_but_not_saved() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+        write_test_brush(
+            &store,
+            "legacy",
+            "name = \"Legacy\"\nstamp = \"tip.png\"\n[smoothing]\nenabled = false\nstrength = 0.2\n",
+        );
+
+        let brush = store.load_brush("legacy").expect("legacy brush");
+        let serialized = toml::to_string_pretty(&brush.preset).expect("serialize preset");
+
+        assert!(!serialized.contains("smoothing"));
+    }
+
+    #[test]
     fn stamp_paths_cannot_escape_brush_directory() {
         let temp = tempfile::tempdir().expect("temp directory");
         let store = ConfigStore::from_root(temp.path());
@@ -401,50 +435,6 @@ mod tests {
         .expect("brush config");
 
         assert!(store.load_brush("unsafe").is_err());
-    }
-
-    #[test]
-    fn user_brush_can_be_duplicated_updated_and_deleted() {
-        let temp = tempfile::tempdir().expect("temp directory");
-        let store = ConfigStore::from_root(temp.path());
-        let source = store.load_brush("charcoal").expect("bundled brush");
-        let mut preset = source.preset.clone();
-        preset.name = "Soft Charcoal".to_owned();
-
-        let duplicated = store
-            .duplicate_brush(&source, "soft-charcoal", &preset)
-            .expect("duplicate brush");
-        assert_eq!(duplicated.preset.name, "Soft Charcoal");
-        assert!(duplicated.stamp_image.is_some());
-
-        preset.name = "Softer Charcoal".to_owned();
-        store
-            .save_brush_preset("soft-charcoal", &preset)
-            .expect("update brush");
-        assert_eq!(
-            store
-                .load_brush("soft-charcoal")
-                .expect("updated brush")
-                .preset
-                .name,
-            "Softer Charcoal"
-        );
-
-        store.delete_brush("soft-charcoal").expect("delete brush");
-        assert!(!store.brushes_path().join("soft-charcoal").exists());
-    }
-
-    #[test]
-    fn bundled_brush_cannot_be_deleted_or_overwritten() {
-        let temp = tempfile::tempdir().expect("temp directory");
-        let store = ConfigStore::from_root(temp.path());
-
-        assert!(store.delete_brush("charcoal").is_err());
-        assert!(
-            store
-                .save_brush_preset("charcoal", &BrushPreset::default())
-                .is_err()
-        );
     }
 
     #[test]

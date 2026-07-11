@@ -13,22 +13,12 @@ const MAX_CURVE_SAMPLES: usize = 96;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct StrokeSmoothingOptions {
-    pub enabled: bool,
     pub strength: f32,
 }
 
 impl Default for StrokeSmoothingOptions {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            strength: 0.8,
-        }
-    }
-}
-
-impl StrokeSmoothingOptions {
-    pub(crate) fn is_active(self) -> bool {
-        self.enabled && self.strength > f32::EPSILON
+        Self { strength: 0.8 }
     }
 }
 

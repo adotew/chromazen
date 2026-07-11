@@ -50,12 +50,8 @@ impl PaintInputController {
 
                 if self.is_drawing {
                     let point = self.stroke_point_from_window(paint, next, brush, pressure_state);
-                    let queued = if self.smoothing_options.is_active() {
-                        let smoothed_points = self.smoother.push(point);
-                        self.queue_smoothed_points(paint, smoothed_points, brush)
-                    } else {
-                        self.queue_direct_point(paint, point, brush)
-                    };
+                    let smoothed_points = self.smoother.push(point);
+                    let queued = self.queue_smoothed_points(paint, smoothed_points, brush);
                     return queued > 0;
                 }
 
@@ -130,24 +126,6 @@ impl PaintInputController {
         brush.stroke_point(doc, pressure_state.brush_pressure())
     }
 
-    fn queue_direct_point(
-        &mut self,
-        paint: &mut PaintRenderer,
-        point: StrokePoint,
-        brush: BrushSettings,
-    ) -> usize {
-        let color = brush.rgba();
-        let queued = if let Some(previous) = self.last_point {
-            paint.stamp_line(previous, point, color, brush.spacing)
-        } else if paint.queue_stamp(point, color) {
-            1
-        } else {
-            0
-        };
-        self.last_point = Some(point);
-        queued
-    }
-
     fn queue_smoothed_points(
         &mut self,
         paint: &mut PaintRenderer,
@@ -169,13 +147,8 @@ impl PaintInputController {
 
     fn end_stroke(&mut self, paint: &mut PaintRenderer, brush: BrushSettings) -> bool {
         let queued = if self.is_drawing {
-            let queued = if self.smoothing_options.is_active() {
-                let smoothed_points = self.smoother.finish();
-                self.queue_smoothed_points(paint, smoothed_points, brush)
-            } else {
-                self.smoother.reset();
-                0
-            };
+            let smoothed_points = self.smoother.finish();
+            let queued = self.queue_smoothed_points(paint, smoothed_points, brush);
             paint.end_stroke();
             queued
         } else {

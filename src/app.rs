@@ -237,24 +237,6 @@ impl App {
                 (Some(store), GuiAction::SwitchBrush(id)) => store.load_brush(&id).map(|brush| {
                     self.pending_brush_change = Some(PendingBrushChange::switch(brush));
                 }),
-                (Some(store), GuiAction::SavePreset(preset)) => store
-                    .save_brush_preset(&self.brush_preset.id, &preset)
-                    .map(|()| {
-                        self.brush_preset.preset = preset;
-                        gui.preset_saved(&store.brush_config_path(&self.brush_preset.id));
-                    }),
-                (Some(store), GuiAction::SavePresetAs { id, preset }) => store
-                    .duplicate_brush(&self.brush_preset, &id, &preset)
-                    .map(|brush| {
-                        self.pending_brush_change = Some(PendingBrushChange::switch(brush));
-                    }),
-                (Some(store), GuiAction::DeletePreset) => store
-                    .delete_brush(&self.brush_preset.id)
-                    .map(|()| {
-                        self.pending_brush_change = Some(PendingBrushChange::switch(
-                            LoadedBrushPreset::bundled_charcoal(),
-                        ));
-                    }),
                 (Some(store), GuiAction::ReloadFromDisk) => {
                     store.load_app_config().map(|config| {
                         let (brush, warning) = match store.load_brush(&config.active_brush) {
