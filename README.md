@@ -21,6 +21,12 @@ Run:
 cargo run --release
 ```
 
+Settings are loaded from `config.toml` in the platform configuration directory. Use **Save settings** in the brush panel to create or update it atomically:
+
+- Linux: `~/.config/minipaint/config.toml`
+- macOS: `~/Library/Application Support/minipaint/config.toml`
+- Windows: the user's roaming application-data directory
+
 Controls:
 
 - Left drag: paint

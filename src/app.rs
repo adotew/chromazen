@@ -16,13 +16,13 @@ use winit::{
 
 use self::{input::PaintInputController, ui::GuiLayer};
 use crate::{
+    config::{AppConfig, ConfigStore},
     platform::{MacosPressureMonitor, PressureStateHandle},
     renderer::PaintRenderer,
 };
 
 const WINDOW_TITLE: &str = "minipaint-rs";
 
-#[derive(Default)]
 pub struct App {
     window: Option<Arc<Window>>,
     paint: Option<PaintRenderer>,
@@ -31,6 +31,9 @@ pub struct App {
     pressure_state: PressureStateHandle,
     _pressure_monitor: Option<MacosPressureMonitor>,
     next_repaint: Option<Instant>,
+    config_store: Option<ConfigStore>,
+    config: AppConfig,
+    config_load_error: Option<String>,
 }
 
 impl ApplicationHandler for App {
@@ -56,7 +59,12 @@ impl ApplicationHandler for App {
                 .expect("failed to initialize pressure monitor");
         let paint = pollster::block_on(PaintRenderer::new(window.clone()))
             .expect("failed to initialize wgpu paint renderer");
-        let gui = GuiLayer::new(window.as_ref(), &paint);
+        let gui = GuiLayer::new(
+            window.as_ref(),
+            &paint,
+            &self.config,
+            self.config_load_error.take(),
+        );
 
         self.window = Some(window.clone());
         self.paint = Some(paint);
@@ -138,6 +146,25 @@ impl ApplicationHandler for App {
 }
 
 impl App {
+    fn new(
+        config_store: Option<ConfigStore>,
+        config: AppConfig,
+        config_load_error: Option<String>,
+    ) -> Self {
+        Self {
+            window: None,
+            paint: None,
+            gui: None,
+            input: PaintInputController::default(),
+            pressure_state: PressureStateHandle::default(),
+            _pressure_monitor: None,
+            next_repaint: None,
+            config_store,
+            config,
+            config_load_error,
+        }
+    }
+
     fn render(&mut self, window: &Window) {
         let Some(paint) = self.paint.as_mut() else {
             return;
@@ -150,6 +177,21 @@ impl App {
         }
 
         let full_output = gui.run(window);
+        let settings_action_processed = gui.take_save_requested();
+        if settings_action_processed {
+            self.config.brush = gui.current_brush_config();
+            if let Some(store) = &self.config_store {
+                match store.save_app_config(&self.config) {
+                    Ok(()) => gui.settings_saved(&store.config_path()),
+                    Err(error) => {
+                        log::error!("failed to save settings: {error}");
+                        gui.settings_save_failed(error.to_string());
+                    }
+                }
+            } else {
+                gui.settings_save_failed("The configuration directory is unavailable");
+            }
+        }
         let repaint_delay = ui::repaint_delay(&full_output);
         gui.state
             .handle_platform_output(window, full_output.platform_output);
@@ -229,7 +271,11 @@ impl App {
             gui.renderer.free_texture(id);
         }
 
-        self.update_repaint_schedule(repaint_delay, window, canvas_needs_redraw);
+        self.update_repaint_schedule(
+            repaint_delay,
+            window,
+            canvas_needs_redraw || settings_action_processed,
+        );
     }
 
     fn update_repaint_schedule(
@@ -271,7 +317,21 @@ impl App {
 }
 
 pub fn run() {
+    let (config_store, config, config_load_error) = match ConfigStore::discover() {
+        Ok(store) => match store.load_app_config() {
+            Ok(config) => (Some(store), config, None),
+            Err(error) => {
+                log::error!("failed to load settings: {error}");
+                (Some(store), AppConfig::default(), Some(error.to_string()))
+            }
+        },
+        Err(error) => {
+            log::error!("failed to locate settings: {error}");
+            (None, AppConfig::default(), Some(error.to_string()))
+        }
+    };
+
     let event_loop = EventLoop::new().expect("failed to create event loop");
-    let mut app = App::default();
+    let mut app = App::new(config_store, config, config_load_error);
     event_loop.run_app(&mut app).expect("event loop error");
 }

@@ -1,4 +1,5 @@
 mod app;
+mod config;
 mod gpu;
 mod paint;
 mod platform;
