@@ -7,9 +7,12 @@ pub(crate) struct RenderResources {
     pub(crate) _paint_texture: wgpu::Texture,
     pub(crate) paint_texture_view: wgpu::TextureView,
     pub(crate) stamp_buffer: wgpu::Buffer,
-    pub(crate) _stamp_uniform_buffer: wgpu::Buffer,
+    pub(crate) stamp_uniform_buffer: wgpu::Buffer,
     pub(crate) view_uniform_buffer: wgpu::Buffer,
     pub(crate) stamp_bind_group: wgpu::BindGroup,
+    brush_texture: wgpu::Texture,
+    brush_sampler: wgpu::Sampler,
+    stamp_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) blit_bind_group: wgpu::BindGroup,
     pub(crate) stamp_pipeline: wgpu::RenderPipeline,
     pub(crate) blit_pipeline: wgpu::RenderPipeline,
@@ -61,41 +64,7 @@ impl RenderResources {
             .to_rgba8();
             &bundled_brush
         };
-        let brush_size = brush_image.dimensions();
-        let brush_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("brush stamp texture"),
-            size: wgpu::Extent3d {
-                width: brush_size.0,
-                height: brush_size.1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DOCUMENT_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &brush_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            brush_image.as_raw(),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * brush_size.0),
-                rows_per_image: Some(brush_size.1),
-            },
-            wgpu::Extent3d {
-                width: brush_size.0,
-                height: brush_size.1,
-                depth_or_array_layers: 1,
-            },
-        );
-        let brush_texture_view = brush_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let (brush_texture, brush_texture_view) = create_brush_texture(device, queue, brush_image);
         let brush_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("brush sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -317,14 +286,105 @@ impl RenderResources {
             _paint_texture: paint_texture,
             paint_texture_view,
             stamp_buffer,
-            _stamp_uniform_buffer: stamp_uniform_buffer,
+            stamp_uniform_buffer,
             view_uniform_buffer,
             stamp_bind_group,
+            brush_texture,
+            brush_sampler,
+            stamp_bind_group_layout,
             blit_bind_group,
             stamp_pipeline,
             blit_pipeline,
         })
     }
+
+    pub(crate) fn replace_brush_stamp(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        preset_stamp: Option<&image::RgbaImage>,
+    ) -> Result<(), String> {
+        let bundled_brush;
+        let brush_image = if let Some(preset_stamp) = preset_stamp {
+            preset_stamp
+        } else {
+            bundled_brush = image::load_from_memory(include_bytes!(
+                "../../assets/charcoal-removebg-preview.png"
+            ))
+            .map_err(|error| format!("failed to load bundled brush stamp: {error}"))?
+            .to_rgba8();
+            &bundled_brush
+        };
+        let (brush_texture, brush_texture_view) = create_brush_texture(device, queue, brush_image);
+        let stamp_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("stamp bind group"),
+            layout: &self.stamp_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&self.brush_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&brush_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.stamp_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.stamp_uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        self.brush_texture = brush_texture;
+        self.stamp_bind_group = stamp_bind_group;
+        Ok(())
+    }
+}
+
+fn create_brush_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    brush_image: &image::RgbaImage,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let brush_size = brush_image.dimensions();
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("brush stamp texture"),
+        size: wgpu::Extent3d {
+            width: brush_size.0,
+            height: brush_size.1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DOCUMENT_FORMAT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        brush_image.as_raw(),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4 * brush_size.0),
+            rows_per_image: Some(brush_size.1),
+        },
+        wgpu::Extent3d {
+            width: brush_size.0,
+            height: brush_size.1,
+            depth_or_array_layers: 1,
+        },
+    );
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
 }
 
 fn create_paint_texture(

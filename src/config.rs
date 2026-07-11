@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 mod brush;
 
 use brush::{BUNDLED_BRUSH_ID, discover_user_brushes, load_user_brush};
-pub(crate) use brush::{BrushCatalog, LoadedBrushPreset};
+pub(crate) use brush::{BrushCatalog, BrushPreset, BrushSummary, LoadedBrushPreset};
 
 const APP_NAME: &str = "minipaint";
 const CONFIG_FILE_NAME: &str = "config.toml";
@@ -109,6 +109,10 @@ impl ConfigStore {
         self.root.join("brushes")
     }
 
+    pub(crate) fn brush_config_path(&self, id: &str) -> PathBuf {
+        self.brushes_path().join(id).join("brush.toml")
+    }
+
     pub(crate) fn load_brush(&self, id: &str) -> Result<LoadedBrushPreset, ConfigError> {
         let config_path = self.brushes_path().join(id).join("brush.toml");
         if id == BUNDLED_BRUSH_ID && !config_path.exists() {
@@ -119,6 +123,27 @@ impl ConfigStore {
 
     pub(crate) fn discover_brushes(&self) -> BrushCatalog {
         discover_user_brushes(&self.brushes_path())
+    }
+
+    pub(crate) fn save_brush_preset(
+        &self,
+        id: &str,
+        preset: &BrushPreset,
+    ) -> Result<(), ConfigError> {
+        brush::save_user_brush(&self.brushes_path(), id, preset)
+    }
+
+    pub(crate) fn duplicate_brush(
+        &self,
+        source: &LoadedBrushPreset,
+        id: &str,
+        preset: &BrushPreset,
+    ) -> Result<LoadedBrushPreset, ConfigError> {
+        brush::duplicate_user_brush(&self.brushes_path(), source, id, preset)
+    }
+
+    pub(crate) fn delete_brush(&self, id: &str) -> Result<(), ConfigError> {
+        brush::delete_user_brush(&self.brushes_path(), id)
     }
 
     pub(crate) fn load_app_config(&self) -> Result<AppConfig, ConfigError> {
@@ -155,18 +180,21 @@ impl ConfigStore {
         let contents = format!(
             "# minipaint settings. This file may be rewritten by the application.\n\n{serialized}"
         );
-        let path = self.config_path();
-        let mut file = AtomicWriteFile::options()
-            .open(&path)
-            .map_err(|error| ConfigError::io("open for atomic writing", &path, error))?;
-        file.write_all(contents.as_bytes())
-            .map_err(|error| ConfigError::io("write", &path, error))?;
-        file.flush()
-            .map_err(|error| ConfigError::io("flush", &path, error))?;
-        file.commit()
-            .map_err(|error| ConfigError::io("commit", &path, error))?;
-        Ok(())
+        atomic_write(&self.config_path(), contents.as_bytes())
     }
+}
+
+fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), ConfigError> {
+    let mut file = AtomicWriteFile::options()
+        .open(path)
+        .map_err(|error| ConfigError::io("open for atomic writing", path, error))?;
+    file.write_all(contents)
+        .map_err(|error| ConfigError::io("write", path, error))?;
+    file.flush()
+        .map_err(|error| ConfigError::io("flush", path, error))?;
+    file.commit()
+        .map_err(|error| ConfigError::io("commit", path, error))?;
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -175,6 +203,10 @@ pub(crate) struct ConfigError {
 }
 
 impl ConfigError {
+    pub(crate) fn unavailable() -> Self {
+        Self::new("the configuration directory is unavailable")
+    }
+
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -322,6 +354,50 @@ mod tests {
         .expect("brush config");
 
         assert!(store.load_brush("unsafe").is_err());
+    }
+
+    #[test]
+    fn user_brush_can_be_duplicated_updated_and_deleted() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+        let source = store.load_brush("charcoal").expect("bundled brush");
+        let mut preset = source.preset.clone();
+        preset.name = "Soft Charcoal".to_owned();
+
+        let duplicated = store
+            .duplicate_brush(&source, "soft-charcoal", &preset)
+            .expect("duplicate brush");
+        assert_eq!(duplicated.preset.name, "Soft Charcoal");
+        assert!(duplicated.stamp_image.is_some());
+
+        preset.name = "Softer Charcoal".to_owned();
+        store
+            .save_brush_preset("soft-charcoal", &preset)
+            .expect("update brush");
+        assert_eq!(
+            store
+                .load_brush("soft-charcoal")
+                .expect("updated brush")
+                .preset
+                .name,
+            "Softer Charcoal"
+        );
+
+        store.delete_brush("soft-charcoal").expect("delete brush");
+        assert!(!store.brushes_path().join("soft-charcoal").exists());
+    }
+
+    #[test]
+    fn bundled_brush_cannot_be_deleted_or_overwritten() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+
+        assert!(store.delete_brush("charcoal").is_err());
+        assert!(
+            store
+                .save_brush_preset("charcoal", &BrushPreset::default())
+                .is_err()
+        );
     }
 
     #[test]

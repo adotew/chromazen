@@ -44,6 +44,10 @@ impl StampQueue {
         }
     }
 
+    pub(crate) fn set_stamp_aspect(&mut self, stamp_aspect: f32) {
+        self.stamp_aspect = stamp_aspect;
+    }
+
     pub(crate) fn clear(&mut self) {
         self.pending.clear();
         self.distance_since_last_stamp = 0.0;

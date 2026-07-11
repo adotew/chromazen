@@ -14,9 +14,12 @@ use winit::{
     window::{Window, WindowAttributes},
 };
 
-use self::{input::PaintInputController, ui::GuiLayer};
+use self::{
+    input::PaintInputController,
+    ui::{GuiAction, GuiLayer},
+};
 use crate::{
-    config::{AppConfig, ConfigStore, LoadedBrushPreset},
+    config::{AppConfig, BrushCatalog, ConfigStore, LoadedBrushPreset},
     platform::{MacosPressureMonitor, PressureStateHandle},
     renderer::PaintRenderer,
 };
@@ -34,6 +37,8 @@ pub struct App {
     config_store: Option<ConfigStore>,
     config: AppConfig,
     brush_preset: LoadedBrushPreset,
+    brush_catalog: Option<BrushCatalog>,
+    pending_brush: Option<LoadedBrushPreset>,
     config_load_error: Option<String>,
 }
 
@@ -65,6 +70,7 @@ impl ApplicationHandler for App {
             &paint,
             &self.config,
             &self.brush_preset,
+            self.brush_catalog.take().unwrap_or_default(),
             self.config_load_error.take(),
         );
 
@@ -152,6 +158,7 @@ impl App {
         config_store: Option<ConfigStore>,
         config: AppConfig,
         brush_preset: LoadedBrushPreset,
+        brush_catalog: BrushCatalog,
         config_load_error: Option<String>,
     ) -> Self {
         Self {
@@ -165,6 +172,8 @@ impl App {
             config_store,
             config,
             brush_preset,
+            brush_catalog: Some(brush_catalog),
+            pending_brush: None,
             config_load_error,
         }
     }
@@ -181,9 +190,10 @@ impl App {
         }
 
         let full_output = gui.run(window);
-        let settings_action_processed = gui.take_save_requested();
+        let mut settings_action_processed = gui.take_save_requested();
         if settings_action_processed {
             self.config.brush = gui.current_brush_config();
+            self.config.active_brush = gui.active_brush().to_owned();
             if let Some(store) = &self.config_store {
                 match store.save_app_config(&self.config) {
                     Ok(()) => gui.settings_saved(&store.config_path()),
@@ -194,6 +204,32 @@ impl App {
                 }
             } else {
                 gui.settings_save_failed("The configuration directory is unavailable");
+            }
+        }
+
+        if let Some(action) = gui.take_action() {
+            settings_action_processed = true;
+            let result = match (&self.config_store, action) {
+                (Some(store), GuiAction::SwitchBrush(id)) => store
+                    .load_brush(&id)
+                    .map(|loaded| self.pending_brush = Some(loaded)),
+                (Some(store), GuiAction::SavePreset(preset)) => store
+                    .save_brush_preset(&self.brush_preset.id, &preset)
+                    .map(|()| {
+                        self.brush_preset.preset = preset;
+                        gui.preset_saved(&store.brush_config_path(&self.brush_preset.id));
+                    }),
+                (Some(store), GuiAction::SavePresetAs { id, preset }) => store
+                    .duplicate_brush(&self.brush_preset, &id, &preset)
+                    .map(|loaded| self.pending_brush = Some(loaded)),
+                (Some(store), GuiAction::DeletePreset) => store
+                    .delete_brush(&self.brush_preset.id)
+                    .map(|()| self.pending_brush = Some(LoadedBrushPreset::bundled_charcoal())),
+                (None, _) => Err(crate::config::ConfigError::unavailable()),
+            };
+            if let Err(error) = result {
+                log::error!("brush preset action failed: {error}");
+                gui.show_error(error.to_string());
             }
         }
         let repaint_delay = ui::repaint_delay(&full_output);
@@ -275,10 +311,33 @@ impl App {
             gui.renderer.free_texture(id);
         }
 
+        let mut brush_switched = false;
+        if !canvas_needs_redraw && let Some(loaded) = self.pending_brush.take() {
+            match paint.set_brush_preset(&loaded) {
+                Ok(()) => {
+                    let catalog = self
+                        .config_store
+                        .as_ref()
+                        .map_or_else(BrushCatalog::default, ConfigStore::discover_brushes);
+                    for warning in &catalog.warnings {
+                        log::warn!("failed to discover brush: {warning}");
+                    }
+                    self.config.active_brush.clone_from(&loaded.id);
+                    gui.apply_brush_preset(&loaded, catalog);
+                    self.brush_preset = loaded;
+                    brush_switched = true;
+                }
+                Err(error) => {
+                    log::error!("failed to switch brush texture: {error}");
+                    gui.show_error(error);
+                }
+            }
+        }
+
         self.update_repaint_schedule(
             repaint_delay,
             window,
-            canvas_needs_redraw || settings_action_processed,
+            canvas_needs_redraw || settings_action_processed || brush_switched,
         );
     }
 
@@ -335,13 +394,15 @@ pub fn run() {
         }
     };
 
-    let brush_preset = if let Some(store) = &config_store {
-        let catalog = store.discover_brushes();
-        for warning in &catalog.warnings {
-            log::warn!("failed to discover brush: {warning}");
-        }
-        log::debug!("discovered {} brush preset(s)", catalog.brushes.len());
+    let brush_catalog = config_store
+        .as_ref()
+        .map_or_else(BrushCatalog::default, ConfigStore::discover_brushes);
+    for warning in &brush_catalog.warnings {
+        log::warn!("failed to discover brush: {warning}");
+    }
+    log::debug!("discovered {} brush preset(s)", brush_catalog.brushes.len());
 
+    let brush_preset = if let Some(store) = &config_store {
         match store.load_brush(&config.active_brush) {
             Ok(brush) => brush,
             Err(error) => {
@@ -359,6 +420,12 @@ pub fn run() {
     };
 
     let event_loop = EventLoop::new().expect("failed to create event loop");
-    let mut app = App::new(config_store, config, brush_preset, config_load_error);
+    let mut app = App::new(
+        config_store,
+        config,
+        brush_preset,
+        brush_catalog,
+        config_load_error,
+    );
     event_loop.run_app(&mut app).expect("event loop error");
 }

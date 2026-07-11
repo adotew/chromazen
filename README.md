@@ -42,4 +42,5 @@ Controls:
 - Left drag: paint
 - Wheel: zoom around cursor
 - Middle/right drag or Space + left drag: pan
-- Use the egui panel for brush size/color, stroke smoothing, pressure readout, and stats
+- Use the egui panel for brush selection, size/color, smoothing, preset behavior, and settings
+- Use **New / Save As** to duplicate a brush into the user brush directory; user presets can then be updated or deleted

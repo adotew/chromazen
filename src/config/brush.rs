@@ -1,9 +1,9 @@
-use std::{fs, path::Path};
+use std::{fs, io::Cursor, path::Path};
 
 use image::{ImageFormat, ImageReader, RgbaImage};
 use serde::{Deserialize, Serialize};
 
-use super::ConfigError;
+use super::{ConfigError, atomic_write};
 
 pub(crate) const BUNDLED_BRUSH_ID: &str = "charcoal";
 const BRUSH_SCHEMA_VERSION: u32 = 1;
@@ -160,10 +160,21 @@ pub(crate) struct BrushSummary {
     pub(crate) name: String,
 }
 
-#[derive(Default)]
 pub(crate) struct BrushCatalog {
     pub(crate) brushes: Vec<BrushSummary>,
     pub(crate) warnings: Vec<String>,
+}
+
+impl Default for BrushCatalog {
+    fn default() -> Self {
+        Self {
+            brushes: vec![BrushSummary {
+                id: BUNDLED_BRUSH_ID.to_owned(),
+                name: BrushPreset::default().name,
+            }],
+            warnings: Vec::new(),
+        }
+    }
 }
 
 pub(super) fn load_user_brush(
@@ -236,14 +247,102 @@ pub(super) fn load_user_brush(
     })
 }
 
+pub(super) fn save_user_brush(
+    brushes_root: &Path,
+    id: &str,
+    preset: &BrushPreset,
+) -> Result<(), ConfigError> {
+    validate_brush_id(id)?;
+    preset.validate()?;
+    let preset_dir = brushes_root.join(id);
+    let config_path = preset_dir.join("brush.toml");
+    if !config_path.is_file() {
+        return Err(ConfigError::new(format!(
+            "brush {id:?} is not a user preset; use Save As first"
+        )));
+    }
+    let stamp_path = preset_dir.join(&preset.stamp);
+    if !stamp_path.is_file() {
+        return Err(ConfigError::new(format!(
+            "brush stamp {} does not exist",
+            stamp_path.display()
+        )));
+    }
+    let canonical_dir = preset_dir
+        .canonicalize()
+        .map_err(|error| ConfigError::io("resolve", &preset_dir, error))?;
+    let canonical_stamp = stamp_path
+        .canonicalize()
+        .map_err(|error| ConfigError::io("resolve", &stamp_path, error))?;
+    if !canonical_stamp.starts_with(canonical_dir) {
+        return Err(ConfigError::new("stamp path escapes the brush directory"));
+    }
+    let serialized = toml::to_string_pretty(preset)
+        .map_err(|error| ConfigError::new(format!("failed to serialize brush preset: {error}")))?;
+    atomic_write(&config_path, serialized.as_bytes())?;
+    load_user_brush(brushes_root, id).map(|_| ())
+}
+
+pub(super) fn duplicate_user_brush(
+    brushes_root: &Path,
+    source: &LoadedBrushPreset,
+    id: &str,
+    preset: &BrushPreset,
+) -> Result<LoadedBrushPreset, ConfigError> {
+    validate_brush_id(id)?;
+    preset.validate()?;
+    let preset_dir = brushes_root.join(id);
+    if preset_dir.exists() {
+        return Err(ConfigError::new(format!("brush {id:?} already exists")));
+    }
+    fs::create_dir_all(&preset_dir)
+        .map_err(|error| ConfigError::io("create brush directory", &preset_dir, error))?;
+
+    let result = (|| {
+        let mut saved_preset = preset.clone();
+        saved_preset.stamp = "stamp.png".to_owned();
+        let stamp = match &source.stamp_image {
+            Some(image) => image.clone(),
+            None => bundled_charcoal_image()?,
+        };
+        let mut png = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(stamp)
+            .write_to(&mut png, ImageFormat::Png)
+            .map_err(|error| ConfigError::new(format!("failed to encode brush stamp: {error}")))?;
+        atomic_write(&preset_dir.join("stamp.png"), png.get_ref())?;
+
+        let serialized = toml::to_string_pretty(&saved_preset).map_err(|error| {
+            ConfigError::new(format!("failed to serialize brush preset: {error}"))
+        })?;
+        atomic_write(&preset_dir.join("brush.toml"), serialized.as_bytes())?;
+        load_user_brush(brushes_root, id)
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&preset_dir);
+    }
+    result
+}
+
+pub(super) fn delete_user_brush(brushes_root: &Path, id: &str) -> Result<(), ConfigError> {
+    validate_brush_id(id)?;
+    if id == BUNDLED_BRUSH_ID {
+        return Err(ConfigError::new(
+            "the bundled charcoal brush cannot be deleted",
+        ));
+    }
+    let preset_dir = brushes_root.join(id);
+    if !preset_dir.join("brush.toml").is_file() {
+        return Err(ConfigError::new(format!(
+            "user brush {id:?} does not exist"
+        )));
+    }
+    fs::remove_dir_all(&preset_dir)
+        .map_err(|error| ConfigError::io("delete brush directory", &preset_dir, error))
+}
+
 pub(super) fn discover_user_brushes(brushes_root: &Path) -> BrushCatalog {
-    let mut catalog = BrushCatalog {
-        brushes: vec![BrushSummary {
-            id: BUNDLED_BRUSH_ID.to_owned(),
-            name: BrushPreset::default().name,
-        }],
-        warnings: Vec::new(),
-    };
+    let mut catalog = BrushCatalog::default();
 
     let entries = match fs::read_dir(brushes_root) {
         Ok(entries) => entries,
@@ -285,6 +384,14 @@ pub(super) fn discover_user_brushes(brushes_root: &Path) -> BrushCatalog {
     }
 
     catalog
+}
+
+fn bundled_charcoal_image() -> Result<RgbaImage, ConfigError> {
+    image::load_from_memory(include_bytes!("../../assets/charcoal-removebg-preview.png"))
+        .map(|image| image.to_rgba8())
+        .map_err(|error| {
+            ConfigError::new(format!("failed to decode bundled charcoal brush: {error}"))
+        })
 }
 
 fn validate_brush_id(id: &str) -> Result<(), ConfigError> {

@@ -104,6 +104,20 @@ impl PaintRenderer {
         self.gpu.resize(size);
     }
 
+    pub fn set_brush_preset(&mut self, preset: &LoadedBrushPreset) -> Result<(), String> {
+        self.resources.replace_brush_stamp(
+            self.gpu.device(),
+            self.gpu.queue(),
+            preset.stamp_image.as_ref(),
+        )?;
+        let stamp_aspect = preset
+            .stamp_image
+            .as_ref()
+            .map_or(1.0, |image| image.width() as f32 / image.height() as f32);
+        self.stamp_queue.set_stamp_aspect(stamp_aspect);
+        Ok(())
+    }
+
     pub fn fit_to_screen(&mut self) {
         self.view
             .fit_to_screen(self.surface_size(), self.document_size);
