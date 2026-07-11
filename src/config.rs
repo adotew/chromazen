@@ -113,6 +113,13 @@ impl ConfigStore {
         self.brushes_path().join(id).join("brush.toml")
     }
 
+    pub(crate) fn open_config_directory(&self) -> Result<(), ConfigError> {
+        fs::create_dir_all(&self.root).map_err(|error| {
+            ConfigError::io("create configuration directory for", &self.root, error)
+        })?;
+        open::that_detached(&self.root).map_err(|error| ConfigError::io("open", &self.root, error))
+    }
+
     pub(crate) fn load_brush(&self, id: &str) -> Result<LoadedBrushPreset, ConfigError> {
         let config_path = self.brushes_path().join(id).join("brush.toml");
         if id == BUNDLED_BRUSH_ID && !config_path.exists() {
@@ -299,6 +306,17 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_app_schema_is_rejected() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+        fs::write(store.config_path(), "schema_version = 2\n").expect("write config");
+
+        let error = store.load_app_config().expect_err("future schema");
+
+        assert!(error.to_string().contains("unsupported schema_version 2"));
+    }
+
+    #[test]
     fn invalid_brush_size_is_rejected() {
         let temp = tempfile::tempdir().expect("temp directory");
         let store = ConfigStore::from_root(temp.path());
@@ -327,6 +345,25 @@ mod tests {
 
         assert_eq!(brush.id, "charcoal");
         assert!(brush.stamp_image.is_none());
+    }
+
+    #[test]
+    fn unsupported_brush_schema_is_rejected() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+        write_test_brush(
+            &store,
+            "future",
+            "schema_version = 2\nname = \"Future\"\nstamp = \"tip.png\"\n",
+        );
+
+        let error = store.load_brush("future").expect_err("future schema");
+
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported brush schema_version 2")
+        );
     }
 
     #[test]

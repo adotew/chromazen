@@ -44,3 +44,4 @@ Controls:
 - Middle/right drag or Space + left drag: pan
 - Use the egui panel for brush selection, size/color, smoothing, preset behavior, and settings
 - Use **New / Save As** to duplicate a brush into the user brush directory; user presets can then be updated or deleted
+- Use **Reload** after editing TOML externally, or **Open config folder** to locate the files

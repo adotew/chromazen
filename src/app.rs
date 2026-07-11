@@ -39,6 +39,7 @@ pub struct App {
     brush_preset: LoadedBrushPreset,
     brush_catalog: Option<BrushCatalog>,
     pending_brush: Option<LoadedBrushPreset>,
+    pending_reloaded_config: Option<AppConfig>,
     config_load_error: Option<String>,
 }
 
@@ -174,6 +175,7 @@ impl App {
             brush_preset,
             brush_catalog: Some(brush_catalog),
             pending_brush: None,
+            pending_reloaded_config: None,
             config_load_error,
         }
     }
@@ -225,6 +227,20 @@ impl App {
                 (Some(store), GuiAction::DeletePreset) => store
                     .delete_brush(&self.brush_preset.id)
                     .map(|()| self.pending_brush = Some(LoadedBrushPreset::bundled_charcoal())),
+                (Some(store), GuiAction::ReloadFromDisk) => store
+                    .load_app_config()
+                    .and_then(|config| {
+                        store
+                            .load_brush(&config.active_brush)
+                            .map(|brush| (config, brush))
+                    })
+                    .map(|(config, brush)| {
+                        self.pending_reloaded_config = Some(config);
+                        self.pending_brush = Some(brush);
+                    }),
+                (Some(store), GuiAction::OpenConfigDirectory) => store
+                    .open_config_directory()
+                    .map(|()| gui.show_success("Opened the configuration folder")),
                 (None, _) => Err(crate::config::ConfigError::unavailable()),
             };
             if let Err(error) = result {
@@ -322,12 +338,26 @@ impl App {
                     for warning in &catalog.warnings {
                         log::warn!("failed to discover brush: {warning}");
                     }
+                    let catalog_warning = (!catalog.warnings.is_empty()).then(|| {
+                        format!(
+                            "Some brush presets could not be loaded:\n{}",
+                            catalog.warnings.join("\n")
+                        )
+                    });
                     self.config.active_brush.clone_from(&loaded.id);
                     gui.apply_brush_preset(&loaded, catalog);
+                    if let Some(config) = self.pending_reloaded_config.take() {
+                        self.config = config;
+                        gui.settings_reloaded(&self.config);
+                    }
+                    if let Some(warning) = catalog_warning {
+                        gui.show_error(warning);
+                    }
                     self.brush_preset = loaded;
                     brush_switched = true;
                 }
                 Err(error) => {
+                    self.pending_reloaded_config = None;
                     log::error!("failed to switch brush texture: {error}");
                     gui.show_error(error);
                 }
@@ -399,6 +429,16 @@ pub fn run() {
         .map_or_else(BrushCatalog::default, ConfigStore::discover_brushes);
     for warning in &brush_catalog.warnings {
         log::warn!("failed to discover brush: {warning}");
+    }
+    if !brush_catalog.warnings.is_empty() {
+        let warning = format!(
+            "Some brush presets could not be loaded:\n{}",
+            brush_catalog.warnings.join("\n")
+        );
+        config_load_error = Some(match config_load_error {
+            Some(existing) => format!("{existing}\n{warning}"),
+            None => warning,
+        });
     }
     log::debug!("discovered {} brush preset(s)", brush_catalog.brushes.len());
 

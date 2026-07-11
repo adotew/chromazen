@@ -18,6 +18,8 @@ pub(crate) enum GuiAction {
     SavePreset(BrushPreset),
     SavePresetAs { id: String, preset: BrushPreset },
     DeletePreset,
+    ReloadFromDisk,
+    OpenConfigDirectory,
 }
 
 pub struct GuiLayer {
@@ -250,6 +252,9 @@ impl GuiLayer {
                         if ui.button("Save settings").clicked() {
                             self.save_requested = true;
                         }
+                        if ui.button("Reload").clicked() {
+                            self.action = Some(GuiAction::ReloadFromDisk);
+                        }
                         if ui.button("Reset").clicked() {
                             self.brush.size = self.default_size;
                             self.brush.color = brush_color(&CurrentBrushConfig::default());
@@ -257,6 +262,9 @@ impl GuiLayer {
                             self.settings_message = None;
                         }
                     });
+                    if ui.button("Open config folder").clicked() {
+                        self.action = Some(GuiAction::OpenConfigDirectory);
+                    }
 
                     if self.current_brush_config() != self.saved_brush
                         || self.active_brush != self.saved_active_brush
@@ -334,8 +342,23 @@ impl GuiLayer {
         self.show_message(format!("Selected {}", loaded.preset.name), false);
     }
 
+    pub(crate) fn settings_reloaded(&mut self, config: &AppConfig) {
+        self.brush.color = brush_color(&config.brush);
+        self.brush.size = config
+            .brush
+            .size
+            .clamp(*self.size_range.start(), *self.size_range.end());
+        self.saved_brush = config.brush.clone();
+        self.saved_active_brush.clone_from(&config.active_brush);
+        self.show_message("Reloaded settings and brushes from disk", false);
+    }
+
     pub(crate) fn show_error(&mut self, error: impl Into<String>) {
         self.show_message(error, true);
+    }
+
+    pub(crate) fn show_success(&mut self, message: impl Into<String>) {
+        self.show_message(message, false);
     }
 
     fn sync_runtime_behavior(&mut self) {
