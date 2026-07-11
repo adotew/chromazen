@@ -14,7 +14,7 @@ mod brush;
 use brush::{BUNDLED_BRUSH_ID, discover_user_brushes, load_user_brush};
 pub(crate) use brush::{BrushCatalog, BrushPreset, BrushSummary, LoadedBrushPreset};
 
-const APP_NAME: &str = "minipaint";
+const APP_NAME: &str = "minipaint-rs";
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 

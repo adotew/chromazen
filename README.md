@@ -23,8 +23,8 @@ cargo run --release
 
 Settings are loaded from `config.toml` in the platform configuration directory. Use **Save settings** in the brush panel to create or update it atomically:
 
-- Linux: `~/.config/minipaint/config.toml`
-- macOS: `~/Library/Application Support/minipaint/config.toml`
+- Linux: `~/.config/minipaint-rs/config.toml`
+- macOS: `~/Library/Application Support/minipaint-rs/config.toml`
 - Windows: the user's roaming application-data directory
 
 Custom brush presets can be installed under `brushes/<id>/` in that directory:
