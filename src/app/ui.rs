@@ -8,8 +8,8 @@ use egui_winit::State as EguiWinitState;
 use winit::window::Window;
 
 use crate::{
-    config::{AppConfig, CurrentBrushConfig},
-    paint::{BrushSettings, MAX_BRUSH_SIZE, MIN_BRUSH_SIZE, StrokeSmoothingOptions},
+    config::{AppConfig, CurrentBrushConfig, LoadedBrushPreset},
+    paint::{BrushSettings, BrushSpacing, PressureSettings, StrokeSmoothingOptions},
     renderer::PaintRenderer,
 };
 
@@ -20,6 +20,9 @@ pub struct GuiLayer {
     pub brush: BrushSettings,
     pub stroke_smoothing: StrokeSmoothingOptions,
     saved_brush: CurrentBrushConfig,
+    size_range: std::ops::RangeInclusive<f32>,
+    default_size: f32,
+    default_smoothing: StrokeSmoothingOptions,
     save_requested: bool,
     settings_message: Option<SettingsMessage>,
 }
@@ -34,6 +37,7 @@ impl GuiLayer {
         window: &Window,
         paint: &PaintRenderer,
         config: &AppConfig,
+        brush_preset: &LoadedBrushPreset,
         load_error: Option<String>,
     ) -> Self {
         let context = egui::Context::default();
@@ -51,14 +55,22 @@ impl GuiLayer {
             RendererOptions::default(),
         );
 
-        let brush = brush_settings_from_config(&config.brush);
+        let brush = brush_settings_from_config(&config.brush, brush_preset);
+        let preset = &brush_preset.preset;
+        let default_smoothing = StrokeSmoothingOptions {
+            enabled: preset.smoothing.enabled,
+            strength: preset.smoothing.strength,
+        };
         Self {
             context,
             state,
             renderer,
             brush,
-            stroke_smoothing: StrokeSmoothingOptions::default(),
+            stroke_smoothing: default_smoothing,
             saved_brush: config.brush.clone(),
+            size_range: preset.size.min..=preset.size.max,
+            default_size: preset.size.default,
+            default_smoothing,
             save_requested: false,
             settings_message: load_error.map(|text| SettingsMessage {
                 text,
@@ -78,8 +90,14 @@ impl GuiLayer {
                 .resizable(false)
                 .show(ui.ctx(), |ui| {
                     ui.add(
-                        egui::Slider::new(&mut self.brush.size, MIN_BRUSH_SIZE..=MAX_BRUSH_SIZE)
+                        egui::Slider::new(&mut self.brush.size, self.size_range.clone())
                             .suffix(" px"),
+                    );
+                    ui.checkbox(&mut self.stroke_smoothing.enabled, "Stroke smoothing");
+                    ui.add_enabled(
+                        self.stroke_smoothing.enabled,
+                        egui::Slider::new(&mut self.stroke_smoothing.strength, 0.0..=1.0)
+                            .text("Strength"),
                     );
 
                     ui.separator();
@@ -88,7 +106,9 @@ impl GuiLayer {
                             self.save_requested = true;
                         }
                         if ui.button("Reset").clicked() {
-                            self.brush = brush_settings_from_config(&CurrentBrushConfig::default());
+                            self.brush.size = self.default_size;
+                            self.brush.color = brush_color(&CurrentBrushConfig::default());
+                            self.stroke_smoothing = self.default_smoothing;
                             self.settings_message = None;
                         }
                     });
@@ -139,16 +159,33 @@ impl GuiLayer {
     }
 }
 
-fn brush_settings_from_config(config: &CurrentBrushConfig) -> BrushSettings {
+fn brush_settings_from_config(
+    config: &CurrentBrushConfig,
+    loaded: &LoadedBrushPreset,
+) -> BrushSettings {
+    let preset = &loaded.preset;
     BrushSettings {
-        color: egui::Color32::from_rgba_unmultiplied(
-            config.color[0],
-            config.color[1],
-            config.color[2],
-            config.color[3],
-        ),
-        size: config.size,
+        color: brush_color(config),
+        size: config.size.clamp(preset.size.min, preset.size.max),
+        pressure: PressureSettings {
+            min_size: preset.pressure.min_size,
+            min_opacity: preset.pressure.min_opacity,
+            opacity_gamma: preset.pressure.opacity_gamma,
+        },
+        spacing: BrushSpacing {
+            ratio: preset.spacing.ratio,
+            minimum: preset.spacing.minimum,
+        },
     }
+}
+
+fn brush_color(config: &CurrentBrushConfig) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(
+        config.color[0],
+        config.color[1],
+        config.color[2],
+        config.color[3],
+    )
 }
 
 pub fn repaint_delay(output: &egui::FullOutput) -> Duration {

@@ -2,12 +2,9 @@ use std::collections::VecDeque;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::paint::StrokePoint;
+use crate::paint::{BrushSpacing, StrokePoint};
 
 pub(crate) const MAX_STAMPS_PER_FRAME: usize = 1024;
-const MIN_STAMP_SPACING: f32 = 1.0;
-const STAMP_SPACING_RATIO: f32 = 0.25;
-const BRUSH_STAMP_ASPECT: f32 = 1.0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -26,13 +23,27 @@ struct Stamp {
     rgba: [f32; 4],
 }
 
-#[derive(Default)]
 pub(crate) struct StampQueue {
     pending: VecDeque<Stamp>,
     distance_since_last_stamp: f32,
+    stamp_aspect: f32,
+}
+
+impl Default for StampQueue {
+    fn default() -> Self {
+        Self::new(1.0)
+    }
 }
 
 impl StampQueue {
+    pub(crate) fn new(stamp_aspect: f32) -> Self {
+        Self {
+            pending: VecDeque::new(),
+            distance_since_last_stamp: 0.0,
+            stamp_aspect,
+        }
+    }
+
     pub(crate) fn clear(&mut self) {
         self.pending.clear();
         self.distance_since_last_stamp = 0.0;
@@ -67,7 +78,14 @@ impl StampQueue {
     }
 
     fn queue_stamp(&mut self, stamp: Stamp, width: u32, height: u32) -> bool {
-        let bounds = get_stamp_bounds(stamp.x, stamp.y, stamp.radius, width, height);
+        let bounds = get_stamp_bounds(
+            stamp.x,
+            stamp.y,
+            stamp.radius,
+            self.stamp_aspect,
+            width,
+            height,
+        );
         if stamp.x + bounds.half_width < 0.0
             || stamp.y + bounds.half_height < 0.0
             || stamp.x - bounds.half_width >= width as f32
@@ -87,6 +105,7 @@ impl StampQueue {
         from: StrokePoint,
         to: StrokePoint,
         rgba: [f32; 4],
+        spacing: BrushSpacing,
         width: u32,
         height: u32,
     ) -> usize {
@@ -102,7 +121,7 @@ impl StampQueue {
         while travelled < dist {
             let spacing_t = travelled / dist;
             let spacing_radius = lerp(from.radius, to.radius, spacing_t);
-            let spacing = get_stamp_spacing(spacing_radius);
+            let spacing = get_stamp_spacing(spacing_radius, spacing);
             let distance_to_next_stamp = (spacing - self.distance_since_last_stamp).max(0.0);
             let remaining_distance = dist - travelled;
 
@@ -142,14 +161,14 @@ impl StampQueue {
         let mut raw = Vec::with_capacity(count);
         for _ in 0..count {
             let stamp = self.pending.pop_front().expect("count checked");
-            raw.push(stamp_to_raw(stamp, width, height));
+            raw.push(stamp_to_raw(stamp, self.stamp_aspect, width, height));
         }
         raw
     }
 }
 
-fn stamp_to_raw(stamp: Stamp, width: u32, height: u32) -> StampRaw {
-    let bounds = get_stamp_bounds(stamp.x, stamp.y, stamp.radius, width, height);
+fn stamp_to_raw(stamp: Stamp, stamp_aspect: f32, width: u32, height: u32) -> StampRaw {
+    let bounds = get_stamp_bounds(stamp.x, stamp.y, stamp.radius, stamp_aspect, width, height);
     StampRaw {
         center: [stamp.x, stamp.y],
         half_size: [bounds.half_width, bounds.half_height],
@@ -172,16 +191,23 @@ struct StampBounds {
     half_height: f32,
 }
 
-fn get_stamp_half_size(radius: f32) -> (f32, f32) {
-    if BRUSH_STAMP_ASPECT >= 1.0 {
-        (radius, radius / BRUSH_STAMP_ASPECT)
+fn get_stamp_half_size(radius: f32, stamp_aspect: f32) -> (f32, f32) {
+    if stamp_aspect >= 1.0 {
+        (radius, radius / stamp_aspect)
     } else {
-        (radius * BRUSH_STAMP_ASPECT, radius)
+        (radius * stamp_aspect, radius)
     }
 }
 
-fn get_stamp_bounds(x: f32, y: f32, radius: f32, width: u32, height: u32) -> StampBounds {
-    let (half_width, half_height) = get_stamp_half_size(radius);
+fn get_stamp_bounds(
+    x: f32,
+    y: f32,
+    radius: f32,
+    stamp_aspect: f32,
+    width: u32,
+    height: u32,
+) -> StampBounds {
+    let (half_width, half_height) = get_stamp_half_size(radius, stamp_aspect);
     let min_x = 0.max((x - half_width).floor() as i32);
     let max_x = (width as i32 - 1).min((x + half_width).ceil() as i32);
     let min_y = 0.max((y - half_height).floor() as i32);
@@ -196,8 +222,8 @@ fn get_stamp_bounds(x: f32, y: f32, radius: f32, width: u32, height: u32) -> Sta
     }
 }
 
-fn get_stamp_spacing(radius: f32) -> f32 {
-    MIN_STAMP_SPACING.max(radius * STAMP_SPACING_RATIO)
+fn get_stamp_spacing(radius: f32, spacing: BrushSpacing) -> f32 {
+    spacing.minimum.max(radius * spacing.ratio)
 }
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
@@ -220,8 +246,15 @@ mod tests {
 
     #[test]
     fn stamp_spacing_has_a_one_pixel_floor() {
-        assert_eq!(get_stamp_spacing(0.5), 1.0);
-        assert_eq!(get_stamp_spacing(20.0), 5.0);
+        let spacing = BrushSpacing::default();
+        assert_eq!(get_stamp_spacing(0.5, spacing), 1.0);
+        assert_eq!(get_stamp_spacing(20.0, spacing), 5.0);
+    }
+
+    #[test]
+    fn stamp_bounds_follow_image_aspect_ratio() {
+        assert_eq!(get_stamp_half_size(10.0, 2.0), (10.0, 5.0));
+        assert_eq!(get_stamp_half_size(10.0, 0.5), (5.0, 10.0));
     }
 
     #[test]
@@ -244,10 +277,17 @@ mod tests {
         let color = [0.0, 0.0, 0.0, 1.0];
         assert!(queue.queue_point(path[0], color, 1000, 1000));
         for segment in path.windows(2) {
-            queue.stamp_line(segment[0], segment[1], color, 1000, 1000);
+            queue.stamp_line(
+                segment[0],
+                segment[1],
+                color,
+                BrushSpacing::default(),
+                1000,
+                1000,
+            );
         }
 
-        let expected_spacing = get_stamp_spacing(input[0].radius);
+        let expected_spacing = get_stamp_spacing(input[0].radius, BrushSpacing::default());
         assert!(queue.pending.len() > 100);
         assert!(queue.pending.iter().zip(queue.pending.iter().skip(1)).all(
             |(from, to)| (to.x - from.x).hypot(to.y - from.y) <= expected_spacing + 1.0e-3

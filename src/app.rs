@@ -64,6 +64,7 @@ impl ApplicationHandler for App {
             window.as_ref(),
             &paint,
             &self.config,
+            &self.brush_preset,
             self.config_load_error.take(),
         );
 

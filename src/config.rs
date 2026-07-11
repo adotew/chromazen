@@ -9,8 +9,6 @@ use atomic_write_file::AtomicWriteFile;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
-use crate::paint::{MAX_BRUSH_SIZE, MIN_BRUSH_SIZE};
-
 mod brush;
 
 use brush::{BUNDLED_BRUSH_ID, discover_user_brushes, load_user_brush};
@@ -74,10 +72,8 @@ impl CurrentBrushConfig {
         if !self.size.is_finite() {
             return Err(ConfigError::new("brush.size must be finite"));
         }
-        if !(MIN_BRUSH_SIZE..=MAX_BRUSH_SIZE).contains(&self.size) {
-            return Err(ConfigError::new(format!(
-                "brush.size must be between {MIN_BRUSH_SIZE} and {MAX_BRUSH_SIZE}"
-            )));
+        if self.size <= 0.0 {
+            return Err(ConfigError::new("brush.size must be greater than zero"));
         }
         if self.color[3] != 255 {
             return Err(ConfigError::new(

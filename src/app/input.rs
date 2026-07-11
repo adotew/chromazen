@@ -52,9 +52,9 @@ impl PaintInputController {
                     let point = self.stroke_point_from_window(paint, next, brush, pressure_state);
                     let queued = if self.smoothing_options.is_active() {
                         let smoothed_points = self.smoother.push(point);
-                        self.queue_smoothed_points(paint, smoothed_points, brush.rgba())
+                        self.queue_smoothed_points(paint, smoothed_points, brush)
                     } else {
-                        self.queue_direct_point(paint, point, brush.rgba())
+                        self.queue_direct_point(paint, point, brush)
                     };
                     return queued > 0;
                 }
@@ -87,7 +87,7 @@ impl PaintInputController {
                     self.last_pan_pos = self.cursor_pos;
                     false
                 }
-                (ElementState::Released, _) => self.end_stroke(paint, brush.rgba()),
+                (ElementState::Released, _) => self.end_stroke(paint, brush),
                 _ => false,
             },
             WindowEvent::MouseWheel { delta, .. } => {
@@ -113,7 +113,7 @@ impl PaintInputController {
                 false
             }
             WindowEvent::CursorLeft { .. } | WindowEvent::Focused(false) => {
-                self.end_stroke(paint, brush.rgba())
+                self.end_stroke(paint, brush)
             }
             _ => false,
         }
@@ -134,10 +134,11 @@ impl PaintInputController {
         &mut self,
         paint: &mut PaintRenderer,
         point: StrokePoint,
-        color: [f32; 4],
+        brush: BrushSettings,
     ) -> usize {
+        let color = brush.rgba();
         let queued = if let Some(previous) = self.last_point {
-            paint.stamp_line(previous, point, color)
+            paint.stamp_line(previous, point, color, brush.spacing)
         } else if paint.queue_stamp(point, color) {
             1
         } else {
@@ -151,12 +152,13 @@ impl PaintInputController {
         &mut self,
         paint: &mut PaintRenderer,
         points: Vec<StrokePoint>,
-        color: [f32; 4],
+        brush: BrushSettings,
     ) -> usize {
+        let color = brush.rgba();
         let mut queued = 0;
         for point in points {
             if let Some(previous) = self.last_point {
-                queued += paint.stamp_line(previous, point, color);
+                queued += paint.stamp_line(previous, point, color, brush.spacing);
             } else if paint.queue_stamp(point, color) {
                 queued += 1;
             }
@@ -165,11 +167,11 @@ impl PaintInputController {
         queued
     }
 
-    fn end_stroke(&mut self, paint: &mut PaintRenderer, color: [f32; 4]) -> bool {
+    fn end_stroke(&mut self, paint: &mut PaintRenderer, brush: BrushSettings) -> bool {
         let queued = if self.is_drawing {
             let queued = if self.smoothing_options.is_active() {
                 let smoothed_points = self.smoother.finish();
-                self.queue_smoothed_points(paint, smoothed_points, color)
+                self.queue_smoothed_points(paint, smoothed_points, brush)
             } else {
                 self.smoother.reset();
                 0

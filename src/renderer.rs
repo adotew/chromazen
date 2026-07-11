@@ -12,7 +12,11 @@ use self::{
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue},
     view::PaintView,
 };
-use crate::{config::LoadedBrushPreset, gpu::GpuContext, paint::StrokePoint};
+use crate::{
+    config::LoadedBrushPreset,
+    gpu::GpuContext,
+    paint::{BrushSpacing, StrokePoint},
+};
 
 const DEFAULT_CANVAS_WIDTH: u32 = 4000;
 const DEFAULT_CANVAS_HEIGHT: u32 = 4000;
@@ -61,11 +65,15 @@ impl PaintRenderer {
             brush_preset.stamp_image.as_ref(),
         )?;
 
+        let stamp_aspect = brush_preset
+            .stamp_image
+            .as_ref()
+            .map_or(1.0, |image| image.width() as f32 / image.height() as f32);
         let mut renderer = Self {
             gpu,
             document_size,
             resources,
-            stamp_queue: StampQueue::default(),
+            stamp_queue: StampQueue::new(stamp_aspect),
             view: PaintView::default(),
         };
         renderer.fit_to_screen();
@@ -126,11 +134,18 @@ impl PaintRenderer {
             .queue_point(point, color, self.document_size[0], self.document_size[1])
     }
 
-    pub fn stamp_line(&mut self, from: StrokePoint, to: StrokePoint, color: [f32; 4]) -> usize {
+    pub fn stamp_line(
+        &mut self,
+        from: StrokePoint,
+        to: StrokePoint,
+        color: [f32; 4],
+        spacing: BrushSpacing,
+    ) -> usize {
         self.stamp_queue.stamp_line(
             from,
             to,
             color,
+            spacing,
             self.document_size[0],
             self.document_size[1],
         )
