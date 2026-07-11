@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 mod brush;
 
-use brush::{BUNDLED_BRUSH_ID, discover_user_brushes, load_user_brush};
+use brush::{DEFAULT_BRUSH_ID, discover_user_brushes, load_user_brush};
 pub(crate) use brush::{BrushCatalog, BrushSummary, LoadedBrushPreset};
 
 const APP_NAME: &str = "minipaint-rs";
@@ -31,7 +31,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
-            active_brush: "charcoal".to_owned(),
+            active_brush: DEFAULT_BRUSH_ID.to_owned(),
             brush: CurrentBrushConfig::default(),
             smoothing: SmoothingConfig::default(),
         }
@@ -144,7 +144,7 @@ impl ConfigStore {
 
     pub(crate) fn load_brush(&self, id: &str) -> Result<LoadedBrushPreset, ConfigError> {
         let config_path = self.brushes_path().join(id).join("brush.toml");
-        if id == BUNDLED_BRUSH_ID && !config_path.exists() {
+        if id == DEFAULT_BRUSH_ID && !config_path.exists() {
             return Ok(LoadedBrushPreset::bundled_charcoal());
         }
         load_user_brush(&self.brushes_path(), id)

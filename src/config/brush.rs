@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ConfigError;
 
-pub(crate) const BUNDLED_BRUSH_ID: &str = "charcoal";
+pub(crate) const DEFAULT_BRUSH_ID: &str = "charcoal";
 const BRUSH_SCHEMA_VERSION: u32 = 1;
 const MAX_STAMP_DIMENSION: u32 = 4096;
 
@@ -131,7 +131,7 @@ pub(crate) struct LoadedBrushPreset {
 impl LoadedBrushPreset {
     pub(crate) fn bundled_charcoal() -> Self {
         Self {
-            id: BUNDLED_BRUSH_ID.to_owned(),
+            id: DEFAULT_BRUSH_ID.to_owned(),
             preset: BrushPreset::default(),
             stamp_image: None,
         }
@@ -153,7 +153,7 @@ impl Default for BrushCatalog {
     fn default() -> Self {
         Self {
             brushes: vec![BrushSummary {
-                id: BUNDLED_BRUSH_ID.to_owned(),
+                id: DEFAULT_BRUSH_ID.to_owned(),
                 name: BrushPreset::default().name,
             }],
             warnings: Vec::new(),
