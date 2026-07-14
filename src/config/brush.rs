@@ -22,8 +22,6 @@ pub(crate) struct BrushPreset {
     pub(crate) size: SizeConfig,
     pub(crate) spacing: SpacingConfig,
     pub(crate) pressure: PressureConfig,
-    #[serde(default, rename = "smoothing", skip_serializing)]
-    legacy_smoothing: Option<toml::Value>,
 }
 
 impl Default for BrushPreset {
@@ -35,7 +33,6 @@ impl Default for BrushPreset {
             size: SizeConfig::default(),
             spacing: SpacingConfig::default(),
             pressure: PressureConfig::default(),
-            legacy_smoothing: None,
         }
     }
 }

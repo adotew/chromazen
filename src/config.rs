@@ -426,22 +426,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_per_brush_smoothing_is_accepted_but_not_saved() {
-        let temp = tempfile::tempdir().expect("temp directory");
-        let store = ConfigStore::from_root(temp.path());
-        write_test_brush(
-            &store,
-            "legacy",
-            "name = \"Legacy\"\nstamp = \"tip.png\"\n[smoothing]\nenabled = false\nstrength = 0.2\n",
-        );
-
-        let brush = store.load_brush("legacy").expect("legacy brush");
-        let serialized = toml::to_string_pretty(&brush.preset).expect("serialize preset");
-
-        assert!(!serialized.contains("smoothing"));
-    }
-
-    #[test]
     fn stamp_paths_cannot_escape_brush_directory() {
         let temp = tempfile::tempdir().expect("temp directory");
         let store = ConfigStore::from_root(temp.path());
