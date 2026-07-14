@@ -21,7 +21,7 @@ Run:
 cargo run --release
 ```
 
-Settings are loaded from `config.toml` in the platform configuration directory. Use **Save settings** in the brush panel to create or update it atomically:
+Settings are loaded from `config.toml` in the platform configuration directory. On macOS and Windows, use **Settings → Save Settings** in the native menu bar to create or update it atomically:
 
 - Linux: `~/.config/minipaint-rs/config.toml`
 - macOS: `~/Library/Application Support/minipaint-rs/config.toml`
@@ -49,6 +49,7 @@ Controls:
 - Left drag: paint
 - Wheel: zoom around cursor
 - Middle/right drag or Space + left drag: pan
-- Use the minimal egui panel for brush selection, size/color, and current settings
+- Use the minimal egui panel for brush selection and size/color controls
+- On macOS and Windows, use the native **Settings** menu to save, reload, reset, or open the configuration folder
 - Edit brush behavior in each preset's `brush.toml`
 - Use **Reload** after editing TOML externally, or **Open config folder** to locate the files

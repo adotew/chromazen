@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crate::config::{
     AppConfig, BrushCatalog, ConfigError, ConfigStore, CurrentBrushConfig, LoadedBrushPreset,
 };
@@ -15,7 +13,6 @@ pub(super) enum SettingsCommand {
 }
 
 pub(super) enum SettingsEffect {
-    Saved(PathBuf),
     Success(String),
     Error(String),
 }
@@ -149,10 +146,10 @@ impl SettingsController {
                         "The configuration directory is unavailable".to_owned(),
                     ));
                 };
-                Some(match store.save_app_config(&self.config) {
-                    Ok(()) => SettingsEffect::Saved(store.config_path()),
-                    Err(error) => command_error("failed to save settings", error),
-                })
+                match store.save_app_config(&self.config) {
+                    Ok(()) => None,
+                    Err(error) => Some(command_error("failed to save settings", error)),
+                }
             }
             SettingsCommand::SwitchBrush(id) => {
                 let result = self.store().and_then(|store| store.load_brush(&id));

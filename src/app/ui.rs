@@ -21,8 +21,6 @@ pub struct GuiLayer {
     pub renderer: EguiRenderer,
     pub brush: BrushSettings,
     pub stroke_smoothing: StrokeSmoothingOptions,
-    saved_brush: CurrentBrushConfig,
-    saved_active_brush: String,
     active_brush: String,
     brushes: Vec<crate::config::BrushSummary>,
     size_range: std::ops::RangeInclusive<f32>,
@@ -69,8 +67,6 @@ impl GuiLayer {
             stroke_smoothing: StrokeSmoothingOptions {
                 strength: config.smoothing.strength,
             },
-            saved_brush: config.brush.clone(),
-            saved_active_brush: config.active_brush.clone(),
             active_brush: brush_preset.id.clone(),
             brushes: catalog.brushes,
             size_range: preset.size.min..=preset.size.max,
@@ -117,28 +113,6 @@ impl GuiLayer {
                         egui::Slider::new(&mut self.brush.size, self.size_range.clone())
                             .suffix(" px"),
                     );
-
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        if ui.button("Save settings").clicked() {
-                            self.commands.push(AppCommand::SaveSettings);
-                        }
-                        if ui.button("Reload").clicked() {
-                            self.commands.push(AppCommand::ReloadConfiguration);
-                        }
-                        if ui.button("Reset").clicked() {
-                            self.commands.push(AppCommand::ResetBrush);
-                        }
-                    });
-                    if ui.button("Open config folder").clicked() {
-                        self.commands.push(AppCommand::OpenConfigDirectory);
-                    }
-
-                    if self.current_brush_config() != self.saved_brush
-                        || self.active_brush != self.saved_active_brush
-                    {
-                        ui.label(egui::RichText::new("Unsaved settings changes").italics());
-                    }
                     if let Some(message) = &self.settings_message {
                         let color = if message.is_error {
                             egui::Color32::LIGHT_RED
@@ -175,12 +149,6 @@ impl GuiLayer {
         }
     }
 
-    pub fn settings_saved(&mut self, path: &std::path::Path) {
-        self.saved_brush = self.current_brush_config();
-        self.saved_active_brush.clone_from(&self.active_brush);
-        self.show_message(format!("Saved to {}", path.display()), false);
-    }
-
     pub(crate) fn apply_brush_preset(&mut self, loaded: &LoadedBrushPreset, catalog: BrushCatalog) {
         let preset = &loaded.preset;
         self.active_brush.clone_from(&loaded.id);
@@ -207,9 +175,8 @@ impl GuiLayer {
             .size
             .clamp(*self.size_range.start(), *self.size_range.end());
         self.stroke_smoothing.strength = config.smoothing.strength;
-        self.saved_brush = config.brush.clone();
-        self.saved_active_brush.clone_from(&config.active_brush);
-        self.show_message("Reloaded settings and brushes from disk", false);
+        self.settings_message = None;
+        self.context.request_repaint();
     }
 
     pub(crate) fn show_error(&mut self, error: impl Into<String>) {

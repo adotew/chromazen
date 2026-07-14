@@ -31,6 +31,10 @@ use crate::{
 
 const WINDOW_TITLE: &str = "minipaint-rs";
 
+enum AppEvent {
+    Command(AppCommand),
+}
+
 struct RenderOutcome {
     repaint_delay: Duration,
     canvas_needs_redraw: bool,
@@ -46,10 +50,10 @@ pub struct App {
     next_repaint: Option<Instant>,
     pending_commands: Vec<AppCommand>,
     settings: SettingsController,
-    _native_menu: NativeMenu,
+    native_menu: NativeMenu,
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler<AppEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -65,6 +69,10 @@ impl ApplicationHandler for App {
                 )
                 .expect("failed to create window"),
         );
+
+        self.native_menu
+            .install(window.as_ref())
+            .unwrap_or_else(|error| panic!("failed to install native menu: {error}"));
 
         let pressure_state = PressureStateHandle::default();
         let pressure_monitor =
@@ -154,6 +162,15 @@ impl ApplicationHandler for App {
         }
     }
 
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
+        let AppEvent::Command(command) = event;
+        self.pending_commands.push(command);
+        self.next_repaint = None;
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
         if matches!(cause, StartCause::ResumeTimeReached { .. }) && self.next_repaint.is_some() {
             self.request_scheduled_redraw(event_loop);
@@ -166,10 +183,7 @@ impl ApplicationHandler for App {
 }
 
 impl App {
-    fn new(settings: SettingsController) -> Self {
-        let native_menu = NativeMenu::new()
-            .unwrap_or_else(|error| panic!("failed to create native menu: {error}"));
-
+    fn new(settings: SettingsController, native_menu: NativeMenu) -> Self {
         Self {
             window: None,
             paint: None,
@@ -180,7 +194,7 @@ impl App {
             next_repaint: None,
             pending_commands: Vec::new(),
             settings,
-            _native_menu: native_menu,
+            native_menu,
         }
     }
 
@@ -263,7 +277,6 @@ impl App {
                 continue;
             };
             match effect {
-                SettingsEffect::Saved(path) => gui.settings_saved(&path),
                 SettingsEffect::Success(message) => gui.show_success(message),
                 SettingsEffect::Error(error) => gui.show_error(error),
             }
@@ -438,7 +451,18 @@ impl App {
 }
 
 pub fn run() {
-    let event_loop = EventLoop::new().expect("failed to create event loop");
-    let mut app = App::new(SettingsController::load());
+    let event_loop = EventLoop::<AppEvent>::with_user_event()
+        .build()
+        .expect("failed to create event loop");
+    let native_menu =
+        NativeMenu::new().unwrap_or_else(|error| panic!("failed to create native menu: {error}"));
+    let proxy = event_loop.create_proxy();
+    native_menu.set_event_handler(move |command| {
+        if proxy.send_event(AppEvent::Command(command)).is_err() {
+            log::debug!("native menu event ignored after event loop shutdown");
+        }
+    });
+
+    let mut app = App::new(SettingsController::load(), native_menu);
     event_loop.run_app(&mut app).expect("event loop error");
 }

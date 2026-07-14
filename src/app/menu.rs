@@ -1,6 +1,10 @@
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod imp {
-    use muda::{Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
+    use muda::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
+    use winit::window::Window;
+
+    #[cfg(target_os = "windows")]
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     #[cfg(target_os = "macos")]
     use muda::AboutMetadata;
@@ -13,7 +17,8 @@ mod imp {
     const OPEN_CONFIG_DIRECTORY_ID: &str = "minipaint.settings.open-config-directory";
 
     pub(crate) struct NativeMenu {
-        _menu: Menu,
+        menu: Menu,
+        installed: bool,
     }
 
     impl NativeMenu {
@@ -27,7 +32,45 @@ mod imp {
             menu.append(&settings_menu()?)
                 .map_err(|error| format!("failed to add settings menu: {error}"))?;
 
-            Ok(Self { _menu: menu })
+            Ok(Self {
+                menu,
+                installed: false,
+            })
+        }
+
+        pub(crate) fn set_event_handler<F>(&self, handler: F)
+        where
+            F: Fn(AppCommand) + Send + Sync + 'static,
+        {
+            MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+                if let Some(command) = command_for_id(event.id()) {
+                    handler(command);
+                }
+            }));
+        }
+
+        pub(crate) fn install(&mut self, _window: &Window) -> Result<(), String> {
+            if self.installed {
+                return Ok(());
+            }
+
+            #[cfg(target_os = "macos")]
+            self.menu.init_for_nsapp();
+
+            #[cfg(target_os = "windows")]
+            {
+                let window_handle = _window
+                    .window_handle()
+                    .map_err(|error| format!("failed to get window handle: {error}"))?;
+                let RawWindowHandle::Win32(handle) = window_handle.as_raw() else {
+                    return Err("expected a Win32 window handle on Windows".to_owned());
+                };
+                unsafe { self.menu.init_for_hwnd(handle.hwnd.get()) }
+                    .map_err(|error| format!("failed to install Windows menu: {error}"))?;
+            }
+
+            self.installed = true;
+            Ok(())
         }
     }
 
@@ -88,11 +131,7 @@ mod imp {
         .map_err(|error| format!("failed to build application menu: {error}"))
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used when menu event forwarding is connected")
-    )]
-    pub(super) fn command_for_id(id: &MenuId) -> Option<AppCommand> {
+    fn command_for_id(id: &MenuId) -> Option<AppCommand> {
         match id.as_ref() {
             SAVE_SETTINGS_ID => Some(AppCommand::SaveSettings),
             RELOAD_CONFIGURATION_ID => Some(AppCommand::ReloadConfiguration),
@@ -139,5 +178,15 @@ pub(super) struct NativeMenu;
 impl NativeMenu {
     pub(super) fn new() -> Result<Self, String> {
         Ok(Self)
+    }
+
+    pub(super) fn set_event_handler<F>(&self, _handler: F)
+    where
+        F: Fn(super::command::AppCommand) + Send + Sync + 'static,
+    {
+    }
+
+    pub(super) fn install(&mut self, _window: &winit::window::Window) -> Result<(), String> {
+        Ok(())
     }
 }
