@@ -6,12 +6,11 @@ use std::{
 };
 
 use atomic_write_file::AtomicWriteFile;
+use brush::{DEFAULT_BRUSH_ID, discover_user_brushes, load_user_brush};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
-
 mod brush;
 
-use brush::{DEFAULT_BRUSH_ID, discover_user_brushes, load_user_brush};
 pub(crate) use brush::{BrushCatalog, BrushSummary, LoadedBrushPreset};
 
 const APP_NAME: &str = "minipaint-rs";
@@ -404,6 +403,26 @@ mod tests {
 
         assert_eq!(brush.preset.name, "Pencil");
         assert_eq!(brush.stamp_image.expect("stamp").dimensions(), (2, 3));
+    }
+
+    #[test]
+    fn oversized_stamp_is_rejected_during_metadata_inspection() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+        write_test_brush(
+            &store,
+            "oversized",
+            "name = \"Oversized\"\nstamp = \"tip.png\"\n",
+        );
+        image::RgbaImage::from_pixel(4097, 1, image::Rgba([0, 0, 0, 255]))
+            .save(store.brushes_path().join("oversized/tip.png"))
+            .expect("oversized stamp");
+
+        let catalog = store.discover_brushes();
+
+        assert!(!catalog.brushes.iter().any(|brush| brush.id == "oversized"));
+        assert_eq!(catalog.warnings.len(), 1);
+        assert!(store.load_brush("oversized").is_err());
     }
 
     #[test]

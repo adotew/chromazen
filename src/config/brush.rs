@@ -1,6 +1,10 @@
-use std::{fs, path::Path};
+use std::{
+    fs::{self, File},
+    io::BufReader,
+    path::{Path, PathBuf},
+};
 
-use image::{ImageFormat, ImageReader, RgbaImage};
+use image::{ImageFormat, ImageReader, Limits, RgbaImage};
 use serde::{Deserialize, Serialize};
 
 use super::ConfigError;
@@ -165,6 +169,45 @@ pub(super) fn load_user_brush(
     brushes_root: &Path,
     id: &str,
 ) -> Result<LoadedBrushPreset, ConfigError> {
+    let (preset, stamp_path) = load_user_brush_metadata(brushes_root, id)?;
+    let stamp_image = open_stamp_reader(&stamp_path)?
+        .decode()
+        .map_err(|error| {
+            ConfigError::new(format!(
+                "failed to decode brush stamp {}: {error}",
+                stamp_path.display()
+            ))
+        })?
+        .to_rgba8();
+
+    Ok(LoadedBrushPreset {
+        id: id.to_owned(),
+        preset,
+        stamp_image: Some(stamp_image),
+    })
+}
+
+fn load_user_brush_summary(brushes_root: &Path, id: &str) -> Result<BrushSummary, ConfigError> {
+    let (preset, stamp_path) = load_user_brush_metadata(brushes_root, id)?;
+    open_stamp_reader(&stamp_path)?
+        .into_dimensions()
+        .map_err(|error| {
+            ConfigError::new(format!(
+                "failed to inspect brush stamp {}: {error}",
+                stamp_path.display()
+            ))
+        })?;
+
+    Ok(BrushSummary {
+        id: id.to_owned(),
+        name: preset.name,
+    })
+}
+
+fn load_user_brush_metadata(
+    brushes_root: &Path,
+    id: &str,
+) -> Result<(BrushPreset, PathBuf), ConfigError> {
     validate_brush_id(id)?;
     let preset_dir = brushes_root.join(id);
     let config_path = preset_dir.join("brush.toml");
@@ -198,37 +241,25 @@ pub(super) fn load_user_brush(
         )));
     }
 
-    let reader = ImageReader::open(&canonical_stamp)
-        .map_err(|error| ConfigError::io("open", &canonical_stamp, error))?
+    Ok((preset, canonical_stamp))
+}
+
+fn open_stamp_reader(path: &Path) -> Result<ImageReader<BufReader<File>>, ConfigError> {
+    let mut reader = ImageReader::open(path)
+        .map_err(|error| ConfigError::io("open", path, error))?
         .with_guessed_format()
-        .map_err(|error| ConfigError::io("inspect", &canonical_stamp, error))?;
+        .map_err(|error| ConfigError::io("inspect", path, error))?;
     if reader.format() != Some(ImageFormat::Png) {
         return Err(ConfigError::new(format!(
             "brush stamp {} must be a PNG image",
-            canonical_stamp.display()
+            path.display()
         )));
     }
-    let stamp_image = reader
-        .decode()
-        .map_err(|error| {
-            ConfigError::new(format!(
-                "failed to decode brush stamp {}: {error}",
-                canonical_stamp.display()
-            ))
-        })?
-        .to_rgba8();
-    let (width, height) = stamp_image.dimensions();
-    if width == 0 || height == 0 || width > MAX_STAMP_DIMENSION || height > MAX_STAMP_DIMENSION {
-        return Err(ConfigError::new(format!(
-            "brush stamp dimensions {width}x{height} must be between 1 and {MAX_STAMP_DIMENSION}"
-        )));
-    }
-
-    Ok(LoadedBrushPreset {
-        id: id.to_owned(),
-        preset,
-        stamp_image: Some(stamp_image),
-    })
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_STAMP_DIMENSION);
+    limits.max_image_height = Some(MAX_STAMP_DIMENSION);
+    reader.limits(limits);
+    Ok(reader)
 }
 
 pub(super) fn discover_user_brushes(brushes_root: &Path) -> BrushCatalog {
@@ -253,12 +284,8 @@ pub(super) fn discover_user_brushes(brushes_root: &Path) -> BrushCatalog {
     ids.sort();
 
     for id in ids {
-        match load_user_brush(brushes_root, &id) {
-            Ok(loaded) => {
-                let summary = BrushSummary {
-                    id: loaded.id,
-                    name: loaded.preset.name,
-                };
+        match load_user_brush_summary(brushes_root, &id) {
+            Ok(summary) => {
                 if let Some(existing) = catalog
                     .brushes
                     .iter_mut()
