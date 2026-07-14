@@ -13,7 +13,7 @@ use crate::{
     renderer::PaintRenderer,
 };
 
-use super::settings::SettingsCommand;
+use super::command::AppCommand;
 
 pub struct GuiLayer {
     pub context: egui::Context,
@@ -27,7 +27,7 @@ pub struct GuiLayer {
     brushes: Vec<crate::config::BrushSummary>,
     size_range: std::ops::RangeInclusive<f32>,
     default_size: f32,
-    commands: Vec<SettingsCommand>,
+    commands: Vec<AppCommand>,
     settings_message: Option<SettingsMessage>,
 }
 
@@ -108,7 +108,7 @@ impl GuiLayer {
                                     && brush.id != self.active_brush
                                 {
                                     self.commands
-                                        .push(SettingsCommand::SwitchBrush(brush.id.clone()));
+                                        .push(AppCommand::SwitchBrush(brush.id.clone()));
                                 }
                             }
                         });
@@ -121,25 +121,17 @@ impl GuiLayer {
                     ui.separator();
                     ui.horizontal(|ui| {
                         if ui.button("Save settings").clicked() {
-                            self.commands.push(SettingsCommand::Save {
-                                brush: CurrentBrushConfig {
-                                    size: self.brush.size,
-                                    color: self.brush.color.to_array(),
-                                },
-                                active_brush: self.active_brush.clone(),
-                            });
+                            self.commands.push(AppCommand::SaveSettings);
                         }
                         if ui.button("Reload").clicked() {
-                            self.commands.push(SettingsCommand::ReloadFromDisk);
+                            self.commands.push(AppCommand::ReloadConfiguration);
                         }
                         if ui.button("Reset").clicked() {
-                            self.brush.size = self.default_size;
-                            self.brush.color = brush_color(&CurrentBrushConfig::default());
-                            self.settings_message = None;
+                            self.commands.push(AppCommand::ResetBrush);
                         }
                     });
                     if ui.button("Open config folder").clicked() {
-                        self.commands.push(SettingsCommand::OpenConfigDirectory);
+                        self.commands.push(AppCommand::OpenConfigDirectory);
                     }
 
                     if self.current_brush_config() != self.saved_brush
@@ -161,8 +153,19 @@ impl GuiLayer {
         })
     }
 
-    pub(crate) fn take_commands(&mut self) -> Vec<SettingsCommand> {
+    pub(crate) fn take_commands(&mut self) -> Vec<AppCommand> {
         std::mem::take(&mut self.commands)
+    }
+
+    pub(crate) fn settings_snapshot(&self) -> (CurrentBrushConfig, String) {
+        (self.current_brush_config(), self.active_brush.clone())
+    }
+
+    pub(crate) fn reset_brush(&mut self) {
+        self.brush.size = self.default_size;
+        self.brush.color = brush_color(&CurrentBrushConfig::default());
+        self.settings_message = None;
+        self.context.request_repaint();
     }
 
     pub fn current_brush_config(&self) -> CurrentBrushConfig {

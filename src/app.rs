@@ -1,4 +1,6 @@
+mod command;
 mod input;
+mod menu;
 mod settings;
 mod ui;
 
@@ -16,7 +18,9 @@ use winit::{
 };
 
 use self::{
+    command::AppCommand,
     input::PaintInputController,
+    menu::NativeMenu,
     settings::{SettingsCommand, SettingsController, SettingsEffect},
     ui::GuiLayer,
 };
@@ -40,7 +44,9 @@ pub struct App {
     pressure_state: PressureStateHandle,
     _pressure_monitor: Option<MacosPressureMonitor>,
     next_repaint: Option<Instant>,
+    pending_commands: Vec<AppCommand>,
     settings: SettingsController,
+    _native_menu: NativeMenu,
 }
 
 impl ApplicationHandler for App {
@@ -161,6 +167,9 @@ impl ApplicationHandler for App {
 
 impl App {
     fn new(settings: SettingsController) -> Self {
+        let native_menu = NativeMenu::new()
+            .unwrap_or_else(|error| panic!("failed to create native menu: {error}"));
+
         Self {
             window: None,
             paint: None,
@@ -169,11 +178,16 @@ impl App {
             pressure_state: PressureStateHandle::default(),
             _pressure_monitor: None,
             next_repaint: None,
+            pending_commands: Vec::new(),
             settings,
+            _native_menu: native_menu,
         }
     }
 
     fn render(&mut self, window: &Window) {
+        let mut app_action_processed = self.process_pending_commands();
+        let mut brush_switched = self.apply_pending_brush_change();
+
         let Some(paint) = self.paint.as_ref() else {
             return;
         };
@@ -188,18 +202,56 @@ impl App {
             let output = gui.run(window);
             (output, gui.take_commands())
         };
-        let settings_action_processed = !commands.is_empty();
-        self.process_settings_commands(commands);
+        self.pending_commands.extend(commands);
+        app_action_processed |= self.process_pending_commands();
 
         let Some(outcome) = self.render_frame(window, full_output) else {
             return;
         };
-        let brush_switched = self.apply_pending_brush_change();
+        brush_switched |= self.apply_pending_brush_change();
         self.update_repaint_schedule(
             outcome.repaint_delay,
             window,
-            outcome.canvas_needs_redraw || settings_action_processed || brush_switched,
+            outcome.canvas_needs_redraw || app_action_processed || brush_switched,
         );
+    }
+
+    fn process_pending_commands(&mut self) -> bool {
+        if self.gui.is_none() || self.pending_commands.is_empty() {
+            return false;
+        }
+
+        let commands = std::mem::take(&mut self.pending_commands);
+        for command in commands {
+            match command {
+                AppCommand::SwitchBrush(id) => {
+                    self.process_settings_commands(vec![SettingsCommand::SwitchBrush(id)]);
+                }
+                AppCommand::SaveSettings => {
+                    let Some((brush, active_brush)) =
+                        self.gui.as_ref().map(GuiLayer::settings_snapshot)
+                    else {
+                        continue;
+                    };
+                    self.process_settings_commands(vec![SettingsCommand::Save {
+                        brush,
+                        active_brush,
+                    }]);
+                }
+                AppCommand::ReloadConfiguration => {
+                    self.process_settings_commands(vec![SettingsCommand::ReloadFromDisk]);
+                }
+                AppCommand::ResetBrush => {
+                    if let Some(gui) = self.gui.as_mut() {
+                        gui.reset_brush();
+                    }
+                }
+                AppCommand::OpenConfigDirectory => {
+                    self.process_settings_commands(vec![SettingsCommand::OpenConfigDirectory]);
+                }
+            }
+        }
+        true
     }
 
     fn process_settings_commands(&mut self, commands: Vec<SettingsCommand>) {
