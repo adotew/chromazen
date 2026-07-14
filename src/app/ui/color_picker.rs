@@ -3,7 +3,9 @@ use egui::{Color32, Context};
 pub(super) fn show(context: &Context, color: &mut Color32) {
     egui::Window::new("Color picker")
         .title_bar(false)
-        .anchor(egui::Align2::RIGHT_TOP, [0.0, 0.0])
+        .pivot(egui::Align2::RIGHT_TOP)
+        .default_pos(context.content_rect().right_top())
+        .movable(true)
         .resizable(false)
         .show(context, |ui| {
             ui.spacing_mut().slider_width = 275.0;

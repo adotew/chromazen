@@ -12,7 +12,11 @@ use self::{
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue},
     view::PaintView,
 };
-use crate::{gpu::GpuContext, paint::StrokePoint};
+use crate::{
+    config::LoadedBrushPreset,
+    gpu::GpuContext,
+    paint::{BrushSpacing, StrokePoint},
+};
 
 const DEFAULT_CANVAS_WIDTH: u32 = 4000;
 const DEFAULT_CANVAS_HEIGHT: u32 = 4000;
@@ -43,20 +47,33 @@ pub struct PaintRenderer {
 }
 
 impl PaintRenderer {
-    pub async fn new(window: Arc<Window>) -> Result<Self, String> {
+    pub async fn new(
+        window: Arc<Window>,
+        brush_preset: &LoadedBrushPreset,
+    ) -> Result<Self, String> {
         let gpu = GpuContext::new(window).await?;
         let device = gpu.device();
         let queue = gpu.queue();
         let surface_format = gpu.surface_format();
 
         let document_size = [DEFAULT_CANVAS_WIDTH, DEFAULT_CANVAS_HEIGHT];
-        let resources = RenderResources::new(device, queue, document_size, surface_format)?;
+        let resources = RenderResources::new(
+            device,
+            queue,
+            document_size,
+            surface_format,
+            brush_preset.stamp_image.as_ref(),
+        )?;
 
+        let stamp_aspect = brush_preset
+            .stamp_image
+            .as_ref()
+            .map_or(1.0, |image| image.width() as f32 / image.height() as f32);
         let mut renderer = Self {
             gpu,
             document_size,
             resources,
-            stamp_queue: StampQueue::default(),
+            stamp_queue: StampQueue::new(stamp_aspect),
             view: PaintView::default(),
         };
         renderer.fit_to_screen();
@@ -85,6 +102,23 @@ impl PaintRenderer {
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         self.gpu.resize(size);
+    }
+
+    pub fn try_set_brush_preset(&mut self, preset: &LoadedBrushPreset) -> Result<bool, String> {
+        if self.stamp_queue.has_pending() {
+            return Ok(false);
+        }
+        self.resources.replace_brush_stamp(
+            self.gpu.device(),
+            self.gpu.queue(),
+            preset.stamp_image.as_ref(),
+        )?;
+        let stamp_aspect = preset
+            .stamp_image
+            .as_ref()
+            .map_or(1.0, |image| image.width() as f32 / image.height() as f32);
+        self.stamp_queue.set_stamp_aspect(stamp_aspect);
+        Ok(true)
     }
 
     pub fn fit_to_screen(&mut self) {
@@ -117,11 +151,18 @@ impl PaintRenderer {
             .queue_point(point, color, self.document_size[0], self.document_size[1])
     }
 
-    pub fn stamp_line(&mut self, from: StrokePoint, to: StrokePoint, color: [f32; 4]) -> usize {
+    pub fn stamp_line(
+        &mut self,
+        from: StrokePoint,
+        to: StrokePoint,
+        color: [f32; 4],
+        spacing: BrushSpacing,
+    ) -> usize {
         self.stamp_queue.stamp_line(
             from,
             to,
             color,
+            spacing,
             self.document_size[0],
             self.document_size[1],
         )

@@ -1,4 +1,5 @@
 mod input;
+mod settings;
 mod ui;
 
 use std::{
@@ -14,7 +15,11 @@ use winit::{
     window::{Window, WindowAttributes},
 };
 
-use self::{input::PaintInputController, ui::GuiLayer};
+use self::{
+    input::PaintInputController,
+    settings::{SettingsCommand, SettingsController, SettingsEffect},
+    ui::GuiLayer,
+};
 use crate::{
     platform::{MacosPressureMonitor, PressureStateHandle},
     renderer::PaintRenderer,
@@ -22,7 +27,11 @@ use crate::{
 
 const WINDOW_TITLE: &str = "minipaint-rs";
 
-#[derive(Default)]
+struct RenderOutcome {
+    repaint_delay: Duration,
+    canvas_needs_redraw: bool,
+}
+
 pub struct App {
     window: Option<Arc<Window>>,
     paint: Option<PaintRenderer>,
@@ -31,6 +40,7 @@ pub struct App {
     pressure_state: PressureStateHandle,
     _pressure_monitor: Option<MacosPressureMonitor>,
     next_repaint: Option<Instant>,
+    settings: SettingsController,
 }
 
 impl ApplicationHandler for App {
@@ -54,9 +64,21 @@ impl ApplicationHandler for App {
         let pressure_monitor =
             MacosPressureMonitor::install(window.clone(), pressure_state.clone())
                 .expect("failed to initialize pressure monitor");
-        let paint = pollster::block_on(PaintRenderer::new(window.clone()))
-            .expect("failed to initialize wgpu paint renderer");
-        let gui = GuiLayer::new(window.as_ref(), &paint);
+        let catalog = self.settings.take_startup_catalog();
+        let startup_error = self.settings.take_startup_error();
+        let paint = pollster::block_on(PaintRenderer::new(
+            window.clone(),
+            self.settings.active_brush(),
+        ))
+        .expect("failed to initialize wgpu paint renderer");
+        let gui = GuiLayer::new(
+            window.as_ref(),
+            &paint,
+            self.settings.config(),
+            self.settings.active_brush(),
+            catalog,
+            startup_error,
+        );
 
         self.window = Some(window.clone());
         self.paint = Some(paint);
@@ -138,18 +160,71 @@ impl ApplicationHandler for App {
 }
 
 impl App {
+    fn new(settings: SettingsController) -> Self {
+        Self {
+            window: None,
+            paint: None,
+            gui: None,
+            input: PaintInputController::default(),
+            pressure_state: PressureStateHandle::default(),
+            _pressure_monitor: None,
+            next_repaint: None,
+            settings,
+        }
+    }
+
     fn render(&mut self, window: &Window) {
-        let Some(paint) = self.paint.as_mut() else {
-            return;
-        };
-        let Some(gui) = self.gui.as_mut() else {
+        let Some(paint) = self.paint.as_ref() else {
             return;
         };
         if paint.surface_size()[0] == 0 || paint.surface_size()[1] == 0 {
             return;
         }
 
-        let full_output = gui.run(window);
+        let (full_output, commands) = {
+            let Some(gui) = self.gui.as_mut() else {
+                return;
+            };
+            let output = gui.run(window);
+            (output, gui.take_commands())
+        };
+        let settings_action_processed = !commands.is_empty();
+        self.process_settings_commands(commands);
+
+        let Some(outcome) = self.render_frame(window, full_output) else {
+            return;
+        };
+        let brush_switched = self.apply_pending_brush_change();
+        self.update_repaint_schedule(
+            outcome.repaint_delay,
+            window,
+            outcome.canvas_needs_redraw || settings_action_processed || brush_switched,
+        );
+    }
+
+    fn process_settings_commands(&mut self, commands: Vec<SettingsCommand>) {
+        for command in commands {
+            let Some(effect) = self.settings.handle_command(command) else {
+                continue;
+            };
+            let Some(gui) = self.gui.as_mut() else {
+                continue;
+            };
+            match effect {
+                SettingsEffect::Saved(path) => gui.settings_saved(&path),
+                SettingsEffect::Success(message) => gui.show_success(message),
+                SettingsEffect::Error(error) => gui.show_error(error),
+            }
+        }
+    }
+
+    fn render_frame(
+        &mut self,
+        window: &Window,
+        full_output: egui::FullOutput,
+    ) -> Option<RenderOutcome> {
+        let paint = self.paint.as_mut()?;
+        let gui = self.gui.as_mut()?;
         let repaint_delay = ui::repaint_delay(&full_output);
         gui.state
             .handle_platform_output(window, full_output.platform_output);
@@ -167,11 +242,11 @@ impl App {
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 paint.reconfigure_surface();
-                return;
+                return None;
             }
             wgpu::CurrentSurfaceTexture::Timeout
             | wgpu::CurrentSurfaceTexture::Occluded
-            | wgpu::CurrentSurfaceTexture::Validation => return,
+            | wgpu::CurrentSurfaceTexture::Validation => return None,
         };
         let view = frame
             .texture
@@ -229,7 +304,47 @@ impl App {
             gui.renderer.free_texture(id);
         }
 
-        self.update_repaint_schedule(repaint_delay, window, canvas_needs_redraw);
+        Some(RenderOutcome {
+            repaint_delay,
+            canvas_needs_redraw,
+        })
+    }
+
+    fn apply_pending_brush_change(&mut self) -> bool {
+        let Some(change) = self.settings.take_pending_brush_change() else {
+            return false;
+        };
+        let Some(paint) = self.paint.as_mut() else {
+            self.settings.restore_pending_brush_change(change);
+            return false;
+        };
+        match paint.try_set_brush_preset(&change.brush) {
+            Ok(false) => {
+                self.settings.restore_pending_brush_change(change);
+                false
+            }
+            Ok(true) => {
+                let completed = self.settings.complete_brush_change(change);
+                let Some(gui) = self.gui.as_mut() else {
+                    return true;
+                };
+                gui.apply_brush_preset(self.settings.active_brush(), completed.catalog);
+                if completed.reloaded {
+                    gui.settings_reloaded(self.settings.config());
+                }
+                if !completed.warnings.is_empty() {
+                    gui.show_error(completed.warnings.join("\n"));
+                }
+                true
+            }
+            Err(error) => {
+                log::error!("failed to switch brush texture: {error}");
+                if let Some(gui) = self.gui.as_mut() {
+                    gui.show_error(error);
+                }
+                false
+            }
+        }
     }
 
     fn update_repaint_schedule(
@@ -272,6 +387,6 @@ impl App {
 
 pub fn run() {
     let event_loop = EventLoop::new().expect("failed to create event loop");
-    let mut app = App::default();
+    let mut app = App::new(SettingsController::load());
     event_loop.run_app(&mut app).expect("event loop error");
 }
