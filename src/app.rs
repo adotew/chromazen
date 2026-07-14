@@ -1,4 +1,5 @@
 mod input;
+mod settings;
 mod ui;
 
 use std::{
@@ -16,15 +17,20 @@ use winit::{
 
 use self::{
     input::PaintInputController,
-    ui::{GuiAction, GuiLayer},
+    settings::{SettingsCommand, SettingsController, SettingsEffect},
+    ui::GuiLayer,
 };
 use crate::{
-    config::{AppConfig, BrushCatalog, ConfigStore, LoadedBrushPreset},
     platform::{MacosPressureMonitor, PressureStateHandle},
     renderer::PaintRenderer,
 };
 
 const WINDOW_TITLE: &str = "minipaint-rs";
+
+struct RenderOutcome {
+    repaint_delay: Duration,
+    canvas_needs_redraw: bool,
+}
 
 pub struct App {
     window: Option<Arc<Window>>,
@@ -34,41 +40,7 @@ pub struct App {
     pressure_state: PressureStateHandle,
     _pressure_monitor: Option<MacosPressureMonitor>,
     next_repaint: Option<Instant>,
-    config_store: Option<ConfigStore>,
-    config: AppConfig,
-    brush_preset: LoadedBrushPreset,
-    brush_catalog: Option<BrushCatalog>,
-    pending_brush_change: Option<PendingBrushChange>,
-    config_load_error: Option<String>,
-}
-
-struct PendingBrushChange {
-    brush: LoadedBrushPreset,
-    reloaded_config: Option<AppConfig>,
-    warning: Option<String>,
-}
-
-impl PendingBrushChange {
-    fn switch(brush: LoadedBrushPreset) -> Self {
-        Self {
-            brush,
-            reloaded_config: None,
-            warning: None,
-        }
-    }
-
-    fn reload(mut config: AppConfig, brush: LoadedBrushPreset, warning: Option<String>) -> Self {
-        normalize_active_brush(&mut config, &brush);
-        Self {
-            brush,
-            reloaded_config: Some(config),
-            warning,
-        }
-    }
-}
-
-fn normalize_active_brush(config: &mut AppConfig, brush: &LoadedBrushPreset) {
-    config.active_brush.clone_from(&brush.id);
+    settings: SettingsController,
 }
 
 impl ApplicationHandler for App {
@@ -92,15 +64,20 @@ impl ApplicationHandler for App {
         let pressure_monitor =
             MacosPressureMonitor::install(window.clone(), pressure_state.clone())
                 .expect("failed to initialize pressure monitor");
-        let paint = pollster::block_on(PaintRenderer::new(window.clone(), &self.brush_preset))
-            .expect("failed to initialize wgpu paint renderer");
+        let catalog = self.settings.take_startup_catalog();
+        let startup_error = self.settings.take_startup_error();
+        let paint = pollster::block_on(PaintRenderer::new(
+            window.clone(),
+            self.settings.active_brush(),
+        ))
+        .expect("failed to initialize wgpu paint renderer");
         let gui = GuiLayer::new(
             window.as_ref(),
             &paint,
-            &self.config,
-            &self.brush_preset,
-            self.brush_catalog.take().unwrap_or_default(),
-            self.config_load_error.take(),
+            self.settings.config(),
+            self.settings.active_brush(),
+            catalog,
+            startup_error,
         );
 
         self.window = Some(window.clone());
@@ -183,13 +160,7 @@ impl ApplicationHandler for App {
 }
 
 impl App {
-    fn new(
-        config_store: Option<ConfigStore>,
-        config: AppConfig,
-        brush_preset: LoadedBrushPreset,
-        brush_catalog: BrushCatalog,
-        config_load_error: Option<String>,
-    ) -> Self {
+    fn new(settings: SettingsController) -> Self {
         Self {
             window: None,
             paint: None,
@@ -198,76 +169,62 @@ impl App {
             pressure_state: PressureStateHandle::default(),
             _pressure_monitor: None,
             next_repaint: None,
-            config_store,
-            config,
-            brush_preset,
-            brush_catalog: Some(brush_catalog),
-            pending_brush_change: None,
-            config_load_error,
+            settings,
         }
     }
 
     fn render(&mut self, window: &Window) {
-        let Some(paint) = self.paint.as_mut() else {
-            return;
-        };
-        let Some(gui) = self.gui.as_mut() else {
+        let Some(paint) = self.paint.as_ref() else {
             return;
         };
         if paint.surface_size()[0] == 0 || paint.surface_size()[1] == 0 {
             return;
         }
 
-        let full_output = gui.run(window);
-        let mut settings_action_processed = gui.take_save_requested();
-        if settings_action_processed {
-            self.config.brush = gui.current_brush_config();
-            self.config.active_brush = gui.active_brush().to_owned();
-            if let Some(store) = &self.config_store {
-                match store.save_app_config(&self.config) {
-                    Ok(()) => gui.settings_saved(&store.config_path()),
-                    Err(error) => {
-                        log::error!("failed to save settings: {error}");
-                        gui.settings_save_failed(error.to_string());
-                    }
-                }
-            } else {
-                gui.settings_save_failed("The configuration directory is unavailable");
-            }
-        }
-
-        if let Some(action) = gui.take_action() {
-            settings_action_processed = true;
-            let result = match (&self.config_store, action) {
-                (Some(store), GuiAction::SwitchBrush(id)) => store.load_brush(&id).map(|brush| {
-                    self.pending_brush_change = Some(PendingBrushChange::switch(brush));
-                }),
-                (Some(store), GuiAction::ReloadFromDisk) => {
-                    store.load_app_config().map(|config| {
-                        let (brush, warning) = match store.load_brush(&config.active_brush) {
-                            Ok(brush) => (brush, None),
-                            Err(error) => {
-                                let warning = format!(
-                                    "Could not reload brush '{}': {error}. Using bundled Charcoal instead.",
-                                    config.active_brush
-                                );
-                                (LoadedBrushPreset::bundled_charcoal(), Some(warning))
-                            }
-                        };
-                        self.pending_brush_change =
-                            Some(PendingBrushChange::reload(config, brush, warning));
-                    })
-                },
-                (Some(store), GuiAction::OpenConfigDirectory) => store
-                    .open_config_directory()
-                    .map(|()| gui.show_success("Opened the configuration folder")),
-                (None, _) => Err(crate::config::ConfigError::unavailable()),
+        let (full_output, commands) = {
+            let Some(gui) = self.gui.as_mut() else {
+                return;
             };
-            if let Err(error) = result {
-                log::error!("brush preset action failed: {error}");
-                gui.show_error(error.to_string());
+            let output = gui.run(window);
+            (output, gui.take_commands())
+        };
+        let settings_action_processed = !commands.is_empty();
+        self.process_settings_commands(commands);
+
+        let Some(outcome) = self.render_frame(window, full_output) else {
+            return;
+        };
+        let brush_switched = self.apply_pending_brush_change();
+        self.update_repaint_schedule(
+            outcome.repaint_delay,
+            window,
+            outcome.canvas_needs_redraw || settings_action_processed || brush_switched,
+        );
+    }
+
+    fn process_settings_commands(&mut self, commands: Vec<SettingsCommand>) {
+        for command in commands {
+            let Some(effect) = self.settings.handle_command(command) else {
+                continue;
+            };
+            let Some(gui) = self.gui.as_mut() else {
+                continue;
+            };
+            match effect {
+                SettingsEffect::Saved(path) => gui.settings_saved(&path),
+                SettingsEffect::Success(message) => gui.show_success(message),
+                SettingsEffect::Error(error) => gui.show_error(error),
             }
         }
+    }
+
+    fn render_frame(
+        &mut self,
+        window: &Window,
+        full_output: egui::FullOutput,
+    ) -> Option<RenderOutcome> {
+        let paint = self.paint.as_mut()?;
+        let gui = self.gui.as_mut()?;
         let repaint_delay = ui::repaint_delay(&full_output);
         gui.state
             .handle_platform_output(window, full_output.platform_output);
@@ -285,11 +242,11 @@ impl App {
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 paint.reconfigure_surface();
-                return;
+                return None;
             }
             wgpu::CurrentSurfaceTexture::Timeout
             | wgpu::CurrentSurfaceTexture::Occluded
-            | wgpu::CurrentSurfaceTexture::Validation => return,
+            | wgpu::CurrentSurfaceTexture::Validation => return None,
         };
         let view = frame
             .texture
@@ -347,52 +304,47 @@ impl App {
             gui.renderer.free_texture(id);
         }
 
-        let mut brush_switched = false;
-        if !canvas_needs_redraw && let Some(change) = self.pending_brush_change.take() {
-            let PendingBrushChange {
-                brush: loaded,
-                reloaded_config,
-                warning: reload_warning,
-            } = change;
-            match paint.set_brush_preset(&loaded) {
-                Ok(()) => {
-                    let catalog = self
-                        .config_store
-                        .as_ref()
-                        .map_or_else(BrushCatalog::default, ConfigStore::discover_brushes);
-                    let mut warnings = catalog.warnings.clone();
-                    if let Some(warning) = reload_warning {
-                        log::warn!("{warning}");
-                        warnings.insert(0, warning);
-                    }
-                    for warning in &catalog.warnings {
-                        log::warn!("failed to discover brush: {warning}");
-                    }
-                    let combined_warning = (!warnings.is_empty()).then(|| warnings.join("\n"));
-                    self.config.active_brush.clone_from(&loaded.id);
-                    gui.apply_brush_preset(&loaded, catalog);
-                    if let Some(config) = reloaded_config {
-                        self.config = config;
-                        gui.settings_reloaded(&self.config);
-                    }
-                    if let Some(warning) = combined_warning {
-                        gui.show_error(warning);
-                    }
-                    self.brush_preset = loaded;
-                    brush_switched = true;
+        Some(RenderOutcome {
+            repaint_delay,
+            canvas_needs_redraw,
+        })
+    }
+
+    fn apply_pending_brush_change(&mut self) -> bool {
+        let Some(change) = self.settings.take_pending_brush_change() else {
+            return false;
+        };
+        let Some(paint) = self.paint.as_mut() else {
+            self.settings.restore_pending_brush_change(change);
+            return false;
+        };
+        match paint.try_set_brush_preset(&change.brush) {
+            Ok(false) => {
+                self.settings.restore_pending_brush_change(change);
+                false
+            }
+            Ok(true) => {
+                let completed = self.settings.complete_brush_change(change);
+                let Some(gui) = self.gui.as_mut() else {
+                    return true;
+                };
+                gui.apply_brush_preset(self.settings.active_brush(), completed.catalog);
+                if completed.reloaded {
+                    gui.settings_reloaded(self.settings.config());
                 }
-                Err(error) => {
-                    log::error!("failed to switch brush texture: {error}");
+                if !completed.warnings.is_empty() {
+                    gui.show_error(completed.warnings.join("\n"));
+                }
+                true
+            }
+            Err(error) => {
+                log::error!("failed to switch brush texture: {error}");
+                if let Some(gui) = self.gui.as_mut() {
                     gui.show_error(error);
                 }
+                false
             }
         }
-
-        self.update_repaint_schedule(
-            repaint_delay,
-            window,
-            canvas_needs_redraw || settings_action_processed || brush_switched,
-        );
     }
 
     fn update_repaint_schedule(
@@ -434,90 +386,7 @@ impl App {
 }
 
 pub fn run() {
-    let (config_store, mut config, mut config_load_error) = match ConfigStore::discover() {
-        Ok(store) => match store.load_app_config() {
-            Ok(config) => (Some(store), config, None),
-            Err(error) => {
-                log::error!("failed to load settings: {error}");
-                (Some(store), AppConfig::default(), Some(error.to_string()))
-            }
-        },
-        Err(error) => {
-            log::error!("failed to locate settings: {error}");
-            (None, AppConfig::default(), Some(error.to_string()))
-        }
-    };
-
-    let brush_catalog = config_store
-        .as_ref()
-        .map_or_else(BrushCatalog::default, ConfigStore::discover_brushes);
-    for warning in &brush_catalog.warnings {
-        log::warn!("failed to discover brush: {warning}");
-    }
-    if !brush_catalog.warnings.is_empty() {
-        let warning = format!(
-            "Some brush presets could not be loaded:\n{}",
-            brush_catalog.warnings.join("\n")
-        );
-        config_load_error = Some(match config_load_error {
-            Some(existing) => format!("{existing}\n{warning}"),
-            None => warning,
-        });
-    }
-    log::debug!("discovered {} brush preset(s)", brush_catalog.brushes.len());
-
-    let brush_preset = if let Some(store) = &config_store {
-        match store.load_brush(&config.active_brush) {
-            Ok(brush) => brush,
-            Err(error) => {
-                log::error!("failed to load brush preset: {error}");
-                let message = format!("Could not load brush '{}': {error}", config.active_brush);
-                config_load_error = Some(match config_load_error {
-                    Some(existing) => format!("{existing}\n{message}"),
-                    None => message,
-                });
-                LoadedBrushPreset::bundled_charcoal()
-            }
-        }
-    } else {
-        LoadedBrushPreset::bundled_charcoal()
-    };
-    normalize_active_brush(&mut config, &brush_preset);
-
     let event_loop = EventLoop::new().expect("failed to create event loop");
-    let mut app = App::new(
-        config_store,
-        config,
-        brush_preset,
-        brush_catalog,
-        config_load_error,
-    );
+    let mut app = App::new(SettingsController::load());
     event_loop.run_app(&mut app).expect("event loop error");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reload_normalizes_missing_brush_to_effective_fallback() {
-        let config = AppConfig {
-            active_brush: "missing".to_owned(),
-            ..AppConfig::default()
-        };
-
-        let change = PendingBrushChange::reload(
-            config,
-            LoadedBrushPreset::bundled_charcoal(),
-            Some("missing brush".to_owned()),
-        );
-
-        assert_eq!(
-            change
-                .reloaded_config
-                .expect("reloaded config")
-                .active_brush,
-            change.brush.id
-        );
-    }
 }
