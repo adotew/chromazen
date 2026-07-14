@@ -57,13 +57,18 @@ impl PendingBrushChange {
         }
     }
 
-    fn reload(config: AppConfig, brush: LoadedBrushPreset, warning: Option<String>) -> Self {
+    fn reload(mut config: AppConfig, brush: LoadedBrushPreset, warning: Option<String>) -> Self {
+        normalize_active_brush(&mut config, &brush);
         Self {
             brush,
             reloaded_config: Some(config),
             warning,
         }
     }
+}
+
+fn normalize_active_brush(config: &mut AppConfig, brush: &LoadedBrushPreset) {
+    config.active_brush.clone_from(&brush.id);
 }
 
 impl ApplicationHandler for App {
@@ -429,7 +434,7 @@ impl App {
 }
 
 pub fn run() {
-    let (config_store, config, mut config_load_error) = match ConfigStore::discover() {
+    let (config_store, mut config, mut config_load_error) = match ConfigStore::discover() {
         Ok(store) => match store.load_app_config() {
             Ok(config) => (Some(store), config, None),
             Err(error) => {
@@ -477,6 +482,7 @@ pub fn run() {
     } else {
         LoadedBrushPreset::bundled_charcoal()
     };
+    normalize_active_brush(&mut config, &brush_preset);
 
     let event_loop = EventLoop::new().expect("failed to create event loop");
     let mut app = App::new(
@@ -487,4 +493,31 @@ pub fn run() {
         config_load_error,
     );
     event_loop.run_app(&mut app).expect("event loop error");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reload_normalizes_missing_brush_to_effective_fallback() {
+        let config = AppConfig {
+            active_brush: "missing".to_owned(),
+            ..AppConfig::default()
+        };
+
+        let change = PendingBrushChange::reload(
+            config,
+            LoadedBrushPreset::bundled_charcoal(),
+            Some("missing brush".to_owned()),
+        );
+
+        assert_eq!(
+            change
+                .reloaded_config
+                .expect("reloaded config")
+                .active_brush,
+            change.brush.id
+        );
+    }
 }
