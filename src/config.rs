@@ -13,7 +13,7 @@ mod brush;
 
 pub(crate) use brush::{BrushCatalog, BrushSummary, LoadedBrushPreset};
 
-const APP_NAME: &str = "minipaint-rs";
+const APP_NAME: &str = "chromazen";
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 
@@ -185,7 +185,7 @@ impl ConfigStore {
         let serialized = toml::to_string_pretty(config)
             .map_err(|error| ConfigError::new(format!("failed to serialize settings: {error}")))?;
         let contents = format!(
-            "# minipaint settings. This file may be rewritten by the application.\n\n{serialized}"
+            "# Chromazen settings. This file may be rewritten by the application.\n\n{serialized}"
         );
         atomic_write(&self.config_path(), contents.as_bytes())
     }

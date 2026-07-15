@@ -29,7 +29,7 @@ use crate::{
     renderer::PaintRenderer,
 };
 
-const WINDOW_TITLE: &str = "minipaint-rs";
+const WINDOW_TITLE: &str = "Chromazen";
 
 enum AppEvent {
     Command(AppCommand),

@@ -376,6 +376,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
+name = "chromazen"
+version = "0.1.0"
+dependencies = [
+ "atomic-write-file",
+ "block2 0.6.2",
+ "bytemuck",
+ "directories",
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
+ "env_logger",
+ "image",
+ "log",
+ "muda",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "open",
+ "pollster",
+ "raw-window-handle",
+ "serde",
+ "tempfile",
+ "toml",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1459,33 +1486,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "minipaint-rs"
-version = "0.1.0"
-dependencies = [
- "atomic-write-file",
- "block2 0.6.2",
- "bytemuck",
- "directories",
- "egui",
- "egui-wgpu",
- "egui-winit",
- "env_logger",
- "image",
- "log",
- "muda",
- "objc2 0.6.4",
- "objc2-app-kit 0.3.2",
- "open",
- "pollster",
- "raw-window-handle",
- "serde",
- "tempfile",
- "toml",
- "wgpu",
- "winit",
 ]
 
 [[package]]

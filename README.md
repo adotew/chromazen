@@ -1,6 +1,6 @@
-# minipaint-rs
+# Chromazen
 
-Minimal native Rust port of the `minipaint` brush path for painting performance tests.
+Minimal native Rust painting application focused on brush performance.
 
 Implemented:
 
@@ -11,7 +11,7 @@ Implemented:
 - single brush tool using the original charcoal stamp PNG
 - pressure-sensitive brush size/opacity on macOS via AppKit tablet/pressure events
 - mouse/fallback input remains full-size and fully opaque
-- instanced GPU brush stamping with the same core stamp shader/blend approach as `minipaint`
+- instanced GPU brush stamping with a dedicated stamp shader and blend pipeline
 - always-on centripetal Catmull–Rom stroke smoothing for fast, sparse input
 - wheel zoom, pan, clear, fit, 100% zoom
 
@@ -23,8 +23,8 @@ cargo run --release
 
 Settings are loaded from `config.toml` in the platform configuration directory. On macOS and Windows, use **Settings → Save Settings** in the native menu bar to create or update it atomically:
 
-- Linux: `~/.config/minipaint-rs/config.toml`
-- macOS: `~/Library/Application Support/minipaint-rs/config.toml`
+- Linux: `~/.config/chromazen/config.toml`
+- macOS: `~/Library/Application Support/chromazen/config.toml`
 - Windows: the user's roaming application-data directory
 
 Stroke smoothing is always enabled. Its global strength applies to every brush preset and is configured in `config.toml`:

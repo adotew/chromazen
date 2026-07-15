@@ -26,7 +26,7 @@ impl GpuContext {
             .map_err(|err| format!("failed to find a suitable GPU adapter: {err}"))?;
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
-                label: Some("minipaint-rs device"),
+                label: Some("chromazen device"),
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::default(),
                 experimental_features: Default::default(),

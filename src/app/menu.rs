@@ -11,10 +11,10 @@ mod imp {
 
     use super::super::command::AppCommand;
 
-    const SAVE_SETTINGS_ID: &str = "minipaint.settings.save";
-    const RELOAD_CONFIGURATION_ID: &str = "minipaint.settings.reload";
-    const RESET_BRUSH_ID: &str = "minipaint.settings.reset-brush";
-    const OPEN_CONFIG_DIRECTORY_ID: &str = "minipaint.settings.open-config-directory";
+    const SAVE_SETTINGS_ID: &str = "chromazen.settings.save";
+    const RELOAD_CONFIGURATION_ID: &str = "chromazen.settings.reload";
+    const RESET_BRUSH_ID: &str = "chromazen.settings.reset-brush";
+    const OPEN_CONFIG_DIRECTORY_ID: &str = "chromazen.settings.open-config-directory";
 
     pub(crate) struct NativeMenu {
         menu: Menu,
@@ -97,9 +97,9 @@ mod imp {
     #[cfg(target_os = "macos")]
     fn application_menu() -> Result<Submenu, String> {
         let about = PredefinedMenuItem::about(
-            Some("About minipaint-rs"),
+            Some("About Chromazen"),
             Some(AboutMetadata {
-                name: Some("minipaint-rs".to_owned()),
+                name: Some("Chromazen".to_owned()),
                 version: Some(env!("CARGO_PKG_VERSION").to_owned()),
                 ..AboutMetadata::default()
             }),
@@ -114,7 +114,7 @@ mod imp {
         let quit = PredefinedMenuItem::quit(None);
 
         Submenu::with_items(
-            "minipaint-rs",
+            "Chromazen",
             true,
             &[
                 &about,
