@@ -40,6 +40,7 @@ struct ViewUniform {
     offset: [f32; 2],
     paint_dims: [f32; 2],
     padding: [f32; 2],
+    background_color: [f32; 4],
 }
 
 pub struct PaintRenderer {
@@ -48,6 +49,7 @@ pub struct PaintRenderer {
     resources: RenderResources,
     layers: Vec<PaintLayer>,
     selection: LayerSelection,
+    background_color: [f32; 4],
     next_layer_id: u64,
     next_layer_number: u64,
     stamp_queue: StampQueue,
@@ -91,6 +93,7 @@ impl PaintRenderer {
             resources,
             layers: vec![first_layer],
             selection: LayerSelection::Paint(LayerId(1)),
+            background_color: [1.0; 4],
             next_layer_id: 2,
             next_layer_number: 2,
             stamp_queue: StampQueue::new(stamp_aspect),
@@ -270,7 +273,7 @@ impl PaintRenderer {
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -326,10 +329,14 @@ impl PaintRenderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.resources.blit_pipeline);
-        let layer_index = self.selected_layer_index().expect("render requires paint layer");
-        pass.set_bind_group(0, &self.layers[layer_index].blit_bind_group, &[]);
+        pass.set_pipeline(&self.resources.background_pipeline);
+        pass.set_bind_group(0, &self.layers[0].blit_bind_group, &[]);
         pass.draw(0..3, 0..1);
+        pass.set_pipeline(&self.resources.layer_pipeline);
+        for layer in &self.layers {
+            pass.set_bind_group(0, &layer.blit_bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
     }
 
     fn flush_all_stamps(&mut self) {
@@ -398,6 +405,7 @@ impl PaintRenderer {
                 offset: self.view.offset(),
                 paint_dims: [self.document_size[0] as f32, self.document_size[1] as f32],
                 padding: [0.0, 0.0],
+                background_color: self.background_color,
             }),
         );
     }

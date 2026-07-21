@@ -15,7 +15,8 @@ pub(crate) struct RenderResources {
     stamp_bind_group_layout: wgpu::BindGroupLayout,
     blit_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) stamp_pipeline: wgpu::RenderPipeline,
-    pub(crate) blit_pipeline: wgpu::RenderPipeline,
+    pub(crate) background_pipeline: wgpu::RenderPipeline,
+    pub(crate) layer_pipeline: wgpu::RenderPipeline,
 }
 
 impl RenderResources {
@@ -47,6 +48,7 @@ impl RenderResources {
                 offset: [0.0, 0.0],
                 paint_dims: [document_size[0] as f32, document_size[1] as f32],
                 padding: [0.0, 0.0],
+                background_color: [1.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -230,34 +232,39 @@ impl RenderResources {
             multiview_mask: None,
             cache: None,
         });
-        let blit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("blit pipeline"),
-            layout: Some(&blit_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &blit_shader,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &blit_shader,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let create_blit_pipeline = |label, entry_point| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&blit_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &blit_shader,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &blit_shader,
+                    entry_point: Some(entry_point),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: surface_format,
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let background_pipeline =
+            create_blit_pipeline("background pipeline", "fs_background");
+        let layer_pipeline = create_blit_pipeline("layer pipeline", "fs_layer");
 
         Ok(Self {
             stamp_buffer,
@@ -270,7 +277,8 @@ impl RenderResources {
             stamp_bind_group_layout,
             blit_bind_group_layout,
             stamp_pipeline,
-            blit_pipeline,
+            background_pipeline,
+            layer_pipeline,
         })
     }
 
