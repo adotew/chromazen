@@ -195,12 +195,29 @@ impl PaintRenderer {
     }
 
     pub fn begin_stroke(&mut self) {
-        let Some(layer_id) = self.selected_layer_id() else {
+        let Some(layer_index) = self.selected_layer_index() else {
             return;
         };
-        if self.history.begin_stroke(layer_id) {
-            self.stamp_queue.begin_stroke();
+        let layer_id = self.layers[layer_index].id;
+        if !self.history.begin_stroke(layer_id) {
+            return;
         }
+        if self.history.layer_needs_sync(layer_id) {
+            let mut encoder =
+                self.gpu
+                    .device()
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("history layer sync encoder"),
+                    });
+            self.history.ensure_layer_synced(
+                &mut encoder,
+                layer_id,
+                &self.layers[layer_index].texture,
+                self.document_size,
+            );
+            self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        }
+        self.stamp_queue.begin_stroke();
     }
 
     pub fn end_stroke(&mut self) {
@@ -252,6 +269,12 @@ impl PaintRenderer {
             .iter()
             .position(|layer| layer.id == layer_id)
             .expect("undo layer must exist");
+        self.history.ensure_layer_synced(
+            &mut encoder,
+            layer_id,
+            &self.layers[layer_index].texture,
+            self.document_size,
+        );
         self.history
             .undo(&mut encoder, &self.layers[layer_index].texture);
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
@@ -274,6 +297,12 @@ impl PaintRenderer {
             .iter()
             .position(|layer| layer.id == layer_id)
             .expect("redo layer must exist");
+        self.history.ensure_layer_synced(
+            &mut encoder,
+            layer_id,
+            &self.layers[layer_index].texture,
+            self.document_size,
+        );
         self.history
             .redo(&mut encoder, &self.layers[layer_index].texture);
         self.gpu.queue().submit(std::iter::once(encoder.finish()));

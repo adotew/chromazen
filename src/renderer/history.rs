@@ -135,6 +135,33 @@ impl PaintHistory {
             .then(|| self.actions[self.cursor].layer_id())
     }
 
+    pub(crate) fn layer_needs_sync(&self, layer_id: LayerId) -> bool {
+        self.mirrored_layer != Some(layer_id)
+    }
+
+    pub(crate) fn ensure_layer_synced(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        layer_id: LayerId,
+        canvas: &wgpu::Texture,
+        document_size: [u32; 2],
+    ) {
+        if !self.layer_needs_sync(layer_id) {
+            return;
+        }
+        self.sync_layer(
+            encoder,
+            layer_id,
+            canvas,
+            TextureRect {
+                x: 0,
+                y: 0,
+                width: document_size[0],
+                height: document_size[1],
+            },
+        );
+    }
+
     pub(crate) fn sync_layer(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
