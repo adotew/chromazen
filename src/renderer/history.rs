@@ -1,4 +1,7 @@
-use super::{DOCUMENT_FORMAT, layers::LayerId};
+use super::{
+    DOCUMENT_FORMAT,
+    layers::{LayerId, LayerSelection, PaintLayer},
+};
 
 const HISTORY_BUDGET_BYTES: u64 = 256 * 1024 * 1024;
 const BYTES_PER_PIXEL: u64 = 4;
@@ -60,18 +63,42 @@ struct StrokeEntry {
 
 enum HistoryAction {
     Stroke(StrokeEntry),
+    AddLayer {
+        layer_id: LayerId,
+        index: usize,
+        selection_before: LayerSelection,
+        selection_after: LayerSelection,
+        detached: Option<PaintLayer>,
+        bytes: u64,
+    },
+    DeleteLayer {
+        layer_id: LayerId,
+        index: usize,
+        selection_before: LayerSelection,
+        selection_after: LayerSelection,
+        detached: Option<PaintLayer>,
+        bytes: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HistoryTarget {
+    Stroke(LayerId),
+    Structure,
 }
 
 impl HistoryAction {
     fn bytes(&self) -> u64 {
         match self {
             Self::Stroke(entry) => entry.bytes,
+            Self::AddLayer { bytes, .. } | Self::DeleteLayer { bytes, .. } => *bytes,
         }
     }
 
-    fn layer_id(&self) -> LayerId {
+    fn target(&self) -> HistoryTarget {
         match self {
-            Self::Stroke(entry) => entry.layer_id,
+            Self::Stroke(entry) => HistoryTarget::Stroke(entry.layer_id),
+            Self::AddLayer { .. } | Self::DeleteLayer { .. } => HistoryTarget::Structure,
         }
     }
 }
@@ -79,7 +106,6 @@ impl HistoryAction {
 pub(crate) struct PaintHistory {
     actions: Vec<HistoryAction>,
     cursor: usize,
-    used_bytes: u64,
     mirror: wgpu::Texture,
     mirrored_layer: Option<LayerId>,
     active_stroke: Option<LayerId>,
@@ -90,7 +116,6 @@ impl PaintHistory {
         Self {
             actions: Vec::new(),
             cursor: 0,
-            used_bytes: 0,
             mirror: create_texture(device, "paint history mirror", document_size),
             mirrored_layer: None,
             active_stroke: None,
@@ -112,27 +137,30 @@ impl PaintHistory {
     pub(crate) fn clear(&mut self) {
         self.actions.clear();
         self.cursor = 0;
-        self.used_bytes = 0;
         self.mirrored_layer = None;
         self.active_stroke = None;
     }
 
+    pub(crate) fn stroke_active(&self) -> bool {
+        self.active_stroke.is_some()
+    }
+
     pub(crate) fn can_undo(&self) -> bool {
-        self.active_stroke.is_none() && self.cursor > 0
+        !self.stroke_active() && self.cursor > 0
     }
 
     pub(crate) fn can_redo(&self) -> bool {
         self.active_stroke.is_none() && self.cursor < self.actions.len()
     }
 
-    pub(crate) fn undo_layer(&self) -> Option<LayerId> {
+    pub(crate) fn undo_target(&self) -> Option<HistoryTarget> {
         self.can_undo()
-            .then(|| self.actions[self.cursor - 1].layer_id())
+            .then(|| self.actions[self.cursor - 1].target())
     }
 
-    pub(crate) fn redo_layer(&self) -> Option<LayerId> {
+    pub(crate) fn redo_target(&self) -> Option<HistoryTarget> {
         self.can_redo()
-            .then(|| self.actions[self.cursor].layer_id())
+            .then(|| self.actions[self.cursor].target())
     }
 
     pub(crate) fn layer_needs_sync(&self, layer_id: LayerId) -> bool {
@@ -182,67 +210,188 @@ impl PaintHistory {
         rect: TextureRect,
     ) {
         debug_assert_eq!(self.active_stroke, Some(layer_id));
-        for action in self.actions.drain(self.cursor..) {
-            self.used_bytes -= action.bytes();
-        }
+        self.discard_redo();
 
         let pixels = create_texture(device, "paint history entry", [rect.width, rect.height]);
         copy_rect(encoder, &self.mirror, rect, &pixels, [0, 0]);
         self.sync_layer(encoder, layer_id, canvas, rect);
 
-        let bytes = rect.byte_len();
         self.actions.push(HistoryAction::Stroke(StrokeEntry {
             layer_id,
             rect,
             pixels,
-            bytes,
+            bytes: rect.byte_len(),
         }));
-        self.used_bytes += bytes;
         self.cursor = self.actions.len();
         self.evict_to_budget();
         self.active_stroke = None;
     }
 
-    pub(crate) fn undo(
+    pub(crate) fn record_add(
+        &mut self,
+        layer_id: LayerId,
+        index: usize,
+        selection_before: LayerSelection,
+        layer_bytes: u64,
+    ) {
+        self.discard_redo();
+        self.actions.push(HistoryAction::AddLayer {
+            layer_id,
+            index,
+            selection_before,
+            selection_after: LayerSelection::Paint(layer_id),
+            detached: None,
+            bytes: layer_bytes,
+        });
+        self.cursor = self.actions.len();
+        self.evict_to_budget();
+    }
+
+    pub(crate) fn record_delete(
+        &mut self,
+        layer: PaintLayer,
+        index: usize,
+        selection_before: LayerSelection,
+        selection_after: LayerSelection,
+        layer_bytes: u64,
+    ) {
+        let layer_id = layer.id;
+        self.discard_redo();
+        self.actions.push(HistoryAction::DeleteLayer {
+            layer_id,
+            index,
+            selection_before,
+            selection_after,
+            detached: Some(layer),
+            bytes: layer_bytes,
+        });
+        self.cursor = self.actions.len();
+        self.evict_to_budget();
+    }
+
+    pub(crate) fn undo_stroke(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         canvas: &wgpu::Texture,
     ) -> bool {
-        if !self.can_undo() {
+        if !matches!(self.undo_target(), Some(HistoryTarget::Stroke(_))) {
             return false;
         }
         self.cursor -= 1;
-        let HistoryAction::Stroke(entry) = &self.actions[self.cursor];
+        let HistoryAction::Stroke(entry) = &self.actions[self.cursor] else {
+            unreachable!();
+        };
         swap_entry(encoder, &self.mirror, canvas, entry);
         self.mirrored_layer = Some(entry.layer_id);
         true
     }
 
-    pub(crate) fn redo(
+    pub(crate) fn redo_stroke(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         canvas: &wgpu::Texture,
     ) -> bool {
-        if !self.can_redo() {
+        if !matches!(self.redo_target(), Some(HistoryTarget::Stroke(_))) {
             return false;
         }
-        let HistoryAction::Stroke(entry) = &self.actions[self.cursor];
+        let HistoryAction::Stroke(entry) = &self.actions[self.cursor] else {
+            unreachable!();
+        };
         swap_entry(encoder, &self.mirror, canvas, entry);
         self.mirrored_layer = Some(entry.layer_id);
         self.cursor += 1;
         true
     }
 
+    pub(crate) fn undo_structure(
+        &mut self,
+        layers: &mut Vec<PaintLayer>,
+        selection: &mut LayerSelection,
+    ) -> bool {
+        if self.undo_target() != Some(HistoryTarget::Structure) {
+            return false;
+        }
+        self.cursor -= 1;
+        match &mut self.actions[self.cursor] {
+            HistoryAction::AddLayer {
+                layer_id,
+                selection_before,
+                detached,
+                ..
+            } => {
+                let index = layers
+                    .iter()
+                    .position(|layer| layer.id == *layer_id)
+                    .expect("added layer must exist before undo");
+                *detached = Some(layers.remove(index));
+                *selection = *selection_before;
+            }
+            HistoryAction::DeleteLayer {
+                index,
+                selection_before,
+                detached,
+                ..
+            } => {
+                let layer = detached.take().expect("deleted layer must be retained");
+                layers.insert((*index).min(layers.len()), layer);
+                *selection = *selection_before;
+            }
+            HistoryAction::Stroke(_) => unreachable!(),
+        }
+        true
+    }
+
+    pub(crate) fn redo_structure(
+        &mut self,
+        layers: &mut Vec<PaintLayer>,
+        selection: &mut LayerSelection,
+    ) -> bool {
+        if self.redo_target() != Some(HistoryTarget::Structure) {
+            return false;
+        }
+        match &mut self.actions[self.cursor] {
+            HistoryAction::AddLayer {
+                index,
+                selection_after,
+                detached,
+                ..
+            } => {
+                let layer = detached.take().expect("undone added layer must be retained");
+                layers.insert((*index).min(layers.len()), layer);
+                *selection = *selection_after;
+            }
+            HistoryAction::DeleteLayer {
+                layer_id,
+                selection_after,
+                detached,
+                ..
+            } => {
+                let index = layers
+                    .iter()
+                    .position(|layer| layer.id == *layer_id)
+                    .expect("restored deleted layer must exist before redo");
+                *detached = Some(layers.remove(index));
+                *selection = *selection_after;
+            }
+            HistoryAction::Stroke(_) => unreachable!(),
+        }
+        self.cursor += 1;
+        true
+    }
+
+    fn discard_redo(&mut self) {
+        self.actions.truncate(self.cursor);
+    }
+
     fn evict_to_budget(&mut self) {
+        let used_bytes = self.actions.iter().map(HistoryAction::bytes).sum();
         let count = eviction_count(
-            self.used_bytes,
+            used_bytes,
             HISTORY_BUDGET_BYTES,
             self.actions.len(),
             self.actions.iter().map(HistoryAction::bytes),
         );
-        for action in self.actions.drain(..count) {
-            self.used_bytes -= action.bytes();
-        }
+        self.actions.drain(..count);
         self.cursor -= count;
     }
 }
