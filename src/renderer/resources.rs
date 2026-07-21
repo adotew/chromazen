@@ -262,8 +262,7 @@ impl RenderResources {
                 cache: None,
             })
         };
-        let background_pipeline =
-            create_blit_pipeline("background pipeline", "fs_background");
+        let background_pipeline = create_blit_pipeline("background pipeline", "fs_background");
         let layer_pipeline = create_blit_pipeline("layer pipeline", "fs_layer");
 
         Ok(Self {

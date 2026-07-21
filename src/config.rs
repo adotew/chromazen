@@ -6,7 +6,7 @@ use std::{
 };
 
 use atomic_write_file::AtomicWriteFile;
-use brush::{discover_user_brushes, load_user_brush, DEFAULT_BRUSH_ID, SKETCH_ID};
+use brush::{DEFAULT_BRUSH_ID, SKETCH_ID, discover_user_brushes, load_user_brush};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 mod brush;
@@ -398,9 +398,11 @@ mod tests {
 
         let error = store.load_brush("future").expect_err("future schema");
 
-        assert!(error
-            .to_string()
-            .contains("unsupported brush schema_version 2"));
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported brush schema_version 2")
+        );
     }
 
     #[test]

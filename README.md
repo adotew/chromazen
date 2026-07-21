@@ -9,11 +9,14 @@ Implemented:
 - `egui` controls/stats overlay
 - 4000 × 4000 paint texture
 - single brush tool using the original charcoal stamp PNG
-- pressure-sensitive brush size/opacity on macOS via AppKit tablet/pressure events
+- pressure-sensitive brush size/opacity on macOS via AppKit tablet and
+  pressure events
 - mouse/fallback input remains full-size and fully opaque
 - instanced GPU brush stamping with a dedicated stamp shader and blend pipeline
 - always-on centripetal Catmull–Rom stroke smoothing for fast, sparse input
-- exact stroke-level GPU undo/redo with a bounded 256 MiB history
+- transparent paint layers composited over a configurable Background color
+- chronological GPU undo/redo for strokes, layer changes, and Background
+  color changes with a bounded 256 MiB history
 - wheel zoom, pan, clear, fit, 100% zoom
 
 Run:
@@ -22,13 +25,16 @@ Run:
 cargo run --release
 ```
 
-Settings are loaded from `config.toml` in the platform configuration directory. On macOS and Windows, use **Settings → Save Settings** in the native menu bar to create or update it atomically:
+Settings are loaded from `config.toml` in the platform configuration directory.
+On macOS and Windows, use **Settings → Save Settings** in the native menu bar
+to create or update it atomically:
 
 - Linux: `~/.config/chromazen/config.toml`
 - macOS: `~/Library/Application Support/chromazen/config.toml`
 - Windows: the user's roaming application-data directory
 
-Stroke smoothing is always enabled. Its global strength applies to every brush preset and is configured in `config.toml`:
+Stroke smoothing is always enabled. Its global strength applies to every brush
+preset and is configured in `config.toml`:
 
 ```toml
 [smoothing]
@@ -43,7 +49,9 @@ brushes/pencil/
 └── tip.png
 ```
 
-Set `active_brush = "pencil"` in `config.toml`. The preset's `stamp` path is resolved relative to `brush.toml`; invalid presets fall back to the bundled charcoal brush.
+Set `active_brush = "pencil"` in `config.toml`. The preset's `stamp` path is
+resolved relative to `brush.toml`; invalid presets fall back to the bundled
+charcoal brush.
 
 Controls:
 
@@ -51,9 +59,16 @@ Controls:
 - Wheel: zoom around cursor
 - Middle/right drag or Space + left drag: pan
 - Undo: `Command-Z` on macOS; `Control-Z` on Windows and Linux
-- Redo: `Command-Shift-Z` on macOS; `Control-Y` on Windows; `Control-Shift-Z` or `Control-Y` on Linux
-- On macOS and Windows, Undo and Redo are also available from the native **Edit** menu
-- Use the minimal egui panel for brush selection and size/color controls
-- On macOS and Windows, use the native **Settings** menu to save, reload, reset, or open the configuration folder
+- Redo: `Command-Shift-Z` on macOS; `Control-Y` on Windows;
+  `Control-Shift-Z` or `Control-Y` on Linux
+- On macOS and Windows, Undo and Redo are also available from the native
+  **Edit** menu
+- Use the minimal egui panels for brush controls and adding, selecting, or
+  deleting layers
+- Select **Background** in the Layers panel to change its color; it cannot be
+  painted on or deleted
+- On macOS and Windows, use the native **Settings** menu to save, reload, reset,
+  or open the configuration folder
 - Edit brush behavior in each preset's `brush.toml`
-- Use **Reload** after editing TOML externally, or **Open config folder** to locate the files
+- Use **Reload** after editing TOML externally, or **Open config folder** to
+  locate the files
