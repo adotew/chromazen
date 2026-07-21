@@ -57,11 +57,9 @@ impl RenderResources {
         let brush_image = if let Some(preset_stamp) = preset_stamp {
             preset_stamp
         } else {
-            bundled_brush = image::load_from_memory(include_bytes!(
-                "../../assets/charcoal-removebg-preview.png"
-            ))
-            .map_err(|err| format!("failed to load bundled brush stamp: {err}"))?
-            .to_rgba8();
+            bundled_brush = image::load_from_memory(include_bytes!("../../assets/charcoal.png"))
+                .map_err(|err| format!("failed to load bundled brush stamp: {err}"))?
+                .to_rgba8();
             &bundled_brush
         };
         let (brush_texture, brush_texture_view) = create_brush_texture(device, queue, brush_image);
@@ -308,11 +306,9 @@ impl RenderResources {
         let brush_image = if let Some(preset_stamp) = preset_stamp {
             preset_stamp
         } else {
-            bundled_brush = image::load_from_memory(include_bytes!(
-                "../../assets/charcoal-removebg-preview.png"
-            ))
-            .map_err(|error| format!("failed to load bundled brush stamp: {error}"))?
-            .to_rgba8();
+            bundled_brush = image::load_from_memory(include_bytes!("../../assets/charcoal.png"))
+                .map_err(|error| format!("failed to load bundled brush stamp: {error}"))?
+                .to_rgba8();
             &bundled_brush
         };
         let (brush_texture, brush_texture_view) = create_brush_texture(device, queue, brush_image);

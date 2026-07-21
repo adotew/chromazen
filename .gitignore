@@ -29,3 +29,7 @@ tarpaulin-report.html
 
 # Local planning docs
 /docs/
+
+# Pix Agent
+.pi/
+.pi-lens/
