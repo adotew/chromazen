@@ -4,7 +4,7 @@ use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
 use super::{DOCUMENT_FORMAT, PaintUniform, ViewUniform};
 
 pub(crate) struct RenderResources {
-    pub(crate) _paint_texture: wgpu::Texture,
+    pub(crate) paint_texture: wgpu::Texture,
     pub(crate) paint_texture_view: wgpu::TextureView,
     pub(crate) stamp_buffer: wgpu::Buffer,
     pub(crate) stamp_uniform_buffer: wgpu::Buffer,
@@ -281,7 +281,7 @@ impl RenderResources {
         });
 
         Ok(Self {
-            _paint_texture: paint_texture,
+            paint_texture,
             paint_texture_view,
             stamp_buffer,
             stamp_uniform_buffer,
@@ -400,6 +400,7 @@ fn create_paint_texture(
         format: DOCUMENT_FORMAT,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT
             | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC
             | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });

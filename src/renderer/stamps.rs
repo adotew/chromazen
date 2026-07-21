@@ -4,6 +4,8 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::paint::{BrushSpacing, StrokePoint};
 
+use super::history::TextureRect;
+
 pub(crate) const MAX_STAMPS_PER_FRAME: usize = 1024;
 
 #[repr(C)]
@@ -27,6 +29,7 @@ pub(crate) struct StampQueue {
     pending: VecDeque<Stamp>,
     distance_since_last_stamp: f32,
     stamp_aspect: f32,
+    dirty_rect: Option<TextureRect>,
 }
 
 impl Default for StampQueue {
@@ -41,6 +44,7 @@ impl StampQueue {
             pending: VecDeque::new(),
             distance_since_last_stamp: 0.0,
             stamp_aspect,
+            dirty_rect: None,
         }
     }
 
@@ -51,14 +55,21 @@ impl StampQueue {
     pub(crate) fn clear(&mut self) {
         self.pending.clear();
         self.distance_since_last_stamp = 0.0;
+        self.dirty_rect = None;
     }
 
     pub(crate) fn has_pending(&self) -> bool {
         !self.pending.is_empty()
     }
 
-    pub(crate) fn reset_spacing(&mut self) {
+    pub(crate) fn begin_stroke(&mut self) {
         self.distance_since_last_stamp = 0.0;
+        self.dirty_rect = None;
+    }
+
+    pub(crate) fn end_stroke(&mut self) -> Option<TextureRect> {
+        self.distance_since_last_stamp = 0.0;
+        self.dirty_rect.take()
     }
 
     pub(crate) fn queue_point(
@@ -100,6 +111,13 @@ impl StampQueue {
             return false;
         }
 
+        let rect = TextureRect::from_inclusive(
+            bounds.min_x as u32,
+            bounds.min_y as u32,
+            bounds.max_x as u32,
+            bounds.max_y as u32,
+        );
+        self.dirty_rect = Some(self.dirty_rect.map_or(rect, |dirty| dirty.union(rect)));
         self.pending.push_back(stamp);
         true
     }
@@ -259,6 +277,32 @@ mod tests {
     fn stamp_bounds_follow_image_aspect_ratio() {
         assert_eq!(get_stamp_half_size(10.0, 2.0), (10.0, 5.0));
         assert_eq!(get_stamp_half_size(10.0, 0.5), (5.0, 10.0));
+    }
+
+    #[test]
+    fn accepted_stamps_accumulate_clipped_dirty_bounds() {
+        let mut queue = StampQueue::default();
+        queue.begin_stroke();
+        assert!(queue.queue_point(point(5.0, 5.0), [0.0; 4], 100, 100));
+        assert!(queue.queue_point(point(95.0, 95.0), [0.0; 4], 100, 100));
+        assert_eq!(
+            queue.end_stroke(),
+            Some(TextureRect {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 100,
+            })
+        );
+        assert_eq!(queue.end_stroke(), None);
+    }
+
+    #[test]
+    fn off_canvas_stamps_leave_dirty_bounds_empty() {
+        let mut queue = StampQueue::default();
+        queue.begin_stroke();
+        assert!(!queue.queue_point(point(-20.0, -20.0), [0.0; 4], 100, 100));
+        assert_eq!(queue.end_stroke(), None);
     }
 
     #[test]

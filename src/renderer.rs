@@ -3,11 +3,13 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use winit::{dpi::PhysicalSize, window::Window};
 
+mod history;
 mod resources;
 mod stamps;
 mod view;
 
 use self::{
+    history::{PaintHistory, TextureRect},
     resources::RenderResources,
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue},
     view::PaintView,
@@ -43,6 +45,7 @@ pub struct PaintRenderer {
     document_size: [u32; 2],
     resources: RenderResources,
     stamp_queue: StampQueue,
+    history: PaintHistory,
     view: PaintView,
 }
 
@@ -69,11 +72,13 @@ impl PaintRenderer {
             .stamp_image
             .as_ref()
             .map_or(1.0, |image| image.width() as f32 / image.height() as f32);
+        let history = PaintHistory::new(device, document_size);
         let mut renderer = Self {
             gpu,
             document_size,
             resources,
             stamp_queue: StampQueue::new(stamp_aspect),
+            history,
             view: PaintView::default(),
         };
         renderer.fit_to_screen();
@@ -139,11 +144,31 @@ impl PaintRenderer {
     }
 
     pub fn begin_stroke(&mut self) {
-        self.stamp_queue.reset_spacing();
+        if self.history.begin_stroke() {
+            self.stamp_queue.begin_stroke();
+        }
     }
 
     pub fn end_stroke(&mut self) {
-        self.stamp_queue.reset_spacing();
+        self.flush_all_stamps();
+        let Some(rect) = self.stamp_queue.end_stroke() else {
+            self.history.end_empty_stroke();
+            return;
+        };
+
+        let mut encoder =
+            self.gpu
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("history commit encoder"),
+                });
+        self.history.commit_stroke(
+            self.gpu.device(),
+            &mut encoder,
+            &self.resources.paint_texture,
+            rect,
+        );
+        self.gpu.queue().submit(std::iter::once(encoder.finish()));
     }
 
     pub fn queue_stamp(&mut self, point: StrokePoint, color: [f32; 4]) -> bool {
@@ -170,6 +195,7 @@ impl PaintRenderer {
 
     pub fn clear_canvas(&mut self) {
         self.stamp_queue.clear();
+        self.history.clear();
         let mut encoder =
             self.gpu
                 .device()
@@ -194,6 +220,16 @@ impl PaintRenderer {
                 multiview_mask: None,
             });
         }
+        self.history.sync_canvas(
+            &mut encoder,
+            &self.resources.paint_texture,
+            TextureRect {
+                x: 0,
+                y: 0,
+                width: self.document_size[0],
+                height: self.document_size[1],
+            },
+        );
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
     }
 
@@ -233,6 +269,19 @@ impl PaintRenderer {
         pass.set_pipeline(&self.resources.blit_pipeline);
         pass.set_bind_group(0, &self.resources.blit_bind_group, &[]);
         pass.draw(0..3, 0..1);
+    }
+
+    fn flush_all_stamps(&mut self) {
+        while self.stamp_queue.has_pending() {
+            let mut encoder =
+                self.gpu
+                    .device()
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("stroke flush encoder"),
+                    });
+            self.flush_stamps(&mut encoder);
+            self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        }
     }
 
     fn flush_stamps(&mut self, encoder: &mut wgpu::CommandEncoder) {
