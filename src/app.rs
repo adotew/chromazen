@@ -256,6 +256,26 @@ impl App {
                         paint.redo();
                     }
                 }
+                AppCommand::SelectLayer(id) => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.select_layer(id);
+                    }
+                }
+                AppCommand::SelectBackground => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.select_background();
+                    }
+                }
+                AppCommand::AddLayer => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.add_layer();
+                    }
+                }
+                AppCommand::DeleteSelectedLayer => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.delete_selected_layer();
+                    }
+                }
                 AppCommand::SwitchBrush(id) => {
                     self.process_settings_commands(vec![SettingsCommand::SwitchBrush(id)]);
                 }

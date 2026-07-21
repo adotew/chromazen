@@ -9,9 +9,10 @@ mod resources;
 mod stamps;
 mod view;
 
+pub(crate) use self::layers::{LayerId, LayerInfo, LayerSelection, LayerSnapshot};
 use self::{
     history::{HistoryTarget, PaintHistory, TextureRect},
-    layers::{LayerId, LayerInfo, LayerSelection, LayerSnapshot, PaintLayer},
+    layers::PaintLayer,
     resources::RenderResources,
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue},
     view::PaintView,
