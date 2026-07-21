@@ -4,6 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use winit::{dpi::PhysicalSize, window::Window};
 
 mod history;
+mod layers;
 mod resources;
 mod stamps;
 mod view;
