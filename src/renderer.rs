@@ -12,7 +12,7 @@ mod view;
 pub(crate) use self::layers::{LayerId, LayerInfo, LayerSelection, LayerSnapshot};
 use self::{
     history::{HistoryTarget, PaintHistory, TextureRect},
-    layers::PaintLayer,
+    layers::{PaintLayer, insertion_index, layer_name, replacement_index_after_delete},
     resources::RenderResources,
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue},
     view::PaintView,
@@ -77,12 +77,8 @@ impl PaintRenderer {
             brush_preset.stamp_image.as_ref(),
         )?;
 
-        let first_layer = resources.create_paint_layer(
-            device,
-            document_size,
-            LayerId(1),
-            "Layer 1".to_owned(),
-        );
+        let first_layer =
+            resources.create_paint_layer(device, document_size, LayerId(1), "Layer 1".to_owned());
         let stamp_aspect = brush_preset
             .stamp_image
             .as_ref()
@@ -211,21 +207,18 @@ impl PaintRenderer {
             return false;
         }
         let selection_before = self.selection;
-        let index = match self.selection {
-            LayerSelection::Background => 0,
-            LayerSelection::Paint(id) => self
-                .layers
-                .iter()
-                .position(|layer| layer.id == id)
-                .map_or(self.layers.len(), |index| index + 1),
-        };
+        let index = insertion_index(
+            self.selection,
+            self.selected_layer_index(),
+            self.layers.len(),
+        );
         let id = LayerId(self.next_layer_id);
         self.next_layer_id += 1;
-        let name = format!("Layer {}", self.next_layer_number);
+        let name = layer_name(self.next_layer_number);
         self.next_layer_number += 1;
-        let layer = self
-            .resources
-            .create_paint_layer(self.gpu.device(), self.document_size, id, name);
+        let layer =
+            self.resources
+                .create_paint_layer(self.gpu.device(), self.document_size, id, name);
         let mut encoder =
             self.gpu
                 .device()
@@ -252,12 +245,8 @@ impl PaintRenderer {
         }
         self.layers.insert(index, layer);
         self.selection = LayerSelection::Paint(id);
-        self.history.record_add(
-            id,
-            index,
-            selection_before,
-            self.layer_texture_byte_len(),
-        );
+        self.history
+            .record_add(id, index, selection_before, self.layer_texture_byte_len());
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
         true
     }
@@ -274,12 +263,12 @@ impl PaintRenderer {
             return false;
         }
         let selection_before = self.selection;
-        let index = self.selected_layer_index().expect("selected layer must exist");
-        let next_id = if index > 0 {
-            self.layers[index - 1].id
-        } else {
-            self.layers[1].id
-        };
+        let index = self
+            .selected_layer_index()
+            .expect("selected layer must exist");
+        let replacement_index = replacement_index_after_delete(self.layers.len(), index)
+            .expect("deletion requires another paint layer");
+        let next_id = self.layers[replacement_index].id;
         let layer = self.layers.remove(index);
         self.selection = LayerSelection::Paint(next_id);
         self.history.record_delete(
@@ -331,7 +320,9 @@ impl PaintRenderer {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("history commit encoder"),
                 });
-        let layer_index = self.selected_layer_index().expect("stroke requires paint layer");
+        let layer_index = self
+            .selected_layer_index()
+            .expect("stroke requires paint layer");
         let layer_id = self.layers[layer_index].id;
         self.history.commit_stroke(
             self.gpu.device(),
@@ -353,24 +344,23 @@ impl PaintRenderer {
 
     pub fn undo(&mut self) -> bool {
         match self.history.undo_target() {
-            Some(HistoryTarget::Structure) => {
-                self.history.undo_structure(
-                    &mut self.layers,
-                    &mut self.selection,
-                    &mut self.background_color,
-                )
-            }
+            Some(HistoryTarget::Structure) => self.history.undo_structure(
+                &mut self.layers,
+                &mut self.selection,
+                &mut self.background_color,
+            ),
             Some(HistoryTarget::Stroke(layer_id)) => {
                 let layer_index = self
                     .layers
                     .iter()
                     .position(|layer| layer.id == layer_id)
                     .expect("undo layer must exist");
-                let mut encoder = self.gpu.device().create_command_encoder(
-                    &wgpu::CommandEncoderDescriptor {
-                        label: Some("undo encoder"),
-                    },
-                );
+                let mut encoder =
+                    self.gpu
+                        .device()
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("undo encoder"),
+                        });
                 self.history.ensure_layer_synced(
                     &mut encoder,
                     layer_id,
@@ -388,24 +378,23 @@ impl PaintRenderer {
 
     pub fn redo(&mut self) -> bool {
         match self.history.redo_target() {
-            Some(HistoryTarget::Structure) => {
-                self.history.redo_structure(
-                    &mut self.layers,
-                    &mut self.selection,
-                    &mut self.background_color,
-                )
-            }
+            Some(HistoryTarget::Structure) => self.history.redo_structure(
+                &mut self.layers,
+                &mut self.selection,
+                &mut self.background_color,
+            ),
             Some(HistoryTarget::Stroke(layer_id)) => {
                 let layer_index = self
                     .layers
                     .iter()
                     .position(|layer| layer.id == layer_id)
                     .expect("redo layer must exist");
-                let mut encoder = self.gpu.device().create_command_encoder(
-                    &wgpu::CommandEncoderDescriptor {
-                        label: Some("redo encoder"),
-                    },
-                );
+                let mut encoder =
+                    self.gpu
+                        .device()
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("redo encoder"),
+                        });
                 self.history.ensure_layer_synced(
                     &mut encoder,
                     layer_id,
@@ -460,7 +449,9 @@ impl PaintRenderer {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("clear canvas encoder"),
                 });
-        let layer_index = self.selected_layer_index().expect("clear requires paint layer");
+        let layer_index = self
+            .selected_layer_index()
+            .expect("clear requires paint layer");
         {
             let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("clear canvas pass"),
@@ -564,7 +555,9 @@ impl PaintRenderer {
             .queue()
             .write_buffer(&self.resources.stamp_buffer, 0, bytemuck::cast_slice(&raw));
 
-        let layer_index = self.selected_layer_index().expect("stamp requires paint layer");
+        let layer_index = self
+            .selected_layer_index()
+            .expect("stamp requires paint layer");
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("stamp pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

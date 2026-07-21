@@ -81,11 +81,7 @@ impl GuiLayer {
         }
     }
 
-    pub fn run(
-        &mut self,
-        window: &Window,
-        layers: &LayerSnapshot,
-    ) -> egui::FullOutput {
+    pub fn run(&mut self, window: &Window, layers: &LayerSnapshot) -> egui::FullOutput {
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
 
@@ -169,9 +165,9 @@ impl GuiLayer {
                     let mut color = background;
                     let changed = color_picker::show(ui.ctx(), &mut color);
                     if changed {
-                        self.background_edit_start
-                            .get_or_insert(rgb(background));
-                        self.commands.push(AppCommand::SetBackgroundColor(rgb(color)));
+                        self.background_edit_start.get_or_insert(rgb(background));
+                        self.commands
+                            .push(AppCommand::SetBackgroundColor(rgb(color)));
                     }
                     if !ui.ctx().input(|input| input.pointer.primary_down())
                         && let Some(before) = self.background_edit_start.take()
@@ -309,4 +305,15 @@ pub fn repaint_delay(output: &egui::FullOutput) -> Duration {
         .viewport_output
         .get(&ViewportId::ROOT)
         .map_or(Duration::MAX, |viewport| viewport.repaint_delay)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn background_color_round_trips_through_ui() {
+        let color = [0.25, 0.5, 0.75, 1.0];
+        assert_eq!(rgb(background_color(color)), [64, 128, 191]);
+    }
 }

@@ -103,9 +103,9 @@ impl HistoryAction {
     fn target(&self) -> HistoryTarget {
         match self {
             Self::Stroke(entry) => HistoryTarget::Stroke(entry.layer_id),
-            Self::AddLayer { .. }
-            | Self::DeleteLayer { .. }
-            | Self::BackgroundColor { .. } => HistoryTarget::Structure,
+            Self::AddLayer { .. } | Self::DeleteLayer { .. } | Self::BackgroundColor { .. } => {
+                HistoryTarget::Structure
+            }
         }
     }
 }
@@ -166,8 +166,7 @@ impl PaintHistory {
     }
 
     pub(crate) fn redo_target(&self) -> Option<HistoryTarget> {
-        self.can_redo()
-            .then(|| self.actions[self.cursor].target())
+        self.can_redo().then(|| self.actions[self.cursor].target())
     }
 
     pub(crate) fn layer_needs_sync(&self, layer_id: LayerId) -> bool {
@@ -379,7 +378,9 @@ impl PaintHistory {
                 detached,
                 ..
             } => {
-                let layer = detached.take().expect("undone added layer must be retained");
+                let layer = detached
+                    .take()
+                    .expect("undone added layer must be retained");
                 layers.insert((*index).min(layers.len()), layer);
                 *selection = *selection_after;
             }
@@ -556,5 +557,15 @@ mod tests {
     fn budget_evicts_oldest_entries_and_keeps_newest() {
         assert_eq!(eviction_count(300, 200, 3, [100, 100, 100].into_iter()), 1);
         assert_eq!(eviction_count(300, 50, 1, [300].into_iter()), 0);
+    }
+
+    #[test]
+    fn background_changes_are_structural_and_use_no_texture_budget() {
+        let action = HistoryAction::BackgroundColor {
+            before: [1.0; 4],
+            after: [0.0, 0.0, 0.0, 1.0],
+        };
+        assert_eq!(action.target(), HistoryTarget::Structure);
+        assert_eq!(action.bytes(), 0);
     }
 }
