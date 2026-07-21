@@ -209,7 +209,7 @@ impl RenderResources {
                     blend: Some(wgpu::BlendState {
                         color: wgpu::BlendComponent {
                             operation: wgpu::BlendOperation::Add,
-                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            src_factor: wgpu::BlendFactor::One,
                             dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
                         },
                         alpha: wgpu::BlendComponent {

@@ -59,5 +59,5 @@ fn vs(
 fn fs(in: VertexOut) -> @location(0) vec4f {
   let mask = textureSample(brushStamp, brushSampler, in.uv).a;
   let alpha = clamp(in.color.a * mask, 0.0, 1.0);
-  return vec4f(in.color.rgb, alpha);
+  return vec4f(in.color.rgb * alpha, alpha);
 }
