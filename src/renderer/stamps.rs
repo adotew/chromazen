@@ -337,8 +337,10 @@ mod tests {
 
         let expected_spacing = get_stamp_spacing(input[0].radius, BrushSpacing::default());
         assert!(queue.pending.len() > 100);
-        assert!(queue.pending.iter().zip(queue.pending.iter().skip(1)).all(
-            |(from, to)| (to.x - from.x).hypot(to.y - from.y) <= expected_spacing + 1.0e-3
-        ));
+        assert!(queue
+            .pending
+            .iter()
+            .zip(queue.pending.iter().skip(1))
+            .all(|(from, to)| (to.x - from.x).hypot(to.y - from.y) <= expected_spacing + 1.0e-3));
     }
 }
