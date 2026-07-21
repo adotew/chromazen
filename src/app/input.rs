@@ -91,6 +91,9 @@ impl PaintInputController {
                     false
                 }
                 (ElementState::Pressed, MouseButton::Left) => {
+                    if !paint.can_paint() {
+                        return false;
+                    }
                     let point = self.stroke_point_from_window(
                         paint,
                         self.cursor_pos,

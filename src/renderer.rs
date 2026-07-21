@@ -11,7 +11,7 @@ mod view;
 
 use self::{
     history::{PaintHistory, TextureRect},
-    layers::{LayerId, LayerSelection, PaintLayer},
+    layers::{LayerId, LayerInfo, LayerSelection, LayerSnapshot, PaintLayer},
     resources::RenderResources,
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue},
     view::PaintView,
@@ -162,8 +162,40 @@ impl PaintRenderer {
         self.view.window_to_document(point)
     }
 
+    pub fn can_paint(&self) -> bool {
+        self.selected_layer_index().is_some()
+    }
+
+    pub(crate) fn layer_snapshot(&self) -> LayerSnapshot {
+        LayerSnapshot {
+            layers: self
+                .layers
+                .iter()
+                .map(|layer| LayerInfo {
+                    id: layer.id,
+                    name: layer.name.clone(),
+                })
+                .collect(),
+            selection: self.selection,
+            background_color: self.background_color,
+        }
+    }
+
+    pub(crate) fn select_layer(&mut self, id: LayerId) -> bool {
+        if self.layers.iter().any(|layer| layer.id == id) {
+            self.selection = LayerSelection::Paint(id);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn select_background(&mut self) {
+        self.selection = LayerSelection::Background;
+    }
+
     pub fn begin_stroke(&mut self) {
-        if self.history.begin_stroke() {
+        if self.can_paint() && self.history.begin_stroke() {
             self.stamp_queue.begin_stroke();
         }
     }
@@ -234,8 +266,13 @@ impl PaintRenderer {
     }
 
     pub fn queue_stamp(&mut self, point: StrokePoint, color: [f32; 4]) -> bool {
-        self.stamp_queue
-            .queue_point(point, color, self.document_size[0], self.document_size[1])
+        self.can_paint()
+            && self.stamp_queue.queue_point(
+                point,
+                color,
+                self.document_size[0],
+                self.document_size[1],
+            )
     }
 
     pub fn stamp_line(
@@ -245,6 +282,9 @@ impl PaintRenderer {
         color: [f32; 4],
         spacing: BrushSpacing,
     ) -> usize {
+        if !self.can_paint() {
+            return 0;
+        }
         self.stamp_queue.stamp_line(
             from,
             to,
