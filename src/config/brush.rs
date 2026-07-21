@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::ConfigError;
 
 pub(crate) const DEFAULT_BRUSH_ID: &str = "charcoal";
+pub(crate) const SKETCH_ID: &str = "sketch";
 const BRUSH_SCHEMA_VERSION: u32 = 1;
 const MAX_STAMP_DIMENSION: u32 = 4096;
 
@@ -137,6 +138,31 @@ impl LoadedBrushPreset {
             stamp_image: None,
         }
     }
+
+    pub(crate) fn bundled_sketch() -> Self {
+        Self {
+            id: SKETCH_ID.to_owned(),
+            preset: BrushPreset {
+                name: "Sketch".to_owned(),
+                size: SizeConfig {
+                    default: 18.0,
+                    min: 1.0,
+                    max: 200.0,
+                },
+                spacing: SpacingConfig {
+                    ratio: 0.08,
+                    minimum: 1.0,
+                },
+                pressure: PressureConfig {
+                    min_size: 0.25,
+                    min_opacity: 0.01,
+                    opacity_gamma: 2.4,
+                },
+                ..BrushPreset::default()
+            },
+            stamp_image: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -153,10 +179,16 @@ pub(crate) struct BrushCatalog {
 impl Default for BrushCatalog {
     fn default() -> Self {
         Self {
-            brushes: vec![BrushSummary {
-                id: DEFAULT_BRUSH_ID.to_owned(),
-                name: BrushPreset::default().name,
-            }],
+            brushes: vec![
+                BrushSummary {
+                    id: DEFAULT_BRUSH_ID.to_owned(),
+                    name: BrushPreset::default().name,
+                },
+                BrushSummary {
+                    id: SKETCH_ID.to_owned(),
+                    name: "Sketch".to_owned(),
+                },
+            ],
             warnings: Vec::new(),
         }
     }

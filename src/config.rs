@@ -6,7 +6,7 @@ use std::{
 };
 
 use atomic_write_file::AtomicWriteFile;
-use brush::{DEFAULT_BRUSH_ID, discover_user_brushes, load_user_brush};
+use brush::{DEFAULT_BRUSH_ID, SKETCH_ID, discover_user_brushes, load_user_brush};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 mod brush;
@@ -143,8 +143,12 @@ impl ConfigStore {
 
     pub(crate) fn load_brush(&self, id: &str) -> Result<LoadedBrushPreset, ConfigError> {
         let config_path = self.brushes_path().join(id).join("brush.toml");
-        if id == DEFAULT_BRUSH_ID && !config_path.exists() {
-            return Ok(LoadedBrushPreset::bundled_charcoal());
+        if !config_path.exists() {
+            match id {
+                DEFAULT_BRUSH_ID => return Ok(LoadedBrushPreset::bundled_charcoal()),
+                SKETCH_ID => return Ok(LoadedBrushPreset::bundled_sketch()),
+                _ => {}
+            }
         }
         load_user_brush(&self.brushes_path(), id)
     }
@@ -354,14 +358,22 @@ mod tests {
     }
 
     #[test]
-    fn bundled_charcoal_is_available_without_user_files() {
+    fn bundled_brushes_are_available_without_user_files() {
         let temp = tempfile::tempdir().expect("temp directory");
         let store = ConfigStore::from_root(temp.path());
 
-        let brush = store.load_brush("charcoal").expect("bundled brush");
+        let charcoal = store.load_brush("charcoal").expect("charcoal brush");
+        let sketch = store.load_brush("sketch").expect("sketch brush");
 
-        assert_eq!(brush.id, "charcoal");
-        assert!(brush.stamp_image.is_none());
+        assert_eq!(charcoal.id, "charcoal");
+        assert_eq!(sketch.id, "sketch");
+        assert_eq!(sketch.preset.size.default, 18.0);
+        assert_eq!(sketch.preset.spacing.ratio, 0.08);
+        assert_eq!(sketch.preset.pressure.min_size, 0.25);
+        assert_eq!(sketch.preset.pressure.min_opacity, 0.01);
+        assert_eq!(sketch.preset.pressure.opacity_gamma, 2.4);
+        assert!(charcoal.stamp_image.is_none());
+        assert!(sketch.stamp_image.is_none());
     }
 
     #[test]
