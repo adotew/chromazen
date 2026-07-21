@@ -1,7 +1,13 @@
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod imp {
-    use muda::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
+    use muda::{
+        Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
+        accelerator::{Accelerator, CMD_OR_CTRL, Code},
+    };
     use winit::window::Window;
+
+    #[cfg(target_os = "macos")]
+    use muda::accelerator::Modifiers;
 
     #[cfg(target_os = "windows")]
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -11,6 +17,8 @@ mod imp {
 
     use super::super::command::AppCommand;
 
+    const UNDO_ID: &str = "chromazen.edit.undo";
+    const REDO_ID: &str = "chromazen.edit.redo";
     const SAVE_SETTINGS_ID: &str = "chromazen.settings.save";
     const RELOAD_CONFIGURATION_ID: &str = "chromazen.settings.reload";
     const RESET_BRUSH_ID: &str = "chromazen.settings.reset-brush";
@@ -18,6 +26,8 @@ mod imp {
 
     pub(crate) struct NativeMenu {
         menu: Menu,
+        undo: MenuItem,
+        redo: MenuItem,
         installed: bool,
     }
 
@@ -29,11 +39,16 @@ mod imp {
             menu.append(&application_menu()?)
                 .map_err(|error| format!("failed to add application menu: {error}"))?;
 
+            let (edit_menu, undo, redo) = edit_menu()?;
+            menu.append(&edit_menu)
+                .map_err(|error| format!("failed to add edit menu: {error}"))?;
             menu.append(&settings_menu()?)
                 .map_err(|error| format!("failed to add settings menu: {error}"))?;
 
             Ok(Self {
                 menu,
+                undo,
+                redo,
                 installed: false,
             })
         }
@@ -47,6 +62,11 @@ mod imp {
                     handler(command);
                 }
             }));
+        }
+
+        pub(crate) fn set_history_enabled(&self, can_undo: bool, can_redo: bool) {
+            self.undo.set_enabled(can_undo);
+            self.redo.set_enabled(can_redo);
         }
 
         pub(crate) fn install(&mut self, _window: &Window) -> Result<(), String> {
@@ -72,6 +92,23 @@ mod imp {
             self.installed = true;
             Ok(())
         }
+    }
+
+    fn edit_menu() -> Result<(Submenu, MenuItem, MenuItem), String> {
+        let undo = MenuItem::with_id(
+            UNDO_ID,
+            "Undo",
+            false,
+            Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyZ)),
+        );
+        #[cfg(target_os = "macos")]
+        let redo_accelerator = Accelerator::new(Some(CMD_OR_CTRL | Modifiers::SHIFT), Code::KeyZ);
+        #[cfg(target_os = "windows")]
+        let redo_accelerator = Accelerator::new(Some(CMD_OR_CTRL), Code::KeyY);
+        let redo = MenuItem::with_id(REDO_ID, "Redo", false, Some(redo_accelerator));
+        let menu = Submenu::with_items("Edit", true, &[&undo, &redo])
+            .map_err(|error| format!("failed to build edit menu: {error}"))?;
+        Ok((menu, undo, redo))
     }
 
     fn settings_menu() -> Result<Submenu, String> {
@@ -133,6 +170,8 @@ mod imp {
 
     fn command_for_id(id: &MenuId) -> Option<AppCommand> {
         match id.as_ref() {
+            UNDO_ID => Some(AppCommand::Undo),
+            REDO_ID => Some(AppCommand::Redo),
             SAVE_SETTINGS_ID => Some(AppCommand::SaveSettings),
             RELOAD_CONFIGURATION_ID => Some(AppCommand::ReloadConfiguration),
             RESET_BRUSH_ID => Some(AppCommand::ResetBrush),
@@ -147,6 +186,14 @@ mod imp {
 
         #[test]
         fn maps_stable_menu_ids_to_commands() {
+            assert_eq!(
+                command_for_id(&MenuId::new(UNDO_ID)),
+                Some(AppCommand::Undo)
+            );
+            assert_eq!(
+                command_for_id(&MenuId::new(REDO_ID)),
+                Some(AppCommand::Redo)
+            );
             assert_eq!(
                 command_for_id(&MenuId::new(SAVE_SETTINGS_ID)),
                 Some(AppCommand::SaveSettings)
@@ -185,6 +232,8 @@ impl NativeMenu {
         F: Fn(super::command::AppCommand) + Send + Sync + 'static,
     {
     }
+
+    pub(super) fn set_history_enabled(&self, _can_undo: bool, _can_redo: bool) {}
 
     pub(super) fn install(&mut self, _window: &winit::window::Window) -> Result<(), String> {
         Ok(())

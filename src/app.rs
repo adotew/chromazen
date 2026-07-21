@@ -99,6 +99,7 @@ impl ApplicationHandler<AppEvent> for App {
         self.gui = Some(gui);
         self.pressure_state = pressure_state;
         self._pressure_monitor = pressure_monitor;
+        self.sync_history_menu();
         window.request_redraw();
     }
 
@@ -122,20 +123,26 @@ impl ApplicationHandler<AppEvent> for App {
                 let Some(gui) = self.gui.as_mut() else {
                     return;
                 };
+                self.input.observe_event(&event);
                 let egui_response = gui.state.on_window_event(window.as_ref(), &event);
                 let mut needs_redraw = egui_response.repaint;
                 let egui_consumed = egui_response.consumed;
 
-                if !egui_consumed
-                    && let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_ref())
-                {
-                    needs_redraw |= self.input.handle_event(
-                        &event,
-                        paint,
-                        gui.brush,
-                        gui.stroke_smoothing,
-                        &self.pressure_state,
-                    );
+                if !egui_consumed {
+                    if let Some(command) = self.input.history_command(&event) {
+                        self.pending_commands.push(command);
+                        needs_redraw = true;
+                    } else if let (Some(paint), Some(gui)) =
+                        (self.paint.as_mut(), self.gui.as_ref())
+                    {
+                        needs_redraw |= self.input.handle_event(
+                            &event,
+                            paint,
+                            gui.brush,
+                            gui.stroke_smoothing,
+                            &self.pressure_state,
+                        );
+                    }
                 }
 
                 match event {
@@ -154,6 +161,7 @@ impl ApplicationHandler<AppEvent> for App {
                     _ => {}
                 }
 
+                self.sync_history_menu();
                 if needs_redraw {
                     self.next_repaint = None;
                     window.request_redraw();
@@ -238,6 +246,16 @@ impl App {
         let commands = std::mem::take(&mut self.pending_commands);
         for command in commands {
             match command {
+                AppCommand::Undo => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.undo();
+                    }
+                }
+                AppCommand::Redo => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.redo();
+                    }
+                }
                 AppCommand::SwitchBrush(id) => {
                     self.process_settings_commands(vec![SettingsCommand::SwitchBrush(id)]);
                 }
@@ -265,7 +283,16 @@ impl App {
                 }
             }
         }
+        self.sync_history_menu();
         true
+    }
+
+    fn sync_history_menu(&self) {
+        let (can_undo, can_redo) = self
+            .paint
+            .as_ref()
+            .map_or((false, false), |paint| (paint.can_undo(), paint.can_redo()));
+        self.native_menu.set_history_enabled(can_undo, can_redo);
     }
 
     fn process_settings_commands(&mut self, commands: Vec<SettingsCommand>) {

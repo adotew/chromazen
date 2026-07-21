@@ -1,6 +1,6 @@
 use winit::{
     event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
-    keyboard::{KeyCode, PhysicalKey},
+    keyboard::{KeyCode, ModifiersState, PhysicalKey},
 };
 
 use crate::{
@@ -8,6 +8,8 @@ use crate::{
     platform::PressureStateHandle,
     renderer::PaintRenderer,
 };
+
+use super::command::AppCommand;
 
 #[derive(Debug, Default)]
 pub struct PaintInputController {
@@ -19,9 +21,34 @@ pub struct PaintInputController {
     last_pan_pos: [f32; 2],
     smoother: StrokeSmoother,
     smoothing_options: StrokeSmoothingOptions,
+    modifiers: ModifiersState,
 }
 
 impl PaintInputController {
+    pub fn observe_event(&mut self, event: &WindowEvent) {
+        match event {
+            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
+            WindowEvent::Focused(false) => self.modifiers = ModifiersState::empty(),
+            _ => {}
+        }
+    }
+
+    pub fn history_command(&self, event: &WindowEvent) -> Option<AppCommand> {
+        if cfg!(any(target_os = "macos", target_os = "windows")) {
+            return None;
+        }
+        let WindowEvent::KeyboardInput { event, .. } = event else {
+            return None;
+        };
+        if event.state != ElementState::Pressed || event.repeat {
+            return None;
+        }
+        let PhysicalKey::Code(key) = event.physical_key else {
+            return None;
+        };
+        history_command_for_key(key, self.modifiers)
+    }
+
     pub fn handle_event(
         &mut self,
         event: &WindowEvent,
@@ -159,5 +186,44 @@ impl PaintInputController {
         self.is_panning = false;
         self.last_point = None;
         queued > 0
+    }
+}
+
+fn history_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<AppCommand> {
+    if !modifiers.control_key() || modifiers.alt_key() || modifiers.super_key() {
+        return None;
+    }
+    match (key, modifiers.shift_key()) {
+        (KeyCode::KeyZ, false) => Some(AppCommand::Undo),
+        (KeyCode::KeyZ, true) | (KeyCode::KeyY, false) => Some(AppCommand::Redo),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_linux_history_shortcuts() {
+        assert_eq!(
+            history_command_for_key(KeyCode::KeyZ, ModifiersState::CONTROL),
+            Some(AppCommand::Undo)
+        );
+        assert_eq!(
+            history_command_for_key(
+                KeyCode::KeyZ,
+                ModifiersState::CONTROL | ModifiersState::SHIFT,
+            ),
+            Some(AppCommand::Redo)
+        );
+        assert_eq!(
+            history_command_for_key(KeyCode::KeyY, ModifiersState::CONTROL),
+            Some(AppCommand::Redo)
+        );
+        assert_eq!(
+            history_command_for_key(KeyCode::KeyZ, ModifiersState::SHIFT),
+            None
+        );
     }
 }
