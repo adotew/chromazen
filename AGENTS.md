@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-`src/main.rs` starts the native application. Application state, commands, menus, input, and UI live under `src/app/`; configuration parsing and brush preset models are in `src/config/`; painting behavior and stroke smoothing are in `src/paint/`. Platform-specific input, including macOS pressure handling, belongs in `src/platform/`. GPU rendering is organized under `src/renderer/`, with WGSL programs in `src/renderer/shaders/`. Keep bundled runtime images in `assets/`. Tests currently live beside their implementation in `#[cfg(test)]` modules rather than in a separate `tests/` directory.
+`src/main.rs` starts the native application. Application state, commands, menus, input, and UI live under `src/app/`; configuration parsing and brush preset models are in `src/config/`; painting behavior and stroke smoothing are in `src/paint/`. Platform-specific input, including macOS pressure handling, belongs in `src/platform/`. GPU rendering is organized under `src/renderer/`; stroke history and its persistent canvas mirror live in `src/renderer/history.rs`, and WGSL programs live in `src/renderer/shaders/`. Keep bundled runtime images in `assets/`. Tests currently live beside their implementation in `#[cfg(test)]` modules rather than in a separate `tests/` directory.
 
 ## Build, Test, and Development Commands
 
@@ -12,7 +12,7 @@
 - `cargo fmt --all -- --check` verifies standard Rust formatting; run `cargo fmt --all` to apply it.
 - `cargo clippy --all-targets --all-features -- -D warnings` treats lint findings as failures.
 
-Use the native Settings menu on macOS or Windows when manually testing configuration save, reload, and reset behavior.
+Use the native Settings menu on macOS or Windows when manually testing configuration save, reload, and reset behavior. Also verify undo/redo shortcuts and the native Edit menu on supported platforms.
 
 ## Coding Style & Naming Conventions
 
@@ -20,7 +20,7 @@ Follow `rustfmt` defaults (four-space indentation). Use `snake_case` for modules
 
 ## Testing Guidelines
 
-Add focused `#[test]` cases in a local `mod tests`. Name tests after observable behavior, such as `invalid_strength_uses_default`. Cover edge cases for parsing, fallback behavior, stroke geometry, and batching. No coverage threshold is configured, but changes to pure logic should include regression tests. Run `cargo test` and Clippy before submitting.
+Add focused `#[test]` cases in a local `mod tests`. Name tests after observable behavior, such as `invalid_strength_uses_default`. Cover edge cases for parsing, fallback behavior, stroke geometry, batching, history metadata, and shortcut/menu mapping. GPU copy correctness may be verified manually unless a reusable headless-wgpu test harness is added. No coverage threshold is configured, but changes to pure logic should include regression tests. Run `cargo test` and Clippy before submitting.
 
 ## Commit & Pull Request Guidelines
 

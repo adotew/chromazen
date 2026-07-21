@@ -13,6 +13,7 @@ Implemented:
 - mouse/fallback input remains full-size and fully opaque
 - instanced GPU brush stamping with a dedicated stamp shader and blend pipeline
 - always-on centripetal Catmull–Rom stroke smoothing for fast, sparse input
+- exact stroke-level GPU undo/redo with a bounded 256 MiB history
 - wheel zoom, pan, clear, fit, 100% zoom
 
 Run:
@@ -49,6 +50,9 @@ Controls:
 - Left drag: paint
 - Wheel: zoom around cursor
 - Middle/right drag or Space + left drag: pan
+- Undo: `Command-Z` on macOS; `Control-Z` on Windows and Linux
+- Redo: `Command-Shift-Z` on macOS; `Control-Y` on Windows; `Control-Shift-Z` or `Control-Y` on Linux
+- On macOS and Windows, Undo and Redo are also available from the native **Edit** menu
 - Use the minimal egui panel for brush selection and size/color controls
 - On macOS and Windows, use the native **Settings** menu to save, reload, reset, or open the configuration folder
 - Edit brush behavior in each preset's `brush.toml`
