@@ -165,7 +165,6 @@ impl GuiLayer {
             ratio: preset.spacing.ratio,
             minimum: preset.spacing.minimum,
         };
-        self.show_message(format!("Selected {}", preset.name), false);
     }
 
     pub(crate) fn settings_reloaded(&mut self, config: &AppConfig) {
