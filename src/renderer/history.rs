@@ -1,4 +1,4 @@
-use super::DOCUMENT_FORMAT;
+use super::{DOCUMENT_FORMAT, layers::LayerId};
 
 const HISTORY_BUDGET_BYTES: u64 = 256 * 1024 * 1024;
 const BYTES_PER_PIXEL: u64 = 4;
@@ -51,92 +51,129 @@ impl TextureRect {
     }
 }
 
-struct HistoryEntry {
+struct StrokeEntry {
+    layer_id: LayerId,
     rect: TextureRect,
     pixels: wgpu::Texture,
     bytes: u64,
 }
 
+enum HistoryAction {
+    Stroke(StrokeEntry),
+}
+
+impl HistoryAction {
+    fn bytes(&self) -> u64 {
+        match self {
+            Self::Stroke(entry) => entry.bytes,
+        }
+    }
+
+    fn layer_id(&self) -> LayerId {
+        match self {
+            Self::Stroke(entry) => entry.layer_id,
+        }
+    }
+}
+
 pub(crate) struct PaintHistory {
-    entries: Vec<HistoryEntry>,
+    actions: Vec<HistoryAction>,
     cursor: usize,
     used_bytes: u64,
     mirror: wgpu::Texture,
-    stroke_active: bool,
+    mirrored_layer: Option<LayerId>,
+    active_stroke: Option<LayerId>,
 }
 
 impl PaintHistory {
     pub(crate) fn new(device: &wgpu::Device, document_size: [u32; 2]) -> Self {
         Self {
-            entries: Vec::new(),
+            actions: Vec::new(),
             cursor: 0,
             used_bytes: 0,
             mirror: create_texture(device, "paint history mirror", document_size),
-            stroke_active: false,
+            mirrored_layer: None,
+            active_stroke: None,
         }
     }
 
-    pub(crate) fn begin_stroke(&mut self) -> bool {
-        if self.stroke_active {
+    pub(crate) fn begin_stroke(&mut self, layer_id: LayerId) -> bool {
+        if self.active_stroke.is_some() {
             return false;
         }
-        self.stroke_active = true;
+        self.active_stroke = Some(layer_id);
         true
     }
 
     pub(crate) fn end_empty_stroke(&mut self) {
-        self.stroke_active = false;
+        self.active_stroke = None;
     }
 
     pub(crate) fn clear(&mut self) {
-        self.entries.clear();
+        self.actions.clear();
         self.cursor = 0;
         self.used_bytes = 0;
-        self.stroke_active = false;
+        self.mirrored_layer = None;
+        self.active_stroke = None;
     }
 
     pub(crate) fn can_undo(&self) -> bool {
-        !self.stroke_active && self.cursor > 0
+        self.active_stroke.is_none() && self.cursor > 0
     }
 
     pub(crate) fn can_redo(&self) -> bool {
-        !self.stroke_active && self.cursor < self.entries.len()
+        self.active_stroke.is_none() && self.cursor < self.actions.len()
     }
 
-    pub(crate) fn sync_canvas(
-        &self,
+    pub(crate) fn undo_layer(&self) -> Option<LayerId> {
+        self.can_undo()
+            .then(|| self.actions[self.cursor - 1].layer_id())
+    }
+
+    pub(crate) fn redo_layer(&self) -> Option<LayerId> {
+        self.can_redo()
+            .then(|| self.actions[self.cursor].layer_id())
+    }
+
+    pub(crate) fn sync_layer(
+        &mut self,
         encoder: &mut wgpu::CommandEncoder,
+        layer_id: LayerId,
         canvas: &wgpu::Texture,
         rect: TextureRect,
     ) {
         copy_rect(encoder, canvas, rect, &self.mirror, [rect.x, rect.y]);
+        self.mirrored_layer = Some(layer_id);
     }
 
     pub(crate) fn commit_stroke(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
+        layer_id: LayerId,
         canvas: &wgpu::Texture,
         rect: TextureRect,
     ) {
-        for entry in self.entries.drain(self.cursor..) {
-            self.used_bytes -= entry.bytes;
+        debug_assert_eq!(self.active_stroke, Some(layer_id));
+        for action in self.actions.drain(self.cursor..) {
+            self.used_bytes -= action.bytes();
         }
 
         let pixels = create_texture(device, "paint history entry", [rect.width, rect.height]);
         copy_rect(encoder, &self.mirror, rect, &pixels, [0, 0]);
-        self.sync_canvas(encoder, canvas, rect);
+        self.sync_layer(encoder, layer_id, canvas, rect);
 
         let bytes = rect.byte_len();
-        self.entries.push(HistoryEntry {
+        self.actions.push(HistoryAction::Stroke(StrokeEntry {
+            layer_id,
             rect,
             pixels,
             bytes,
-        });
+        }));
         self.used_bytes += bytes;
-        self.cursor = self.entries.len();
+        self.cursor = self.actions.len();
         self.evict_to_budget();
-        self.stroke_active = false;
+        self.active_stroke = None;
     }
 
     pub(crate) fn undo(
@@ -148,7 +185,9 @@ impl PaintHistory {
             return false;
         }
         self.cursor -= 1;
-        swap_entry(encoder, &self.mirror, canvas, &self.entries[self.cursor]);
+        let HistoryAction::Stroke(entry) = &self.actions[self.cursor];
+        swap_entry(encoder, &self.mirror, canvas, entry);
+        self.mirrored_layer = Some(entry.layer_id);
         true
     }
 
@@ -160,7 +199,9 @@ impl PaintHistory {
         if !self.can_redo() {
             return false;
         }
-        swap_entry(encoder, &self.mirror, canvas, &self.entries[self.cursor]);
+        let HistoryAction::Stroke(entry) = &self.actions[self.cursor];
+        swap_entry(encoder, &self.mirror, canvas, entry);
+        self.mirrored_layer = Some(entry.layer_id);
         self.cursor += 1;
         true
     }
@@ -169,11 +210,11 @@ impl PaintHistory {
         let count = eviction_count(
             self.used_bytes,
             HISTORY_BUDGET_BYTES,
-            self.entries.len(),
-            self.entries.iter().map(|entry| entry.bytes),
+            self.actions.len(),
+            self.actions.iter().map(HistoryAction::bytes),
         );
-        for entry in self.entries.drain(..count) {
-            self.used_bytes -= entry.bytes;
+        for action in self.actions.drain(..count) {
+            self.used_bytes -= action.bytes();
         }
         self.cursor -= count;
     }
@@ -183,7 +224,7 @@ fn swap_entry(
     encoder: &mut wgpu::CommandEncoder,
     mirror: &wgpu::Texture,
     canvas: &wgpu::Texture,
-    entry: &HistoryEntry,
+    entry: &StrokeEntry,
 ) {
     copy_rect(
         encoder,

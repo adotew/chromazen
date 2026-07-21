@@ -195,7 +195,10 @@ impl PaintRenderer {
     }
 
     pub fn begin_stroke(&mut self) {
-        if self.can_paint() && self.history.begin_stroke() {
+        let Some(layer_id) = self.selected_layer_id() else {
+            return;
+        };
+        if self.history.begin_stroke(layer_id) {
             self.stamp_queue.begin_stroke();
         }
     }
@@ -214,9 +217,11 @@ impl PaintRenderer {
                     label: Some("history commit encoder"),
                 });
         let layer_index = self.selected_layer_index().expect("stroke requires paint layer");
+        let layer_id = self.layers[layer_index].id;
         self.history.commit_stroke(
             self.gpu.device(),
             &mut encoder,
+            layer_id,
             &self.layers[layer_index].texture,
             rect,
         );
@@ -241,7 +246,12 @@ impl PaintRenderer {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("undo encoder"),
                 });
-        let layer_index = self.selected_layer_index().expect("undo requires paint layer");
+        let layer_id = self.history.undo_layer().expect("undo action requires layer");
+        let layer_index = self
+            .layers
+            .iter()
+            .position(|layer| layer.id == layer_id)
+            .expect("undo layer must exist");
         self.history
             .undo(&mut encoder, &self.layers[layer_index].texture);
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
@@ -258,7 +268,12 @@ impl PaintRenderer {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("redo encoder"),
                 });
-        let layer_index = self.selected_layer_index().expect("redo requires paint layer");
+        let layer_id = self.history.redo_layer().expect("redo action requires layer");
+        let layer_index = self
+            .layers
+            .iter()
+            .position(|layer| layer.id == layer_id)
+            .expect("redo layer must exist");
         self.history
             .redo(&mut encoder, &self.layers[layer_index].texture);
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
@@ -323,8 +338,9 @@ impl PaintRenderer {
                 multiview_mask: None,
             });
         }
-        self.history.sync_canvas(
+        self.history.sync_layer(
             &mut encoder,
+            self.layers[layer_index].id,
             &self.layers[layer_index].texture,
             TextureRect {
                 x: 0,
@@ -429,10 +445,15 @@ impl PaintRenderer {
         pass.draw(0..6, 0..count as u32);
     }
 
+    fn selected_layer_id(&self) -> Option<LayerId> {
+        match self.selection {
+            LayerSelection::Background => None,
+            LayerSelection::Paint(id) => Some(id),
+        }
+    }
+
     fn selected_layer_index(&self) -> Option<usize> {
-        let LayerSelection::Paint(id) = self.selection else {
-            return None;
-        };
+        let id = self.selected_layer_id()?;
         self.layers.iter().position(|layer| layer.id == id)
     }
 
