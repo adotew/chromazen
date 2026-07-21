@@ -11,6 +11,7 @@ mod view;
 
 use self::{
     history::{PaintHistory, TextureRect},
+    layers::{LayerId, LayerSelection, PaintLayer},
     resources::RenderResources,
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue},
     view::PaintView,
@@ -45,6 +46,10 @@ pub struct PaintRenderer {
     gpu: GpuContext,
     document_size: [u32; 2],
     resources: RenderResources,
+    layers: Vec<PaintLayer>,
+    selection: LayerSelection,
+    next_layer_id: u64,
+    next_layer_number: u64,
     stamp_queue: StampQueue,
     history: PaintHistory,
     view: PaintView,
@@ -69,6 +74,12 @@ impl PaintRenderer {
             brush_preset.stamp_image.as_ref(),
         )?;
 
+        let first_layer = resources.create_paint_layer(
+            device,
+            document_size,
+            LayerId(1),
+            "Layer 1".to_owned(),
+        );
         let stamp_aspect = brush_preset
             .stamp_image
             .as_ref()
@@ -78,6 +89,10 @@ impl PaintRenderer {
             gpu,
             document_size,
             resources,
+            layers: vec![first_layer],
+            selection: LayerSelection::Paint(LayerId(1)),
+            next_layer_id: 2,
+            next_layer_number: 2,
             stamp_queue: StampQueue::new(stamp_aspect),
             history,
             view: PaintView::default(),
@@ -163,10 +178,11 @@ impl PaintRenderer {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("history commit encoder"),
                 });
+        let layer_index = self.selected_layer_index().expect("stroke requires paint layer");
         self.history.commit_stroke(
             self.gpu.device(),
             &mut encoder,
-            &self.resources.paint_texture,
+            &self.layers[layer_index].texture,
             rect,
         );
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
@@ -190,8 +206,9 @@ impl PaintRenderer {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("undo encoder"),
                 });
+        let layer_index = self.selected_layer_index().expect("undo requires paint layer");
         self.history
-            .undo(&mut encoder, &self.resources.paint_texture);
+            .undo(&mut encoder, &self.layers[layer_index].texture);
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
         true
     }
@@ -206,8 +223,9 @@ impl PaintRenderer {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("redo encoder"),
                 });
+        let layer_index = self.selected_layer_index().expect("redo requires paint layer");
         self.history
-            .redo(&mut encoder, &self.resources.paint_texture);
+            .redo(&mut encoder, &self.layers[layer_index].texture);
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
         true
     }
@@ -243,11 +261,12 @@ impl PaintRenderer {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("clear canvas encoder"),
                 });
+        let layer_index = self.selected_layer_index().expect("clear requires paint layer");
         {
             let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("clear canvas pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.resources.paint_texture_view,
+                    view: &self.layers[layer_index].view,
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
@@ -263,7 +282,7 @@ impl PaintRenderer {
         }
         self.history.sync_canvas(
             &mut encoder,
-            &self.resources.paint_texture,
+            &self.layers[layer_index].texture,
             TextureRect {
                 x: 0,
                 y: 0,
@@ -308,7 +327,8 @@ impl PaintRenderer {
             multiview_mask: None,
         });
         pass.set_pipeline(&self.resources.blit_pipeline);
-        pass.set_bind_group(0, &self.resources.blit_bind_group, &[]);
+        let layer_index = self.selected_layer_index().expect("render requires paint layer");
+        pass.set_bind_group(0, &self.layers[layer_index].blit_bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
 
@@ -340,10 +360,11 @@ impl PaintRenderer {
             .queue()
             .write_buffer(&self.resources.stamp_buffer, 0, bytemuck::cast_slice(&raw));
 
+        let layer_index = self.selected_layer_index().expect("stamp requires paint layer");
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("stamp pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.resources.paint_texture_view,
+                view: &self.layers[layer_index].view,
                 resolve_target: None,
                 depth_slice: None,
                 ops: wgpu::Operations {
@@ -359,6 +380,13 @@ impl PaintRenderer {
         pass.set_pipeline(&self.resources.stamp_pipeline);
         pass.set_bind_group(0, &self.resources.stamp_bind_group, &[]);
         pass.draw(0..6, 0..count as u32);
+    }
+
+    fn selected_layer_index(&self) -> Option<usize> {
+        let LayerSelection::Paint(id) = self.selection else {
+            return None;
+        };
+        self.layers.iter().position(|layer| layer.id == id)
     }
 
     fn write_view_uniform(&self) {

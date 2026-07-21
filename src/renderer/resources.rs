@@ -1,19 +1,19 @@
 use wgpu::util::DeviceExt;
 
+use super::layers::{LayerId, PaintLayer};
 use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
 use super::{DOCUMENT_FORMAT, PaintUniform, ViewUniform};
 
 pub(crate) struct RenderResources {
-    pub(crate) paint_texture: wgpu::Texture,
-    pub(crate) paint_texture_view: wgpu::TextureView,
     pub(crate) stamp_buffer: wgpu::Buffer,
     pub(crate) stamp_uniform_buffer: wgpu::Buffer,
     pub(crate) view_uniform_buffer: wgpu::Buffer,
     pub(crate) stamp_bind_group: wgpu::BindGroup,
     brush_texture: wgpu::Texture,
     brush_sampler: wgpu::Sampler,
+    paint_sampler: wgpu::Sampler,
     stamp_bind_group_layout: wgpu::BindGroupLayout,
-    pub(crate) blit_bind_group: wgpu::BindGroup,
+    blit_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) stamp_pipeline: wgpu::RenderPipeline,
     pub(crate) blit_pipeline: wgpu::RenderPipeline,
 }
@@ -26,8 +26,6 @@ impl RenderResources {
         surface_format: wgpu::TextureFormat,
         preset_stamp: Option<&image::RgbaImage>,
     ) -> Result<Self, String> {
-        let (paint_texture, paint_texture_view) = create_paint_texture(device, document_size);
-
         let stamp_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("stamp storage buffer"),
             size: (MAX_STAMPS_PER_FRAME * std::mem::size_of::<StampRaw>()) as u64,
@@ -173,25 +171,6 @@ impl RenderResources {
                     },
                 ],
             });
-        let blit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("blit bind group"),
-            layout: &blit_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&paint_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&paint_texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: view_uniform_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
         let stamp_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("stamp pipeline layout"),
@@ -281,19 +260,53 @@ impl RenderResources {
         });
 
         Ok(Self {
-            paint_texture,
-            paint_texture_view,
             stamp_buffer,
             stamp_uniform_buffer,
             view_uniform_buffer,
             stamp_bind_group,
             brush_texture,
             brush_sampler,
+            paint_sampler,
             stamp_bind_group_layout,
-            blit_bind_group,
+            blit_bind_group_layout,
             stamp_pipeline,
             blit_pipeline,
         })
+    }
+
+    pub(crate) fn create_paint_layer(
+        &self,
+        device: &wgpu::Device,
+        size: [u32; 2],
+        id: LayerId,
+        name: String,
+    ) -> PaintLayer {
+        let (texture, view) = create_paint_texture(device, size);
+        let blit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("layer blit bind group"),
+            layout: &self.blit_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&self.paint_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.view_uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        PaintLayer {
+            id,
+            name,
+            texture,
+            view,
+            blit_bind_group,
+        }
     }
 
     pub(crate) fn replace_brush_stamp(
