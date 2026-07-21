@@ -171,6 +171,46 @@ impl PaintRenderer {
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
     }
 
+    pub fn can_undo(&self) -> bool {
+        !self.stamp_queue.has_pending() && self.history.can_undo()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.stamp_queue.has_pending() && self.history.can_redo()
+    }
+
+    pub fn undo(&mut self) -> bool {
+        if !self.can_undo() {
+            return false;
+        }
+        let mut encoder =
+            self.gpu
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("undo encoder"),
+                });
+        self.history
+            .undo(&mut encoder, &self.resources.paint_texture);
+        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        true
+    }
+
+    pub fn redo(&mut self) -> bool {
+        if !self.can_redo() {
+            return false;
+        }
+        let mut encoder =
+            self.gpu
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("redo encoder"),
+                });
+        self.history
+            .redo(&mut encoder, &self.resources.paint_texture);
+        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        true
+    }
+
     pub fn queue_stamp(&mut self, point: StrokePoint, color: [f32; 4]) -> bool {
         self.stamp_queue
             .queue_point(point, color, self.document_size[0], self.document_size[1])

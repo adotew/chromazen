@@ -1,5 +1,8 @@
 use super::DOCUMENT_FORMAT;
 
+const HISTORY_BUDGET_BYTES: u64 = 256 * 1024 * 1024;
+const BYTES_PER_PIXEL: u64 = 4;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TextureRect {
     pub(crate) x: u32,
@@ -31,6 +34,10 @@ impl TextureRect {
         }
     }
 
+    fn at_origin(self) -> Self {
+        Self { x: 0, y: 0, ..self }
+    }
+
     fn extent(self) -> wgpu::Extent3d {
         wgpu::Extent3d {
             width: self.width,
@@ -38,15 +45,22 @@ impl TextureRect {
             depth_or_array_layers: 1,
         }
     }
+
+    fn byte_len(self) -> u64 {
+        u64::from(self.width) * u64::from(self.height) * BYTES_PER_PIXEL
+    }
 }
 
 struct HistoryEntry {
-    _rect: TextureRect,
-    _pixels: wgpu::Texture,
+    rect: TextureRect,
+    pixels: wgpu::Texture,
+    bytes: u64,
 }
 
 pub(crate) struct PaintHistory {
     entries: Vec<HistoryEntry>,
+    cursor: usize,
+    used_bytes: u64,
     mirror: wgpu::Texture,
     stroke_active: bool,
 }
@@ -55,6 +69,8 @@ impl PaintHistory {
     pub(crate) fn new(device: &wgpu::Device, document_size: [u32; 2]) -> Self {
         Self {
             entries: Vec::new(),
+            cursor: 0,
+            used_bytes: 0,
             mirror: create_texture(device, "paint history mirror", document_size),
             stroke_active: false,
         }
@@ -74,7 +90,17 @@ impl PaintHistory {
 
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
+        self.cursor = 0;
+        self.used_bytes = 0;
         self.stroke_active = false;
+    }
+
+    pub(crate) fn can_undo(&self) -> bool {
+        !self.stroke_active && self.cursor > 0
+    }
+
+    pub(crate) fn can_redo(&self) -> bool {
+        !self.stroke_active && self.cursor < self.entries.len()
     }
 
     pub(crate) fn sync_canvas(
@@ -93,15 +119,104 @@ impl PaintHistory {
         canvas: &wgpu::Texture,
         rect: TextureRect,
     ) {
+        for entry in self.entries.drain(self.cursor..) {
+            self.used_bytes -= entry.bytes;
+        }
+
         let pixels = create_texture(device, "paint history entry", [rect.width, rect.height]);
         copy_rect(encoder, &self.mirror, rect, &pixels, [0, 0]);
         self.sync_canvas(encoder, canvas, rect);
+
+        let bytes = rect.byte_len();
         self.entries.push(HistoryEntry {
-            _rect: rect,
-            _pixels: pixels,
+            rect,
+            pixels,
+            bytes,
         });
+        self.used_bytes += bytes;
+        self.cursor = self.entries.len();
+        self.evict_to_budget();
         self.stroke_active = false;
     }
+
+    pub(crate) fn undo(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        canvas: &wgpu::Texture,
+    ) -> bool {
+        if !self.can_undo() {
+            return false;
+        }
+        self.cursor -= 1;
+        swap_entry(encoder, &self.mirror, canvas, &self.entries[self.cursor]);
+        true
+    }
+
+    pub(crate) fn redo(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        canvas: &wgpu::Texture,
+    ) -> bool {
+        if !self.can_redo() {
+            return false;
+        }
+        swap_entry(encoder, &self.mirror, canvas, &self.entries[self.cursor]);
+        self.cursor += 1;
+        true
+    }
+
+    fn evict_to_budget(&mut self) {
+        let count = eviction_count(
+            self.used_bytes,
+            HISTORY_BUDGET_BYTES,
+            self.entries.len(),
+            self.entries.iter().map(|entry| entry.bytes),
+        );
+        for entry in self.entries.drain(..count) {
+            self.used_bytes -= entry.bytes;
+        }
+        self.cursor -= count;
+    }
+}
+
+fn swap_entry(
+    encoder: &mut wgpu::CommandEncoder,
+    mirror: &wgpu::Texture,
+    canvas: &wgpu::Texture,
+    entry: &HistoryEntry,
+) {
+    copy_rect(
+        encoder,
+        &entry.pixels,
+        entry.rect.at_origin(),
+        canvas,
+        [entry.rect.x, entry.rect.y],
+    );
+    copy_rect(encoder, mirror, entry.rect, &entry.pixels, [0, 0]);
+    copy_rect(
+        encoder,
+        canvas,
+        entry.rect,
+        mirror,
+        [entry.rect.x, entry.rect.y],
+    );
+}
+
+fn eviction_count(
+    mut used_bytes: u64,
+    budget: u64,
+    entry_count: usize,
+    oldest_bytes: impl Iterator<Item = u64>,
+) -> usize {
+    let mut count = 0;
+    for bytes in oldest_bytes.take(entry_count.saturating_sub(1)) {
+        if used_bytes <= budget {
+            break;
+        }
+        used_bytes -= bytes;
+        count += 1;
+    }
+    count
 }
 
 fn create_texture(device: &wgpu::Device, label: &str, size: [u32; 2]) -> wgpu::Texture {
@@ -192,5 +307,11 @@ mod tests {
                 height: 15,
             }
         );
+    }
+
+    #[test]
+    fn budget_evicts_oldest_entries_and_keeps_newest() {
+        assert_eq!(eviction_count(300, 200, 3, [100, 100, 100].into_iter()), 1);
+        assert_eq!(eviction_count(300, 50, 1, [300].into_iter()), 0);
     }
 }
