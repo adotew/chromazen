@@ -1,6 +1,7 @@
 use egui::{Color32, Context};
 
-pub(super) fn show(context: &Context, color: &mut Color32) {
+pub(super) fn show(context: &Context, color: &mut Color32) -> bool {
+    let mut changed = false;
     egui::Window::new("Color picker")
         .title_bar(false)
         .pivot(egui::Align2::RIGHT_TOP)
@@ -9,6 +10,11 @@ pub(super) fn show(context: &Context, color: &mut Color32) {
         .resizable(false)
         .show(context, |ui| {
             ui.spacing_mut().slider_width = 275.0;
-            egui::color_picker::color_picker_color32(ui, color, egui::color_picker::Alpha::Opaque);
+            changed = egui::color_picker::color_picker_color32(
+                ui,
+                color,
+                egui::color_picker::Alpha::Opaque,
+            );
         });
+    changed
 }

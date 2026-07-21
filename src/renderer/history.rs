@@ -79,6 +79,10 @@ enum HistoryAction {
         detached: Option<PaintLayer>,
         bytes: u64,
     },
+    BackgroundColor {
+        before: [f32; 4],
+        after: [f32; 4],
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,13 +96,16 @@ impl HistoryAction {
         match self {
             Self::Stroke(entry) => entry.bytes,
             Self::AddLayer { bytes, .. } | Self::DeleteLayer { bytes, .. } => *bytes,
+            Self::BackgroundColor { .. } => 0,
         }
     }
 
     fn target(&self) -> HistoryTarget {
         match self {
             Self::Stroke(entry) => HistoryTarget::Stroke(entry.layer_id),
-            Self::AddLayer { .. } | Self::DeleteLayer { .. } => HistoryTarget::Structure,
+            Self::AddLayer { .. }
+            | Self::DeleteLayer { .. }
+            | Self::BackgroundColor { .. } => HistoryTarget::Structure,
         }
     }
 }
@@ -269,6 +276,17 @@ impl PaintHistory {
         self.evict_to_budget();
     }
 
+    pub(crate) fn record_background_color(&mut self, before: [f32; 4], after: [f32; 4]) {
+        if before == after {
+            return;
+        }
+        self.discard_redo();
+        self.actions
+            .push(HistoryAction::BackgroundColor { before, after });
+        self.cursor = self.actions.len();
+        self.evict_to_budget();
+    }
+
     pub(crate) fn undo_stroke(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -307,6 +325,7 @@ impl PaintHistory {
         &mut self,
         layers: &mut Vec<PaintLayer>,
         selection: &mut LayerSelection,
+        background_color: &mut [f32; 4],
     ) -> bool {
         if self.undo_target() != Some(HistoryTarget::Structure) {
             return false;
@@ -336,6 +355,9 @@ impl PaintHistory {
                 layers.insert((*index).min(layers.len()), layer);
                 *selection = *selection_before;
             }
+            HistoryAction::BackgroundColor { before, .. } => {
+                *background_color = *before;
+            }
             HistoryAction::Stroke(_) => unreachable!(),
         }
         true
@@ -345,6 +367,7 @@ impl PaintHistory {
         &mut self,
         layers: &mut Vec<PaintLayer>,
         selection: &mut LayerSelection,
+        background_color: &mut [f32; 4],
     ) -> bool {
         if self.redo_target() != Some(HistoryTarget::Structure) {
             return false;
@@ -372,6 +395,9 @@ impl PaintHistory {
                     .expect("restored deleted layer must exist before redo");
                 *detached = Some(layers.remove(index));
                 *selection = *selection_after;
+            }
+            HistoryAction::BackgroundColor { after, .. } => {
+                *background_color = *after;
             }
             HistoryAction::Stroke(_) => unreachable!(),
         }

@@ -10,7 +10,7 @@ use winit::window::Window;
 use crate::{
     config::{AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset},
     paint::{BrushSettings, BrushSpacing, PressureSettings, StrokeSmoothingOptions},
-    renderer::PaintRenderer,
+    renderer::{LayerSelection, LayerSnapshot, PaintRenderer},
 };
 
 use super::command::AppCommand;
@@ -27,6 +27,7 @@ pub struct GuiLayer {
     default_size: f32,
     commands: Vec<AppCommand>,
     settings_message: Option<SettingsMessage>,
+    background_edit_start: Option<[u8; 3]>,
 }
 
 struct SettingsMessage {
@@ -76,10 +77,15 @@ impl GuiLayer {
                 text,
                 is_error: true,
             }),
+            background_edit_start: None,
         }
     }
 
-    pub fn run(&mut self, window: &Window) -> egui::FullOutput {
+    pub fn run(
+        &mut self,
+        window: &Window,
+        layers: &LayerSnapshot,
+    ) -> egui::FullOutput {
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
 
@@ -123,7 +129,69 @@ impl GuiLayer {
                     }
                 });
 
-            color_picker::show(ui.ctx(), &mut self.brush.color);
+            let background = background_color(layers.background_color);
+            egui::Window::new("Layers")
+                .anchor(egui::Align2::RIGHT_BOTTOM, [-12.0, -12.0])
+                .default_width(220.0)
+                .resizable(false)
+                .show(ui.ctx(), |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("Add").clicked() {
+                            self.commands.push(AppCommand::AddLayer);
+                        }
+                        let can_delete = layers.layers.len() > 1
+                            && matches!(layers.selection, LayerSelection::Paint(_));
+                        if ui
+                            .add_enabled(can_delete, egui::Button::new("Delete"))
+                            .clicked()
+                        {
+                            self.commands.push(AppCommand::DeleteSelectedLayer);
+                        }
+                    });
+                    ui.separator();
+                    for layer in layers.layers.iter().rev() {
+                        let selected = layers.selection == LayerSelection::Paint(layer.id);
+                        if ui.selectable_label(selected, &layer.name).clicked() && !selected {
+                            self.commands.push(AppCommand::SelectLayer(layer.id));
+                        }
+                    }
+                    ui.horizontal(|ui| {
+                        let selected = layers.selection == LayerSelection::Background;
+                        if ui.selectable_label(selected, "Background").clicked() && !selected {
+                            self.commands.push(AppCommand::SelectBackground);
+                        }
+                        ui.colored_label(background, "■");
+                    });
+                });
+
+            match layers.selection {
+                LayerSelection::Background => {
+                    let mut color = background;
+                    let changed = color_picker::show(ui.ctx(), &mut color);
+                    if changed {
+                        self.background_edit_start
+                            .get_or_insert(rgb(background));
+                        self.commands.push(AppCommand::SetBackgroundColor(rgb(color)));
+                    }
+                    if !ui.ctx().input(|input| input.pointer.primary_down())
+                        && let Some(before) = self.background_edit_start.take()
+                    {
+                        self.commands.push(AppCommand::CommitBackgroundColor {
+                            before,
+                            after: rgb(color),
+                        });
+                    }
+                }
+                LayerSelection::Paint(_) => {
+                    if let Some(before) = self.background_edit_start.take() {
+                        self.commands.push(AppCommand::CommitBackgroundColor {
+                            before,
+                            after: rgb(background),
+                        });
+                    }
+                    color_picker::show(ui.ctx(), &mut self.brush.color);
+                }
+            }
         })
     }
 
@@ -222,6 +290,18 @@ fn brush_color(config: &CurrentBrushConfig) -> egui::Color32 {
         config.color[2],
         config.color[3],
     )
+}
+
+fn background_color(color: [f32; 4]) -> egui::Color32 {
+    egui::Color32::from_rgb(
+        (color[0] * 255.0).round() as u8,
+        (color[1] * 255.0).round() as u8,
+        (color[2] * 255.0).round() as u8,
+    )
+}
+
+fn rgb(color: egui::Color32) -> [u8; 3] {
+    [color.r(), color.g(), color.b()]
 }
 
 pub fn repaint_delay(output: &egui::FullOutput) -> Duration {

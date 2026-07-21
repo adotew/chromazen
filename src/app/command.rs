@@ -8,6 +8,8 @@ pub(super) enum AppCommand {
     SelectBackground,
     AddLayer,
     DeleteSelectedLayer,
+    SetBackgroundColor([u8; 3]),
+    CommitBackgroundColor { before: [u8; 3], after: [u8; 3] },
     SwitchBrush(String),
     SaveSettings,
     ReloadConfiguration,

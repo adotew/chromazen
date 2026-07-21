@@ -195,6 +195,17 @@ impl PaintRenderer {
         self.selection = LayerSelection::Background;
     }
 
+    pub(crate) fn set_background_color(&mut self, color: [u8; 3]) {
+        self.background_color = opaque_color(color);
+    }
+
+    pub(crate) fn commit_background_color(&mut self, before: [u8; 3], after: [u8; 3]) {
+        let before = opaque_color(before);
+        let after = opaque_color(after);
+        self.background_color = after;
+        self.history.record_background_color(before, after);
+    }
+
     pub(crate) fn add_layer(&mut self) -> bool {
         if self.history.stroke_active() || self.stamp_queue.has_pending() {
             return false;
@@ -343,8 +354,11 @@ impl PaintRenderer {
     pub fn undo(&mut self) -> bool {
         match self.history.undo_target() {
             Some(HistoryTarget::Structure) => {
-                self.history
-                    .undo_structure(&mut self.layers, &mut self.selection)
+                self.history.undo_structure(
+                    &mut self.layers,
+                    &mut self.selection,
+                    &mut self.background_color,
+                )
             }
             Some(HistoryTarget::Stroke(layer_id)) => {
                 let layer_index = self
@@ -375,8 +389,11 @@ impl PaintRenderer {
     pub fn redo(&mut self) -> bool {
         match self.history.redo_target() {
             Some(HistoryTarget::Structure) => {
-                self.history
-                    .redo_structure(&mut self.layers, &mut self.selection)
+                self.history.redo_structure(
+                    &mut self.layers,
+                    &mut self.selection,
+                    &mut self.background_color,
+                )
             }
             Some(HistoryTarget::Stroke(layer_id)) => {
                 let layer_index = self
@@ -598,4 +615,13 @@ impl PaintRenderer {
             }),
         );
     }
+}
+
+fn opaque_color(color: [u8; 3]) -> [f32; 4] {
+    [
+        f32::from(color[0]) / 255.0,
+        f32::from(color[1]) / 255.0,
+        f32::from(color[2]) / 255.0,
+        1.0,
+    ]
 }

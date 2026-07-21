@@ -217,11 +217,12 @@ impl App {
             return;
         }
 
+        let layer_snapshot = paint.layer_snapshot();
         let (full_output, commands) = {
             let Some(gui) = self.gui.as_mut() else {
                 return;
             };
-            let output = gui.run(window);
+            let output = gui.run(window, &layer_snapshot);
             (output, gui.take_commands())
         };
         self.pending_commands.extend(commands);
@@ -274,6 +275,16 @@ impl App {
                 AppCommand::DeleteSelectedLayer => {
                     if let Some(paint) = self.paint.as_mut() {
                         paint.delete_selected_layer();
+                    }
+                }
+                AppCommand::SetBackgroundColor(color) => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.set_background_color(color);
+                    }
+                }
+                AppCommand::CommitBackgroundColor { before, after } => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.commit_background_color(before, after);
                     }
                 }
                 AppCommand::SwitchBrush(id) => {
