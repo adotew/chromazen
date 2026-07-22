@@ -272,10 +272,13 @@ fn show_tool_badge(ui: &mut egui::Ui, tool: PaintTool) {
         .corner_radius(4)
         .inner_margin(egui::Margin::symmetric(6, 2))
         .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(label)
-                    .color(egui::Color32::from_rgb(35, 35, 40))
-                    .strong(),
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(label)
+                        .color(egui::Color32::from_rgb(35, 35, 40))
+                        .strong(),
+                )
+                .extend(),
             );
         });
 }
