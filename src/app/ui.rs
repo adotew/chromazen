@@ -92,7 +92,6 @@ impl GuiLayer {
                 .default_size(300.0)
                 .resizable(false)
                 .show_inside(ui, |ui| {
-                    ui.heading("Color");
                     match layers.selection {
                         LayerSelection::Background => {
                             let mut color = background;
@@ -122,13 +121,12 @@ impl GuiLayer {
                     }
 
                     ui.separator();
-                    ui.heading("Brush");
                     let selected_name = self
                         .brushes
                         .iter()
                         .find(|brush| brush.id == self.active_brush)
                         .map_or(self.active_brush.as_str(), |brush| brush.name.as_str());
-                    egui::ComboBox::from_label("Preset")
+                    egui::ComboBox::from_label("")
                         .selected_text(selected_name)
                         .show_ui(ui, |ui| {
                             for brush in &self.brushes {
@@ -156,7 +154,6 @@ impl GuiLayer {
                     }
 
                     ui.separator();
-                    ui.heading("Layers");
                     ui.horizontal(|ui| {
                         if ui.button("Add").clicked() {
                             self.commands.push(AppCommand::AddLayer);
@@ -181,7 +178,6 @@ impl GuiLayer {
                         if ui.selectable_label(selected, "Background").clicked() && !selected {
                             self.commands.push(AppCommand::SelectBackground);
                         }
-                        ui.colored_label(background, "■");
                     });
                 });
         })
