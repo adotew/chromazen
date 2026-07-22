@@ -86,11 +86,43 @@ impl GuiLayer {
         let context = self.context.clone();
 
         context.run_ui(raw_input, |ui| {
-            egui::Window::new("Brush")
-                .default_pos([12.0, 12.0])
-                .default_width(280.0)
+            let background = background_color(layers.background_color);
+
+            egui::Panel::right("tools")
+                .default_size(300.0)
                 .resizable(false)
-                .show(ui.ctx(), |ui| {
+                .show_inside(ui, |ui| {
+                    ui.heading("Color");
+                    match layers.selection {
+                        LayerSelection::Background => {
+                            let mut color = background;
+                            if color_picker::show(ui, &mut color) {
+                                self.background_edit_start.get_or_insert(rgb(background));
+                                self.commands
+                                    .push(AppCommand::SetBackgroundColor(rgb(color)));
+                            }
+                            if !ui.ctx().input(|input| input.pointer.primary_down())
+                                && let Some(before) = self.background_edit_start.take()
+                            {
+                                self.commands.push(AppCommand::CommitBackgroundColor {
+                                    before,
+                                    after: rgb(color),
+                                });
+                            }
+                        }
+                        LayerSelection::Paint(_) => {
+                            if let Some(before) = self.background_edit_start.take() {
+                                self.commands.push(AppCommand::CommitBackgroundColor {
+                                    before,
+                                    after: rgb(background),
+                                });
+                            }
+                            color_picker::show(ui, &mut self.brush.color);
+                        }
+                    }
+
+                    ui.separator();
+                    ui.heading("Brush");
                     let selected_name = self
                         .brushes
                         .iter()
@@ -110,7 +142,6 @@ impl GuiLayer {
                                 }
                             }
                         });
-
                     ui.add(
                         egui::Slider::new(&mut self.brush.size, self.size_range.clone())
                             .suffix(" px"),
@@ -123,14 +154,9 @@ impl GuiLayer {
                         };
                         ui.colored_label(color, &message.text);
                     }
-                });
 
-            let background = background_color(layers.background_color);
-            egui::Window::new("Layers")
-                .anchor(egui::Align2::RIGHT_BOTTOM, [-12.0, -12.0])
-                .default_width(220.0)
-                .resizable(false)
-                .show(ui.ctx(), |ui| {
+                    ui.separator();
+                    ui.heading("Layers");
                     ui.horizontal(|ui| {
                         if ui.button("Add").clicked() {
                             self.commands.push(AppCommand::AddLayer);
@@ -144,7 +170,6 @@ impl GuiLayer {
                             self.commands.push(AppCommand::DeleteSelectedLayer);
                         }
                     });
-                    ui.separator();
                     for layer in layers.layers.iter().rev() {
                         let selected = layers.selection == LayerSelection::Paint(layer.id);
                         if ui.selectable_label(selected, &layer.name).clicked() && !selected {
@@ -159,35 +184,6 @@ impl GuiLayer {
                         ui.colored_label(background, "■");
                     });
                 });
-
-            match layers.selection {
-                LayerSelection::Background => {
-                    let mut color = background;
-                    let changed = color_picker::show(ui.ctx(), &mut color);
-                    if changed {
-                        self.background_edit_start.get_or_insert(rgb(background));
-                        self.commands
-                            .push(AppCommand::SetBackgroundColor(rgb(color)));
-                    }
-                    if !ui.ctx().input(|input| input.pointer.primary_down())
-                        && let Some(before) = self.background_edit_start.take()
-                    {
-                        self.commands.push(AppCommand::CommitBackgroundColor {
-                            before,
-                            after: rgb(color),
-                        });
-                    }
-                }
-                LayerSelection::Paint(_) => {
-                    if let Some(before) = self.background_edit_start.take() {
-                        self.commands.push(AppCommand::CommitBackgroundColor {
-                            before,
-                            after: rgb(background),
-                        });
-                    }
-                    color_picker::show(ui.ctx(), &mut self.brush.color);
-                }
-            }
         })
     }
 

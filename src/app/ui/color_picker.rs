@@ -1,20 +1,10 @@
-use egui::{Color32, Context};
+use egui::{Color32, Ui};
 
-pub(super) fn show(context: &Context, color: &mut Color32) -> bool {
-    let mut changed = false;
-    egui::Window::new("Color picker")
-        .title_bar(false)
-        .pivot(egui::Align2::RIGHT_TOP)
-        .default_pos(context.content_rect().right_top())
-        .movable(true)
-        .resizable(false)
-        .show(context, |ui| {
-            ui.spacing_mut().slider_width = 275.0;
-            changed = egui::color_picker::color_picker_color32(
-                ui,
-                color,
-                egui::color_picker::Alpha::Opaque,
-            );
-        });
-    changed
+pub(super) fn show(ui: &mut Ui, color: &mut Color32) -> bool {
+    let width = ui.available_width();
+    ui.scope(|ui| {
+        ui.spacing_mut().slider_width = width;
+        egui::color_picker::color_picker_color32(ui, color, egui::color_picker::Alpha::Opaque)
+    })
+    .inner
 }
