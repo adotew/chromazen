@@ -14,7 +14,7 @@ use self::{
     history::{HistoryTarget, PaintHistory, TextureRect},
     layers::{PaintLayer, insertion_index, layer_name, replacement_index_after_delete},
     resources::RenderResources,
-    stamps::{MAX_STAMPS_PER_FRAME, StampQueue},
+    stamps::{MAX_STAMPS_PER_FRAME, StampQueue, StampRaw},
     view::PaintView,
 };
 use crate::{
@@ -283,7 +283,7 @@ impl PaintRenderer {
         true
     }
 
-    pub fn begin_stroke(&mut self, tool: PaintTool) {
+    pub fn begin_stroke(&mut self, tool: PaintTool, origin: StrokePoint) {
         let Some(layer_index) = self.selected_layer_index() else {
             return;
         };
@@ -292,22 +292,47 @@ impl PaintRenderer {
             return;
         }
         self.stroke_tool = tool;
-        if self.history.layer_needs_sync(layer_id) {
+        let needs_history_sync = self.history.layer_needs_sync(layer_id);
+        if needs_history_sync || tool == PaintTool::Smudge {
             let mut encoder =
                 self.gpu
                     .device()
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("history layer sync encoder"),
+                        label: Some("stroke setup encoder"),
                     });
-            self.history.ensure_layer_synced(
-                &mut encoder,
-                layer_id,
-                &self.layers[layer_index].texture,
-                self.document_size,
-            );
+            if needs_history_sync {
+                self.history.ensure_layer_synced(
+                    &mut encoder,
+                    layer_id,
+                    &self.layers[layer_index].texture,
+                    self.document_size,
+                );
+            }
+            if tool == PaintTool::Smudge {
+                // Smudge samples this snapshot because the layer cannot be sampled while attached.
+                encoder.copy_texture_to_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &self.layers[layer_index].texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &self.resources.smudge_texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width: self.document_size[0],
+                        height: self.document_size[1],
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
             self.gpu.queue().submit(std::iter::once(encoder.finish()));
         }
-        self.stamp_queue.begin_stroke();
+        self.stamp_queue.begin_stroke(origin);
     }
 
     pub fn end_stroke(&mut self) {
@@ -561,6 +586,11 @@ impl PaintRenderer {
         let layer_index = self
             .selected_layer_index()
             .expect("stamp requires paint layer");
+        if self.stroke_tool == PaintTool::Smudge {
+            self.flush_smudge_stamps(encoder, layer_index, &raw);
+            return;
+        }
+
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("stamp pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -580,9 +610,71 @@ impl PaintRenderer {
         pass.set_pipeline(match self.stroke_tool {
             PaintTool::Brush => &self.resources.stamp_pipeline,
             PaintTool::Eraser => &self.resources.eraser_pipeline,
+            PaintTool::Smudge => unreachable!("smudge stamps use their own passes"),
         });
         pass.set_bind_group(0, &self.resources.stamp_bind_group, &[]);
         pass.draw(0..6, 0..count as u32);
+    }
+
+    fn flush_smudge_stamps(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        layer_index: usize,
+        stamps: &[StampRaw],
+    ) {
+        for (index, stamp) in stamps.iter().copied().enumerate() {
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("smudge pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.layers[layer_index].view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&self.resources.smudge_pipeline);
+                pass.set_bind_group(0, &self.resources.stamp_bind_group, &[]);
+                pass.draw(0..6, index as u32..index as u32 + 1);
+            }
+
+            // The next dab must sample the result of this one.
+            let target = stamp.target_rect();
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.layers[layer_index].texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: target.x,
+                        y: target.y,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.resources.smudge_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: target.x,
+                        y: target.y,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: target.width,
+                    height: target.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
     }
 
     fn layer_texture_byte_len(&self) -> u64 {

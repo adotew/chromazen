@@ -5,6 +5,7 @@ pub(crate) enum PaintTool {
     #[default]
     Brush,
     Eraser,
+    Smudge,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

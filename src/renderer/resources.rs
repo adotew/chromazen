@@ -9,6 +9,8 @@ pub(crate) struct RenderResources {
     pub(crate) stamp_uniform_buffer: wgpu::Buffer,
     pub(crate) view_uniform_buffer: wgpu::Buffer,
     pub(crate) stamp_bind_group: wgpu::BindGroup,
+    pub(crate) smudge_texture: wgpu::Texture,
+    smudge_texture_view: wgpu::TextureView,
     brush_texture: wgpu::Texture,
     brush_sampler: wgpu::Sampler,
     paint_sampler: wgpu::Sampler,
@@ -16,6 +18,7 @@ pub(crate) struct RenderResources {
     blit_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) stamp_pipeline: wgpu::RenderPipeline,
     pub(crate) eraser_pipeline: wgpu::RenderPipeline,
+    pub(crate) smudge_pipeline: wgpu::RenderPipeline,
     pub(crate) background_pipeline: wgpu::RenderPipeline,
     pub(crate) layer_pipeline: wgpu::RenderPipeline,
 }
@@ -76,6 +79,7 @@ impl RenderResources {
             min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
+        let (smudge_texture, smudge_texture_view) = create_paint_texture(device, document_size);
 
         let stamp_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -109,11 +113,21 @@ impl RenderResources {
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 3,
-                        visibility: wgpu::ShaderStages::VERTEX,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
                             min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         },
                         count: None,
                     },
@@ -138,6 +152,10 @@ impl RenderResources {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: stamp_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&smudge_texture_view),
                 },
             ],
         });
@@ -189,54 +207,68 @@ impl RenderResources {
             label: Some("stamp shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/stamp.wgsl").into()),
         });
+        let smudge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("smudge shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/smudge.wgsl").into()),
+        });
         let blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("blit shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blit.wgsl").into()),
         });
 
-        let create_stamp_pipeline = |label, source_factor| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&stamp_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &stamp_shader,
-                    entry_point: Some("vs"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &stamp_shader,
-                    entry_point: Some("fs"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: DOCUMENT_FORMAT,
-                        blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent {
-                                operation: wgpu::BlendOperation::Add,
-                                src_factor: source_factor,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            },
-                            alpha: wgpu::BlendComponent {
-                                operation: wgpu::BlendOperation::Add,
-                                src_factor: source_factor,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            },
-                        }),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            })
-        };
-        let stamp_pipeline = create_stamp_pipeline("stamp pipeline", wgpu::BlendFactor::One);
-        let eraser_pipeline = create_stamp_pipeline("eraser pipeline", wgpu::BlendFactor::Zero);
+        let create_stamp_pipeline =
+            |label, shader: &wgpu::ShaderModule, source_factor: Option<wgpu::BlendFactor>| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&stamp_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: shader,
+                        entry_point: Some("vs"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: shader,
+                        entry_point: Some("fs"),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: DOCUMENT_FORMAT,
+                            blend: source_factor.map(|source_factor| wgpu::BlendState {
+                                color: wgpu::BlendComponent {
+                                    operation: wgpu::BlendOperation::Add,
+                                    src_factor: source_factor,
+                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                },
+                                alpha: wgpu::BlendComponent {
+                                    operation: wgpu::BlendOperation::Add,
+                                    src_factor: source_factor,
+                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                },
+                            }),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            };
+        let stamp_pipeline = create_stamp_pipeline(
+            "stamp pipeline",
+            &stamp_shader,
+            Some(wgpu::BlendFactor::One),
+        );
+        let eraser_pipeline = create_stamp_pipeline(
+            "eraser pipeline",
+            &stamp_shader,
+            Some(wgpu::BlendFactor::Zero),
+        );
+        let smudge_pipeline = create_stamp_pipeline("smudge pipeline", &smudge_shader, None);
         let create_blit_pipeline = |label, entry_point| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
@@ -275,6 +307,8 @@ impl RenderResources {
             stamp_uniform_buffer,
             view_uniform_buffer,
             stamp_bind_group,
+            smudge_texture,
+            smudge_texture_view,
             brush_texture,
             brush_sampler,
             paint_sampler,
@@ -282,6 +316,7 @@ impl RenderResources {
             blit_bind_group_layout,
             stamp_pipeline,
             eraser_pipeline,
+            smudge_pipeline,
             background_pipeline,
             layer_pipeline,
         })
@@ -357,6 +392,10 @@ impl RenderResources {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: self.stamp_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&self.smudge_texture_view),
                 },
             ],
         });

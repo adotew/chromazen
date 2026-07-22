@@ -15,6 +15,19 @@ pub(crate) struct StampRaw {
     half_size: [f32; 2],
     color: [f32; 4],
     bounds: [f32; 4],
+    source_center: [f32; 2],
+    padding: [f32; 2],
+}
+
+impl StampRaw {
+    pub(crate) fn target_rect(self) -> TextureRect {
+        TextureRect::from_inclusive(
+            self.bounds[0] as u32,
+            self.bounds[1] as u32,
+            self.bounds[2] as u32,
+            self.bounds[3] as u32,
+        )
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -23,11 +36,13 @@ struct Stamp {
     y: f32,
     radius: f32,
     rgba: [f32; 4],
+    source_center: [f32; 2],
 }
 
 pub(crate) struct StampQueue {
     pending: VecDeque<Stamp>,
     distance_since_last_stamp: f32,
+    last_stamp_center: Option<[f32; 2]>,
     stamp_aspect: f32,
     dirty_rect: Option<TextureRect>,
 }
@@ -43,6 +58,7 @@ impl StampQueue {
         Self {
             pending: VecDeque::new(),
             distance_since_last_stamp: 0.0,
+            last_stamp_center: None,
             stamp_aspect,
             dirty_rect: None,
         }
@@ -55,6 +71,7 @@ impl StampQueue {
     pub(crate) fn clear(&mut self) {
         self.pending.clear();
         self.distance_since_last_stamp = 0.0;
+        self.last_stamp_center = None;
         self.dirty_rect = None;
     }
 
@@ -62,13 +79,15 @@ impl StampQueue {
         !self.pending.is_empty()
     }
 
-    pub(crate) fn begin_stroke(&mut self) {
+    pub(crate) fn begin_stroke(&mut self, origin: StrokePoint) {
         self.distance_since_last_stamp = 0.0;
+        self.last_stamp_center = Some([origin.x, origin.y]);
         self.dirty_rect = None;
     }
 
     pub(crate) fn end_stroke(&mut self) -> Option<TextureRect> {
         self.distance_since_last_stamp = 0.0;
+        self.last_stamp_center = None;
         self.dirty_rect.take()
     }
 
@@ -86,13 +105,15 @@ impl StampQueue {
                 y: point.y,
                 radius: point.radius,
                 rgba,
+                source_center: [point.x, point.y],
             },
             width,
             height,
         )
     }
 
-    fn queue_stamp(&mut self, stamp: Stamp, width: u32, height: u32) -> bool {
+    fn queue_stamp(&mut self, mut stamp: Stamp, width: u32, height: u32) -> bool {
+        stamp.source_center = self.last_stamp_center.unwrap_or([stamp.x, stamp.y]);
         let bounds = get_stamp_bounds(
             stamp.x,
             stamp.y,
@@ -118,6 +139,7 @@ impl StampQueue {
             bounds.max_y as u32,
         );
         self.dirty_rect = Some(self.dirty_rect.map_or(rect, |dirty| dirty.union(rect)));
+        self.last_stamp_center = Some([stamp.x, stamp.y]);
         self.pending.push_back(stamp);
         true
     }
@@ -166,6 +188,7 @@ impl StampQueue {
                     y,
                     radius,
                     rgba: color,
+                    source_center: [x, y],
                 },
                 width,
                 height,
@@ -201,6 +224,8 @@ fn stamp_to_raw(stamp: Stamp, stamp_aspect: f32, width: u32, height: u32) -> Sta
             bounds.max_x as f32,
             bounds.max_y as f32,
         ],
+        source_center: stamp.source_center,
+        padding: [0.0; 2],
     }
 }
 
@@ -230,6 +255,17 @@ fn get_stamp_bounds(
     height: u32,
 ) -> StampBounds {
     let (half_width, half_height) = get_stamp_half_size(radius, stamp_aspect);
+    get_stamp_bounds_from_half_size(x, y, half_width, half_height, width, height)
+}
+
+fn get_stamp_bounds_from_half_size(
+    x: f32,
+    y: f32,
+    half_width: f32,
+    half_height: f32,
+    width: u32,
+    height: u32,
+) -> StampBounds {
     let min_x = 0.max((x - half_width).floor() as i32);
     let max_x = (width as i32 - 1).min((x + half_width).ceil() as i32);
     let min_y = 0.max((y - half_height).floor() as i32);
@@ -267,6 +303,11 @@ mod tests {
     }
 
     #[test]
+    fn stamp_raw_matches_shader_layout() {
+        assert_eq!(std::mem::size_of::<StampRaw>(), 64);
+    }
+
+    #[test]
     fn stamp_spacing_has_a_one_pixel_floor() {
         let spacing = BrushSpacing::default();
         assert_eq!(get_stamp_spacing(0.5, spacing), 1.0);
@@ -280,9 +321,34 @@ mod tests {
     }
 
     #[test]
+    fn target_rect_uses_clipped_stamp_bounds() {
+        let raw = stamp_to_raw(
+            Stamp {
+                x: 95.0,
+                y: 95.0,
+                radius: 10.0,
+                rgba: [0.0; 4],
+                source_center: [50.0, 50.0],
+            },
+            1.0,
+            100,
+            100,
+        );
+        assert_eq!(
+            raw.target_rect(),
+            TextureRect {
+                x: 85,
+                y: 85,
+                width: 15,
+                height: 15,
+            }
+        );
+    }
+
+    #[test]
     fn accepted_stamps_accumulate_clipped_dirty_bounds() {
         let mut queue = StampQueue::default();
-        queue.begin_stroke();
+        queue.begin_stroke(point(5.0, 5.0));
         assert!(queue.queue_point(point(5.0, 5.0), [0.0; 4], 100, 100));
         assert!(queue.queue_point(point(95.0, 95.0), [0.0; 4], 100, 100));
         assert_eq!(
@@ -300,8 +366,40 @@ mod tests {
     #[test]
     fn off_canvas_stamps_leave_dirty_bounds_empty() {
         let mut queue = StampQueue::default();
-        queue.begin_stroke();
+        queue.begin_stroke(point(-20.0, -20.0));
         assert!(!queue.queue_point(point(-20.0, -20.0), [0.0; 4], 100, 100));
+        assert_eq!(queue.end_stroke(), None);
+    }
+
+    #[test]
+    fn rejected_stamps_do_not_advance_smudge_source() {
+        let mut queue = StampQueue::default();
+        queue.begin_stroke(point(5.0, 5.0));
+        assert!(!queue.queue_point(point(-20.0, -20.0), [0.0; 4], 100, 100));
+        assert!(queue.queue_point(point(30.0, 30.0), [0.0; 4], 100, 100));
+        assert_eq!(queue.pending[0].source_center, [5.0, 5.0]);
+    }
+
+    #[test]
+    fn stamps_retain_previous_center_without_dirtying_origin() {
+        let mut queue = StampQueue::default();
+        queue.begin_stroke(point(90.0, 90.0));
+        assert!(queue.queue_point(point(10.0, 10.0), [0.0; 4], 100, 100));
+        assert!(queue.queue_point(point(30.0, 10.0), [0.0; 4], 100, 100));
+
+        assert_eq!(queue.pending[0].source_center, [90.0, 90.0]);
+        assert_eq!(queue.pending[1].source_center, [10.0, 10.0]);
+        assert_eq!(
+            queue.end_stroke(),
+            Some(TextureRect {
+                x: 0,
+                y: 0,
+                width: 41,
+                height: 21,
+            })
+        );
+
+        queue.begin_stroke(point(50.0, 50.0));
         assert_eq!(queue.end_stroke(), None);
     }
 

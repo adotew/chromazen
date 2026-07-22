@@ -265,6 +265,7 @@ fn show_tool_badge(ui: &mut egui::Ui, tool: PaintTool) {
     let (label, fill) = match tool {
         PaintTool::Brush => ("BRUSH", egui::Color32::from_rgb(169, 186, 200)),
         PaintTool::Eraser => ("ERASER", egui::Color32::from_rgb(213, 170, 109)),
+        PaintTool::Smudge => ("SMUDGE", egui::Color32::from_rgb(177, 159, 204)),
     };
     egui::Frame::new()
         .fill(fill)

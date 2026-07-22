@@ -110,8 +110,8 @@ impl PaintInputController {
                     self.smoothing_options = smoothing_options;
                     self.smoother
                         .begin_with_strength(point, smoothing_options.strength);
-                    paint.begin_stroke(self.tool);
-                    paint.queue_stamp(point, brush.rgba())
+                    paint.begin_stroke(self.tool, point);
+                    self.tool != PaintTool::Smudge && paint.queue_stamp(point, brush.rgba())
                 }
                 (ElementState::Pressed, MouseButton::Middle | MouseButton::Right) => {
                     self.is_panning = true;
@@ -223,6 +223,7 @@ fn paint_tool_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<PaintTo
     match key {
         KeyCode::KeyB => Some(PaintTool::Brush),
         KeyCode::KeyE => Some(PaintTool::Eraser),
+        KeyCode::KeyS => Some(PaintTool::Smudge),
         _ => None,
     }
 }
@@ -243,7 +244,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn maps_brush_and_eraser_shortcuts() {
+    fn maps_tool_shortcuts() {
         assert_eq!(
             paint_tool_for_key(KeyCode::KeyB, ModifiersState::empty()),
             Some(PaintTool::Brush)
@@ -252,12 +253,16 @@ mod tests {
             paint_tool_for_key(KeyCode::KeyE, ModifiersState::SHIFT),
             Some(PaintTool::Eraser)
         );
+        assert_eq!(
+            paint_tool_for_key(KeyCode::KeyS, ModifiersState::empty()),
+            Some(PaintTool::Smudge)
+        );
         for modifiers in [
             ModifiersState::CONTROL,
             ModifiersState::ALT,
             ModifiersState::SUPER,
         ] {
-            assert_eq!(paint_tool_for_key(KeyCode::KeyE, modifiers), None);
+            assert_eq!(paint_tool_for_key(KeyCode::KeyS, modifiers), None);
         }
     }
 

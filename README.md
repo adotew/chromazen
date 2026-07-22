@@ -13,6 +13,7 @@ Implemented:
   pressure events
 - mouse/fallback input remains full-size and fully opaque
 - instanced GPU brush stamping with dedicated paint and eraser blend pipelines
+- ordered GPU smudging within the selected paint layer
 - always-on centripetal Catmull–Rom stroke smoothing for fast, sparse input
 - transparent paint layers composited over a configurable Background color
 - chronological GPU undo/redo for strokes, layer changes, and Background
@@ -59,6 +60,7 @@ Controls:
 - `B`: select Brush
 - `E`: select Eraser; erasing makes the selected layer transparent to reveal
   lower layers and the Background
+- `S`: select Smudge; smudging drags colors already on the selected layer
 - Wheel: zoom around cursor
 - Middle/right drag or Space + left drag: pan
 - Undo: `Command-Z` on macOS; `Control-Z` on Windows and Linux
