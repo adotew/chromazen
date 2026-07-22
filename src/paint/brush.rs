@@ -1,5 +1,12 @@
 use egui::Color32;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum PaintTool {
+    #[default]
+    Brush,
+    Eraser,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BrushSettings {
     pub color: Color32,

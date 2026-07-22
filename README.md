@@ -8,11 +8,11 @@ Implemented:
 - `wgpu` renderer
 - `egui` controls/stats overlay
 - 4000 × 4000 paint texture
-- single brush tool using the original charcoal stamp PNG
+- bundled charcoal brush using the original stamp PNG
 - pressure-sensitive brush size/opacity on macOS via AppKit tablet and
   pressure events
 - mouse/fallback input remains full-size and fully opaque
-- instanced GPU brush stamping with a dedicated stamp shader and blend pipeline
+- instanced GPU brush stamping with dedicated paint and eraser blend pipelines
 - always-on centripetal Catmull–Rom stroke smoothing for fast, sparse input
 - transparent paint layers composited over a configurable Background color
 - chronological GPU undo/redo for strokes, layer changes, and Background
@@ -55,7 +55,10 @@ charcoal brush.
 
 Controls:
 
-- Left drag: paint
+- Left drag: use the selected tool on the selected paint layer
+- `B`: select Brush
+- `E`: select Eraser; erasing makes the selected layer transparent to reveal
+  lower layers and the Background
 - Wheel: zoom around cursor
 - Middle/right drag or Space + left drag: pan
 - Undo: `Command-Z` on macOS; `Control-Z` on Windows and Linux

@@ -218,11 +218,12 @@ impl App {
         }
 
         let layer_snapshot = paint.layer_snapshot();
+        let tool = self.input.tool();
         let (full_output, commands) = {
             let Some(gui) = self.gui.as_mut() else {
                 return;
             };
-            let output = gui.run(window, &layer_snapshot);
+            let output = gui.run(window, &layer_snapshot, tool);
             (output, gui.take_commands())
         };
         self.pending_commands.extend(commands);

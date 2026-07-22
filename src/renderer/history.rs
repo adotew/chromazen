@@ -1,6 +1,6 @@
 use super::{
-    layers::{LayerId, LayerSelection, PaintLayer},
     DOCUMENT_FORMAT,
+    layers::{LayerId, LayerSelection, PaintLayer},
 };
 
 const HISTORY_BUDGET_BYTES: u64 = 256 * 1024 * 1024;

@@ -4,7 +4,7 @@ use winit::{
 };
 
 use crate::{
-    paint::{BrushSettings, StrokePoint, StrokeSmoother, StrokeSmoothingOptions},
+    paint::{BrushSettings, PaintTool, StrokePoint, StrokeSmoother, StrokeSmoothingOptions},
     platform::PressureStateHandle,
     renderer::PaintRenderer,
 };
@@ -22,9 +22,14 @@ pub struct PaintInputController {
     smoother: StrokeSmoother,
     smoothing_options: StrokeSmoothingOptions,
     modifiers: ModifiersState,
+    tool: PaintTool,
 }
 
 impl PaintInputController {
+    pub fn tool(&self) -> PaintTool {
+        self.tool
+    }
+
     pub fn observe_event(&mut self, event: &WindowEvent) {
         match event {
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
@@ -105,7 +110,7 @@ impl PaintInputController {
                     self.smoothing_options = smoothing_options;
                     self.smoother
                         .begin_with_strength(point, smoothing_options.strength);
-                    paint.begin_stroke();
+                    paint.begin_stroke(self.tool);
                     paint.queue_stamp(point, brush.rgba())
                 }
                 (ElementState::Pressed, MouseButton::Middle | MouseButton::Right) => {
@@ -130,6 +135,13 @@ impl PaintInputController {
                 false
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                if event.state == ElementState::Pressed
+                    && !event.repeat
+                    && let PhysicalKey::Code(key) = event.physical_key
+                    && self.select_tool_for_key(key)
+                {
+                    return true;
+                }
                 if event.physical_key == PhysicalKey::Code(KeyCode::Space) {
                     self.is_space_down = event.state == ElementState::Pressed;
                     if !self.is_space_down {
@@ -143,6 +155,18 @@ impl PaintInputController {
             }
             _ => false,
         }
+    }
+
+    fn select_tool_for_key(&mut self, key: KeyCode) -> bool {
+        if self.is_drawing {
+            return false;
+        }
+        let Some(tool) = paint_tool_for_key(key, self.modifiers) else {
+            return false;
+        };
+        let changed = self.tool != tool;
+        self.tool = tool;
+        changed
     }
 
     fn stroke_point_from_window(
@@ -192,6 +216,17 @@ impl PaintInputController {
     }
 }
 
+fn paint_tool_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<PaintTool> {
+    if modifiers.control_key() || modifiers.alt_key() || modifiers.super_key() {
+        return None;
+    }
+    match key {
+        KeyCode::KeyB => Some(PaintTool::Brush),
+        KeyCode::KeyE => Some(PaintTool::Eraser),
+        _ => None,
+    }
+}
+
 fn history_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<AppCommand> {
     if !modifiers.control_key() || modifiers.alt_key() || modifiers.super_key() {
         return None;
@@ -206,6 +241,36 @@ fn history_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<Ap
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maps_brush_and_eraser_shortcuts() {
+        assert_eq!(
+            paint_tool_for_key(KeyCode::KeyB, ModifiersState::empty()),
+            Some(PaintTool::Brush)
+        );
+        assert_eq!(
+            paint_tool_for_key(KeyCode::KeyE, ModifiersState::SHIFT),
+            Some(PaintTool::Eraser)
+        );
+        for modifiers in [
+            ModifiersState::CONTROL,
+            ModifiersState::ALT,
+            ModifiersState::SUPER,
+        ] {
+            assert_eq!(paint_tool_for_key(KeyCode::KeyE, modifiers), None);
+        }
+    }
+
+    #[test]
+    fn brush_is_default_and_reselecting_it_is_a_no_op() {
+        let mut input = PaintInputController::default();
+        assert_eq!(input.tool(), PaintTool::Brush);
+        assert!(!input.select_tool_for_key(KeyCode::KeyB));
+        assert!(input.select_tool_for_key(KeyCode::KeyE));
+        input.is_drawing = true;
+        assert!(!input.select_tool_for_key(KeyCode::KeyB));
+        assert_eq!(input.tool(), PaintTool::Eraser);
+    }
 
     #[test]
     fn maps_linux_history_shortcuts() {

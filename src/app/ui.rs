@@ -9,7 +9,7 @@ use winit::window::Window;
 
 use crate::{
     config::{AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset},
-    paint::{BrushSettings, BrushSpacing, PressureSettings, StrokeSmoothingOptions},
+    paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings, StrokeSmoothingOptions},
     renderer::{LayerSelection, LayerSnapshot, PaintRenderer},
 };
 
@@ -81,7 +81,12 @@ impl GuiLayer {
         }
     }
 
-    pub fn run(&mut self, window: &Window, layers: &LayerSnapshot) -> egui::FullOutput {
+    pub fn run(
+        &mut self,
+        window: &Window,
+        layers: &LayerSnapshot,
+        tool: PaintTool,
+    ) -> egui::FullOutput {
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
 
@@ -180,6 +185,11 @@ impl GuiLayer {
                         }
                     });
                 });
+
+            egui::Area::new(egui::Id::new("tool mode"))
+                .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(8.0, -8.0))
+                .interactable(false)
+                .show(ui.ctx(), |ui| show_tool_badge(ui, tool));
         })
     }
 
@@ -249,6 +259,24 @@ impl GuiLayer {
         });
         self.context.request_repaint();
     }
+}
+
+fn show_tool_badge(ui: &mut egui::Ui, tool: PaintTool) {
+    let (label, fill) = match tool {
+        PaintTool::Brush => ("BRUSH", egui::Color32::from_rgb(169, 186, 200)),
+        PaintTool::Eraser => ("ERASER", egui::Color32::from_rgb(213, 170, 109)),
+    };
+    egui::Frame::new()
+        .fill(fill)
+        .corner_radius(4)
+        .inner_margin(egui::Margin::symmetric(6, 2))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(label)
+                    .color(egui::Color32::from_rgb(35, 35, 40))
+                    .strong(),
+            );
+        });
 }
 
 fn brush_settings_from_config(

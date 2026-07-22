@@ -20,7 +20,7 @@ use self::{
 use crate::{
     config::LoadedBrushPreset,
     gpu::GpuContext,
-    paint::{BrushSpacing, StrokePoint},
+    paint::{BrushSpacing, PaintTool, StrokePoint},
 };
 
 const DEFAULT_CANVAS_WIDTH: u32 = 4000;
@@ -54,6 +54,7 @@ pub struct PaintRenderer {
     next_layer_id: u64,
     next_layer_number: u64,
     stamp_queue: StampQueue,
+    stroke_tool: PaintTool,
     history: PaintHistory,
     view: PaintView,
 }
@@ -94,6 +95,7 @@ impl PaintRenderer {
             next_layer_id: 2,
             next_layer_number: 2,
             stamp_queue: StampQueue::new(stamp_aspect),
+            stroke_tool: PaintTool::default(),
             history,
             view: PaintView::default(),
         };
@@ -281,7 +283,7 @@ impl PaintRenderer {
         true
     }
 
-    pub fn begin_stroke(&mut self) {
+    pub fn begin_stroke(&mut self, tool: PaintTool) {
         let Some(layer_index) = self.selected_layer_index() else {
             return;
         };
@@ -289,6 +291,7 @@ impl PaintRenderer {
         if !self.history.begin_stroke(layer_id) {
             return;
         }
+        self.stroke_tool = tool;
         if self.history.layer_needs_sync(layer_id) {
             let mut encoder =
                 self.gpu
@@ -574,7 +577,10 @@ impl PaintRenderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.resources.stamp_pipeline);
+        pass.set_pipeline(match self.stroke_tool {
+            PaintTool::Brush => &self.resources.stamp_pipeline,
+            PaintTool::Eraser => &self.resources.eraser_pipeline,
+        });
         pass.set_bind_group(0, &self.resources.stamp_bind_group, &[]);
         pass.draw(0..6, 0..count as u32);
     }
