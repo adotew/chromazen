@@ -10,25 +10,6 @@
   </head>
   <body>
     <main>
-      <header class="brand">
-        <h1>Chromazen</h1>
-      </header>
-
-      <section class="tools-section" aria-labelledby="tools-heading">
-        <h2 id="tools-heading" class="visually-hidden">Tool</h2>
-        <div class="segmented" id="tools">
-          <button data-tool="brush" type="button">
-            <span>Brush</span><kbd>B</kbd>
-          </button>
-          <button data-tool="eraser" type="button">
-            <span>Eraser</span><kbd>E</kbd>
-          </button>
-          <button data-tool="smudge" type="button">
-            <span>Smudge</span><kbd>S</kbd>
-          </button>
-        </div>
-      </section>
-
       <section aria-labelledby="brush-heading">
         <h2 id="brush-heading">Brush</h2>
         <label class="select-row">
@@ -51,38 +32,39 @@
             <span>Smoothing</span>
             <output id="smoothing-output">—</output>
           </span>
-          <input id="smoothing" type="range" min="0" max="1" step="0.01" value="0.8" />
+          <input
+            id="smoothing"
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value="0.8"
+          />
         </label>
-      </section>
-
-      <section aria-labelledby="history-heading">
-        <h2 id="history-heading">Canvas</h2>
-        <div class="button-row">
-          <button id="undo" type="button">Undo</button>
-          <button id="redo" type="button">Redo</button>
-          <button id="fit" type="button">Fit</button>
-        </div>
       </section>
 
       <section class="layers-section" aria-labelledby="layers-heading">
         <div class="section-title">
           <h2 id="layers-heading">Layers</h2>
           <div class="compact-actions">
-            <button id="add-layer" type="button" aria-label="Add layer">+</button>
-            <button id="delete-layer" type="button" aria-label="Delete selected layer">−</button>
+            <button id="add-layer" type="button" aria-label="Add layer">
+              +
+            </button>
+            <button
+              id="delete-layer"
+              type="button"
+              aria-label="Delete selected layer"
+            >
+              −
+            </button>
           </div>
         </div>
-        <div id="layers" class="layers" role="listbox" aria-label="Canvas layers"></div>
-      </section>
-
-      <section class="settings" aria-labelledby="settings-heading">
-        <h2 id="settings-heading">Settings</h2>
-        <div class="button-row settings-actions">
-          <button id="save-settings" type="button">Save</button>
-          <button id="reload-settings" type="button">Reload</button>
-          <button id="reset-brush" type="button">Reset</button>
-        </div>
-        <p id="message" class="message" hidden></p>
+        <div
+          id="layers"
+          class="layers"
+          role="listbox"
+          aria-label="Canvas layers"
+        ></div>
       </section>
     </main>
   </body>
