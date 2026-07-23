@@ -1,49 +1,54 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU32, Ordering},
+};
 
 #[derive(Clone, Debug, Default)]
-pub struct PressureStateHandle(Arc<Mutex<PressureState>>);
+pub struct PressureStateHandle(Arc<PressureState>);
 
 #[derive(Debug)]
 struct PressureState {
-    pressure: f32,
-    pen_active: bool,
+    pressure_bits: AtomicU32,
+    pen_active: AtomicBool,
 }
 
 impl Default for PressureState {
     fn default() -> Self {
         Self {
-            pressure: 1.0,
-            pen_active: false,
+            pressure_bits: AtomicU32::new(1.0_f32.to_bits()),
+            pen_active: AtomicBool::new(false),
         }
     }
 }
 
 impl PressureStateHandle {
     pub fn brush_pressure(&self) -> f32 {
-        let state = self.0.lock().expect("pressure state poisoned");
-        if state.pen_active {
-            state.pressure
+        if self.0.pen_active.load(Ordering::Relaxed) {
+            f32::from_bits(self.0.pressure_bits.load(Ordering::Relaxed))
         } else {
             1.0
         }
     }
 
     fn note_pen_pressure(&self, pressure: f32, active: bool) -> bool {
-        let mut state = self.0.lock().expect("pressure state poisoned");
         let pressure = pressure.clamp(0.0, 1.0);
-        let changed =
-            state.pen_active != active || (state.pressure - pressure).abs() > f32::EPSILON;
-        state.pen_active = active;
-        state.pressure = pressure;
-        changed
+        let previous_active = self.0.pen_active.swap(active, Ordering::Relaxed);
+        let previous_pressure = f32::from_bits(
+            self.0
+                .pressure_bits
+                .swap(pressure.to_bits(), Ordering::Relaxed),
+        );
+        previous_active != active || (previous_pressure - pressure).abs() > f32::EPSILON
     }
 
     fn clear_pen(&self) -> bool {
-        let mut state = self.0.lock().expect("pressure state poisoned");
-        let changed = state.pen_active || (state.pressure - 1.0).abs() > f32::EPSILON;
-        state.pen_active = false;
-        state.pressure = 1.0;
-        changed
+        let previous_active = self.0.pen_active.swap(false, Ordering::Relaxed);
+        let previous_pressure = f32::from_bits(
+            self.0
+                .pressure_bits
+                .swap(1.0_f32.to_bits(), Ordering::Relaxed),
+        );
+        previous_active || (previous_pressure - 1.0).abs() > f32::EPSILON
     }
 }
 

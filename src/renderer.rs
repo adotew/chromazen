@@ -9,7 +9,7 @@ mod resources;
 mod stamps;
 mod view;
 
-pub(crate) use self::layers::{LayerId, LayerInfo, LayerSelection, LayerSnapshot};
+pub use self::layers::{LayerId, LayerInfo, LayerSelection, LayerSnapshot};
 use self::{
     history::{HistoryTarget, PaintHistory, TextureRect},
     layers::{PaintLayer, insertion_index, layer_name, replacement_index_after_delete},
@@ -181,7 +181,7 @@ impl PaintRenderer {
         self.selected_layer_index().is_some()
     }
 
-    pub(crate) fn layer_snapshot(&self) -> LayerSnapshot {
+    pub fn layer_snapshot(&self) -> LayerSnapshot {
         LayerSnapshot {
             layers: self
                 .layers
@@ -196,7 +196,7 @@ impl PaintRenderer {
         }
     }
 
-    pub(crate) fn select_layer(&mut self, id: LayerId) -> bool {
+    pub fn select_layer(&mut self, id: LayerId) -> bool {
         if self.layers.iter().any(|layer| layer.id == id) {
             self.selection = LayerSelection::Paint(id);
             true
@@ -205,22 +205,22 @@ impl PaintRenderer {
         }
     }
 
-    pub(crate) fn select_background(&mut self) {
+    pub fn select_background(&mut self) {
         self.selection = LayerSelection::Background;
     }
 
-    pub(crate) fn set_background_color(&mut self, color: [u8; 3]) {
+    pub fn set_background_color(&mut self, color: [u8; 3]) {
         self.background_color = opaque_color(color);
     }
 
-    pub(crate) fn commit_background_color(&mut self, before: [u8; 3], after: [u8; 3]) {
+    pub fn commit_background_color(&mut self, before: [u8; 3], after: [u8; 3]) {
         let before = opaque_color(before);
         let after = opaque_color(after);
         self.background_color = after;
         self.history.record_background_color(before, after);
     }
 
-    pub(crate) fn add_layer(&mut self) -> bool {
+    pub fn add_layer(&mut self) -> bool {
         if self.history.stroke_active() || self.stamp_queue.has_pending() {
             return false;
         }
@@ -269,14 +269,14 @@ impl PaintRenderer {
         true
     }
 
-    pub(crate) fn can_delete_selected_layer(&self) -> bool {
+    pub fn can_delete_selected_layer(&self) -> bool {
         matches!(self.selection, LayerSelection::Paint(_))
             && self.layers.len() > 1
             && !self.history.stroke_active()
             && !self.stamp_queue.has_pending()
     }
 
-    pub(crate) fn delete_selected_layer(&mut self) -> bool {
+    pub fn delete_selected_layer(&mut self) -> bool {
         if !self.can_delete_selected_layer() {
             return false;
         }

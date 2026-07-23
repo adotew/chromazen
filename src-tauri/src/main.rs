@@ -1,10 +1,20 @@
+mod input_adapter;
 mod raw_event_plugin;
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+    mpsc::{SyncSender, sync_channel},
+};
 
-use chromazen::{config::LoadedBrushPreset, renderer::PaintRenderer};
+use chromazen::{
+    app::settings::SettingsController,
+    platform::{MacosPressureMonitor, PressureStateHandle},
+    protocol::UiCommand,
+    renderer::PaintRenderer,
+};
 use tauri::{
-    LogicalPosition, LogicalSize, WebviewUrl, webview::WebviewBuilder, window::WindowBuilder,
+    LogicalPosition, LogicalSize, State, WebviewUrl, webview::WebviewBuilder, window::WindowBuilder,
 };
 
 use raw_event_plugin::RawPaintPluginBuilder;
@@ -12,11 +22,26 @@ use raw_event_plugin::RawPaintPluginBuilder;
 const WINDOW_WIDTH: f64 = 1_280.0;
 const WINDOW_HEIGHT: f64 = 900.0;
 const CONTROLS_WIDTH: f64 = 300.0;
+const CONTROL_QUEUE_CAPACITY: usize = 256;
+
+struct ControlSender(SyncSender<UiCommand>);
+
+#[tauri::command]
+fn dispatch(command: UiCommand, sender: State<'_, ControlSender>) -> Result<(), String> {
+    sender
+        .0
+        .try_send(command)
+        .map_err(|error| format!("control queue unavailable: {error}"))
+}
 
 fn main() {
     env_logger::init();
 
+    let (command_sender, command_receiver) = sync_channel(CONTROL_QUEUE_CAPACITY);
+    let settings = SettingsController::load();
     let mut app = tauri::Builder::default()
+        .manage(ControlSender(command_sender))
+        .invoke_handler(tauri::generate_handler![dispatch])
         .build(tauri::generate_context!())
         .expect("failed to build Tauri application");
     let window = Arc::new(
@@ -34,7 +59,7 @@ fn main() {
     let mut paint = pollster::block_on(PaintRenderer::new(
         window.clone(),
         [size.width, size.height],
-        &LoadedBrushPreset::bundled_charcoal(),
+        settings.active_brush(),
     ))
     .expect("failed to initialize native wgpu paint renderer");
     paint.set_canvas_viewport_size([
@@ -52,11 +77,29 @@ fn main() {
         )
         .expect("failed to create bounded controls webview");
 
+    let pressure_state = PressureStateHandle::default();
+    let pressure_redraw = Arc::new(AtomicBool::new(false));
+    let pressure_redraw_callback = pressure_redraw.clone();
+    let pressure_monitor =
+        MacosPressureMonitor::install(window.clone(), pressure_state.clone(), move || {
+            pressure_redraw_callback.store(true, Ordering::Release)
+        })
+        .expect("failed to initialize pressure monitor");
+    if let Some(pressure_monitor) = pressure_monitor {
+        // AppKit local monitor tokens are main-thread-only, while Tauri requires
+        // runtime plugins to be Send. The monitor intentionally lives until exit.
+        std::mem::forget(pressure_monitor);
+    }
+
     app.wry_plugin(RawPaintPluginBuilder::new(
         paint,
         controls,
         CONTROLS_WIDTH,
         scale_factor,
+        command_receiver,
+        settings,
+        pressure_state,
+        pressure_redraw,
     ));
     app.run(|_, _| {});
 }

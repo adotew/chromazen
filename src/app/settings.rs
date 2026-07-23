@@ -2,7 +2,7 @@ use crate::config::{
     AppConfig, BrushCatalog, ConfigError, ConfigStore, CurrentBrushConfig, LoadedBrushPreset,
 };
 
-pub(super) enum SettingsCommand {
+pub enum SettingsCommand {
     Save {
         brush: CurrentBrushConfig,
         active_brush: String,
@@ -12,13 +12,13 @@ pub(super) enum SettingsCommand {
     OpenConfigDirectory,
 }
 
-pub(super) enum SettingsEffect {
+pub enum SettingsEffect {
     Success(String),
     Error(String),
 }
 
-pub(super) struct PendingBrushChange {
-    pub(super) brush: LoadedBrushPreset,
+pub struct PendingBrushChange {
+    pub brush: LoadedBrushPreset,
     reloaded_config: Option<AppConfig>,
     warning: Option<String>,
 }
@@ -42,13 +42,13 @@ impl PendingBrushChange {
     }
 }
 
-pub(super) struct CompletedBrushChange {
-    pub(super) catalog: BrushCatalog,
-    pub(super) reloaded: bool,
-    pub(super) warnings: Vec<String>,
+pub struct CompletedBrushChange {
+    pub catalog: BrushCatalog,
+    pub reloaded: bool,
+    pub warnings: Vec<String>,
 }
 
-pub(super) struct SettingsController {
+pub struct SettingsController {
     store: Option<ConfigStore>,
     config: AppConfig,
     active_brush: LoadedBrushPreset,
@@ -58,7 +58,7 @@ pub(super) struct SettingsController {
 }
 
 impl SettingsController {
-    pub(super) fn load() -> Self {
+    pub fn load() -> Self {
         let (store, mut config, mut startup_error) = match ConfigStore::discover() {
             Ok(store) => match store.load_app_config() {
                 Ok(config) => (Some(store), config, None),
@@ -117,23 +117,23 @@ impl SettingsController {
         }
     }
 
-    pub(super) fn config(&self) -> &AppConfig {
+    pub fn config(&self) -> &AppConfig {
         &self.config
     }
 
-    pub(super) fn active_brush(&self) -> &LoadedBrushPreset {
+    pub fn active_brush(&self) -> &LoadedBrushPreset {
         &self.active_brush
     }
 
-    pub(super) fn take_startup_catalog(&mut self) -> BrushCatalog {
+    pub fn take_startup_catalog(&mut self) -> BrushCatalog {
         self.startup_catalog.take().unwrap_or_default()
     }
 
-    pub(super) fn take_startup_error(&mut self) -> Option<String> {
+    pub fn take_startup_error(&mut self) -> Option<String> {
         self.startup_error.take()
     }
 
-    pub(super) fn handle_command(&mut self, command: SettingsCommand) -> Option<SettingsEffect> {
+    pub fn handle_command(&mut self, command: SettingsCommand) -> Option<SettingsEffect> {
         match command {
             SettingsCommand::Save {
                 brush,
@@ -195,18 +195,15 @@ impl SettingsController {
         }
     }
 
-    pub(super) fn take_pending_brush_change(&mut self) -> Option<PendingBrushChange> {
+    pub fn take_pending_brush_change(&mut self) -> Option<PendingBrushChange> {
         self.pending_brush_change.take()
     }
 
-    pub(super) fn restore_pending_brush_change(&mut self, change: PendingBrushChange) {
+    pub fn restore_pending_brush_change(&mut self, change: PendingBrushChange) {
         self.pending_brush_change = Some(change);
     }
 
-    pub(super) fn complete_brush_change(
-        &mut self,
-        change: PendingBrushChange,
-    ) -> CompletedBrushChange {
+    pub fn complete_brush_change(&mut self, change: PendingBrushChange) -> CompletedBrushChange {
         let PendingBrushChange {
             brush,
             reloaded_config,

@@ -1,7 +1,7 @@
 mod command;
 mod input;
 mod menu;
-mod settings;
+pub mod settings;
 mod ui;
 
 use std::{

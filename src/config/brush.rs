@@ -165,7 +165,8 @@ impl LoadedBrushPreset {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BrushSummary {
     pub id: String,
     pub name: String,

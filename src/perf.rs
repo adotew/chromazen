@@ -4,7 +4,7 @@ const REPORT_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_SAMPLES: usize = 2_048;
 
 #[derive(Debug)]
-pub(crate) struct PaintPerf {
+pub struct PaintPerf {
     enabled: bool,
     report_started: Instant,
     latest_input: Option<Instant>,
@@ -40,7 +40,7 @@ impl Default for PaintPerf {
 }
 
 impl PaintPerf {
-    pub(crate) fn input_received(&mut self) -> Option<Instant> {
+    pub fn input_received(&mut self) -> Option<Instant> {
         if !self.enabled {
             return None;
         }
@@ -50,7 +50,7 @@ impl PaintPerf {
         Some(now)
     }
 
-    pub(crate) fn stamps_queued(
+    pub fn stamps_queued(
         &mut self,
         received_at: Option<Instant>,
         count: usize,
@@ -66,7 +66,7 @@ impl PaintPerf {
         }
     }
 
-    pub(crate) fn submitted(&mut self) {
+    pub fn submitted(&mut self) {
         if !self.enabled {
             return;
         }
@@ -75,7 +75,7 @@ impl PaintPerf {
         }
     }
 
-    pub(crate) fn presented(&mut self) {
+    pub fn presented(&mut self) {
         if !self.enabled {
             return;
         }

@@ -1,8 +1,11 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LayerId(pub(crate) u64);
+use serde::Serialize;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LayerSelection {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, Serialize)]
+pub struct LayerId(pub u64);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", content = "id", rename_all = "camelCase")]
+pub enum LayerSelection {
     Background,
     Paint(LayerId),
 }
@@ -15,17 +18,19 @@ pub(crate) struct PaintLayer {
     pub(crate) blit_bind_group: wgpu::BindGroup,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LayerInfo {
-    pub(crate) id: LayerId,
-    pub(crate) name: String,
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayerInfo {
+    pub id: LayerId,
+    pub name: String,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct LayerSnapshot {
-    pub(crate) layers: Vec<LayerInfo>,
-    pub(crate) selection: LayerSelection,
-    pub(crate) background_color: [f32; 4],
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayerSnapshot {
+    pub layers: Vec<LayerInfo>,
+    pub selection: LayerSelection,
+    pub background_color: [f32; 4],
 }
 
 pub(crate) fn insertion_index(
