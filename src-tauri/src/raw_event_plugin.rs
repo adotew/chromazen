@@ -34,7 +34,7 @@ use tauri_runtime_wry::{
 use crate::{
     desktop::HistoryMenu,
     input_adapter::{
-        ButtonState, CanvasEvent, CanvasKey, InputAction, KeyModifiers, NativeInputController,
+        ButtonState, CanvasEvent, CanvasKey, InputOutcome, KeyModifiers, NativeInputController,
         PointerButton,
     },
 };
@@ -217,21 +217,7 @@ impl RawPaintPlugin {
                     outcome.queued_stamps,
                     outcome.pressure_sampled,
                 );
-                if let Some(action) = outcome.action {
-                    match action {
-                        InputAction::Undo => {
-                            self.paint.undo();
-                        }
-                        InputAction::Redo => {
-                            self.paint.redo();
-                        }
-                    }
-                    self.redraw_pending = true;
-                }
-                if outcome.needs_redraw
-                    || outcome.action.is_some()
-                    || matches!(canvas_event, CanvasEvent::Pointer { .. })
-                {
+                if should_emit_snapshot(&canvas_event, outcome) {
                     self.snapshot_dirty = true;
                 }
             }
@@ -494,6 +480,14 @@ impl RawPaintPlugin {
     }
 }
 
+fn should_emit_snapshot(event: &CanvasEvent, outcome: InputOutcome) -> bool {
+    outcome.ui_state_changed
+        || matches!(
+            event,
+            CanvasEvent::Pointer { .. } | CanvasEvent::KeyInput { .. }
+        )
+}
+
 fn canvas_event(event: &WindowEvent<'_>) -> Option<CanvasEvent> {
     match event {
         WindowEvent::ModifiersChanged(modifiers) => {
@@ -501,7 +495,6 @@ fn canvas_event(event: &WindowEvent<'_>) -> Option<CanvasEvent> {
                 control: modifiers.control_key(),
                 alt: modifiers.alt_key(),
                 super_key: modifiers.super_key(),
-                shift: modifiers.shift_key(),
             }))
         }
         WindowEvent::CursorMoved { position, .. } => Some(CanvasEvent::CursorMoved([
@@ -547,8 +540,6 @@ fn canvas_key(key: KeyCode) -> CanvasKey {
         KeyCode::KeyE => CanvasKey::E,
         KeyCode::KeyS => CanvasKey::S,
         KeyCode::Space => CanvasKey::Space,
-        KeyCode::KeyY => CanvasKey::Y,
-        KeyCode::KeyZ => CanvasKey::Z,
         _ => CanvasKey::Other,
     }
 }
@@ -593,8 +584,29 @@ mod tests {
     #[test]
     fn maps_runtime_keys_at_the_compatibility_boundary() {
         assert_eq!(canvas_key(KeyCode::KeyB), CanvasKey::B);
-        assert_eq!(canvas_key(KeyCode::KeyZ), CanvasKey::Z);
-        assert_eq!(canvas_key(KeyCode::Escape), CanvasKey::Other);
+        assert_eq!(canvas_key(KeyCode::KeyS), CanvasKey::S);
+        assert_eq!(canvas_key(KeyCode::KeyZ), CanvasKey::Other);
+    }
+
+    #[test]
+    fn drawing_movements_do_not_emit_ui_snapshots() {
+        let drawing = InputOutcome {
+            needs_redraw: true,
+            queued_stamps: 1,
+            pressure_sampled: true,
+            ui_state_changed: false,
+        };
+        assert!(!should_emit_snapshot(
+            &CanvasEvent::CursorMoved([10.0, 20.0]),
+            drawing
+        ));
+        assert!(should_emit_snapshot(
+            &CanvasEvent::Pointer {
+                state: ButtonState::Released,
+                button: PointerButton::Left,
+            },
+            InputOutcome::default()
+        ));
     }
 
     #[test]

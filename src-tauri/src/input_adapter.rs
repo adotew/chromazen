@@ -23,8 +23,6 @@ pub(crate) enum CanvasKey {
     E,
     S,
     Space,
-    Y,
-    Z,
     Other,
 }
 
@@ -33,7 +31,6 @@ pub(crate) struct KeyModifiers {
     pub(crate) control: bool,
     pub(crate) alt: bool,
     pub(crate) super_key: bool,
-    pub(crate) shift: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -54,18 +51,12 @@ pub(crate) enum CanvasEvent {
     FocusLost,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum InputAction {
-    Undo,
-    Redo,
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct InputOutcome {
     pub(crate) needs_redraw: bool,
     pub(crate) queued_stamps: usize,
     pub(crate) pressure_sampled: bool,
-    pub(crate) action: Option<InputAction>,
+    pub(crate) ui_state_changed: bool,
 }
 
 impl InputOutcome {
@@ -81,15 +72,7 @@ impl InputOutcome {
             needs_redraw: queued_stamps > 0,
             queued_stamps,
             pressure_sampled: queued_stamps > 0,
-            action: None,
-        }
-    }
-
-    fn action(action: InputAction) -> Self {
-        Self {
-            needs_redraw: true,
-            action: Some(action),
-            ..Self::default()
+            ui_state_changed: false,
         }
     }
 }
@@ -219,15 +202,12 @@ impl NativeInputController {
                 }
             }
             CanvasEvent::KeyInput { state, key, repeat } => {
-                if *state == ButtonState::Pressed && !repeat {
-                    if let Some(action) = history_action_for_key(*key, self.modifiers) {
-                        return InputOutcome::action(action);
-                    }
-                    if let Some(tool) = paint_tool_for_key(*key, self.modifiers)
-                        && self.set_tool(tool)
-                    {
-                        return InputOutcome::redraw();
-                    }
+                if *state == ButtonState::Pressed
+                    && !repeat
+                    && let Some(tool) = paint_tool_for_key(*key, self.modifiers)
+                    && self.set_tool(tool)
+                {
+                    return InputOutcome::redraw();
                 }
                 if *key == CanvasKey::Space {
                     self.is_space_down = *state == ButtonState::Pressed;
@@ -284,6 +264,7 @@ impl NativeInputController {
     }
 
     fn end_stroke(&mut self, paint: &mut PaintRenderer, brush: BrushSettings) -> InputOutcome {
+        let was_drawing = self.is_drawing;
         let queued = if self.is_drawing {
             let smoothed_points = self.smoother.finish();
             let queued = self.queue_smoothed_points(paint, smoothed_points, brush);
@@ -296,7 +277,9 @@ impl NativeInputController {
         self.is_drawing = false;
         self.is_panning = false;
         self.last_point = None;
-        InputOutcome::stamps(queued)
+        let mut outcome = InputOutcome::stamps(queued);
+        outcome.ui_state_changed = was_drawing;
+        outcome
     }
 }
 
@@ -312,22 +295,6 @@ fn paint_tool_for_key(key: CanvasKey, modifiers: KeyModifiers) -> Option<PaintTo
     }
 }
 
-fn history_action_for_key(key: CanvasKey, modifiers: KeyModifiers) -> Option<InputAction> {
-    let command_modifier = if cfg!(target_os = "macos") {
-        modifiers.super_key
-    } else {
-        modifiers.control
-    };
-    if !command_modifier || modifiers.alt {
-        return None;
-    }
-    match (key, modifiers.shift) {
-        (CanvasKey::Z, false) => Some(InputAction::Undo),
-        (CanvasKey::Z, true) | (CanvasKey::Y, false) => Some(InputAction::Redo),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,13 +306,7 @@ mod tests {
             Some(PaintTool::Brush)
         );
         assert_eq!(
-            paint_tool_for_key(
-                CanvasKey::E,
-                KeyModifiers {
-                    shift: true,
-                    ..KeyModifiers::default()
-                },
-            ),
+            paint_tool_for_key(CanvasKey::E, KeyModifiers::default()),
             Some(PaintTool::Eraser)
         );
         assert_eq!(
@@ -357,25 +318,6 @@ mod tests {
                 },
             ),
             None
-        );
-    }
-
-    #[test]
-    fn maps_platform_history_shortcuts() {
-        let mut modifiers = KeyModifiers::default();
-        if cfg!(target_os = "macos") {
-            modifiers.super_key = true;
-        } else {
-            modifiers.control = true;
-        }
-        assert_eq!(
-            history_action_for_key(CanvasKey::Z, modifiers),
-            Some(InputAction::Undo)
-        );
-        modifiers.shift = true;
-        assert_eq!(
-            history_action_for_key(CanvasKey::Z, modifiers),
-            Some(InputAction::Redo)
         );
     }
 }
