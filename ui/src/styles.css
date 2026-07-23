@@ -1,0 +1,288 @@
+:root {
+  color-scheme: dark;
+  font-family:
+    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  color: #e8e8ed;
+  background: #17171b;
+  --panel: #1c1c21;
+  --raised: #25252b;
+  --border: #34343c;
+  --muted: #92929e;
+  --accent: #abc5d6;
+  --accent-ink: #182127;
+  --danger: #e1938e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at 100% 0%, rgb(171 197 214 / 8%), transparent 32%),
+    var(--panel);
+}
+
+body {
+  user-select: none;
+}
+
+main {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  gap: 0;
+  padding: 18px 16px 24px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 1px 2px 18px;
+}
+
+.brand-mark {
+  width: 29px;
+  height: 29px;
+  border-radius: 9px;
+  background:
+    radial-gradient(circle at 35% 35%, #e8d4b6 0 12%, transparent 13%),
+    conic-gradient(from 20deg, #9ebecf, #b9a5cb, #d6aa81, #9ebecf);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 18%);
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 15px;
+  font-weight: 680;
+  letter-spacing: 0.01em;
+}
+
+.brand p {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+section {
+  padding: 15px 2px;
+  border-top: 1px solid var(--border);
+}
+
+h2,
+label > span {
+  color: #bcbcc5;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 11px;
+}
+
+.section-title h2 {
+  margin: 0;
+}
+
+#size-output {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+label {
+  display: grid;
+  gap: 7px;
+  margin-top: 13px;
+}
+
+select,
+button {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: inherit;
+  background: var(--raised);
+  font: inherit;
+}
+
+select {
+  width: 100%;
+  height: 34px;
+  padding: 0 9px;
+}
+
+button {
+  min-height: 32px;
+  padding: 5px 10px;
+  cursor: default;
+}
+
+button:hover:not(:disabled),
+select:hover {
+  border-color: #50505a;
+  background: #2b2b32;
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  color: #686872;
+  opacity: 0.72;
+}
+
+.segmented,
+.button-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 11px;
+}
+
+.segmented button {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  justify-items: center;
+  padding: 7px 3px 6px;
+  font-size: 12px;
+}
+
+.segmented button.active {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  background: var(--accent);
+  font-weight: 650;
+}
+
+kbd {
+  color: inherit;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 500;
+  opacity: 0.58;
+}
+
+.color-row {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+input[type="color"] {
+  width: 44px;
+  height: 30px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--raised);
+}
+
+input[type="range"] {
+  width: 100%;
+  height: 17px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.compact-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.compact-actions button {
+  width: 28px;
+  min-height: 26px;
+  padding: 0;
+  font-size: 17px;
+}
+
+.layers {
+  display: grid;
+  gap: 5px;
+}
+
+.layer {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  text-align: left;
+}
+
+.layer::before {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border: 1px solid #6c6c76;
+  border-radius: 50%;
+  content: "";
+}
+
+.layer.active {
+  border-color: #637b8a;
+  background: #2a3339;
+}
+
+.layer.active::before {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 2px #2a3339;
+}
+
+.settings {
+  margin-top: auto;
+}
+
+.message {
+  margin-top: 10px;
+  padding: 9px;
+  border: 1px solid #45604d;
+  border-radius: 7px;
+  color: #bbd8c2;
+  background: #203027;
+  font-size: 11px;
+  line-height: 1.4;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
+.message.error {
+  border-color: #69443f;
+  color: #edb0aa;
+  background: #342321;
+}
+
+@media (max-height: 760px) {
+  main {
+    padding-top: 12px;
+  }
+
+  section {
+    padding-block: 11px;
+  }
+
+  .brand {
+    padding-bottom: 12px;
+  }
+}
