@@ -3,6 +3,22 @@
 version = 4
 
 [[package]]
+name = "Chromazen"
+version = "0.1.0"
+dependencies = [
+ "chromazen",
+ "env_logger",
+ "log",
+ "pollster",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+ "tauri-runtime",
+ "tauri-runtime-wry",
+ "wgpu",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -592,22 +608,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml 1.1.2+spec-1.1.0",
- "wgpu",
-]
-
-[[package]]
-name = "chromazen-tauri"
-version = "0.1.0"
-dependencies = [
- "chromazen",
- "env_logger",
- "log",
- "pollster",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
- "tauri-runtime",
- "tauri-runtime-wry",
  "wgpu",
 ]
 
