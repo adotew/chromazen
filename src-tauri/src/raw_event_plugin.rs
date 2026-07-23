@@ -1,7 +1,7 @@
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, Ordering},
     mpsc::{Receiver, TryRecvError},
+    Arc,
 };
 
 use chromazen::{
@@ -16,13 +16,13 @@ use chromazen::{
 use tauri::{Emitter, EventLoopMessage, LogicalPosition, LogicalSize, Rect, Webview};
 use tauri_runtime::window::WindowId as RuntimeWindowId;
 use tauri_runtime_wry::{
-    Context, EventLoopIterationContext, Message, Plugin, PluginBuilder, WebContextStore,
-    WindowMessage,
     tao::{
         event::{Event, WindowEvent},
         event_loop::{ControlFlow, EventLoopProxy, EventLoopWindowTarget},
         window::WindowId,
     },
+    Context, EventLoopIterationContext, Message, Plugin, PluginBuilder, WebContextStore,
+    WindowMessage,
 };
 
 use crate::{
@@ -163,8 +163,8 @@ impl Plugin<EventLoopMessage> for RawPaintPlugin {
             Event::RedrawRequested(window_id)
                 if self.is_paint_window(*window_id, &context) && self.redraw_pending =>
             {
-                self.render();
-                self.redraw_pending = self.paint.has_pending_stamps();
+                let presented = self.render();
+                self.redraw_pending = !presented || self.paint.has_pending_stamps();
                 if self.redraw_pending {
                     self.request_redraw(proxy);
                 }
@@ -452,17 +452,17 @@ impl RawPaintPlugin {
         }
     }
 
-    fn render(&mut self) {
+    fn render(&mut self) -> bool {
         let frame = match self.paint.acquire_frame() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 self.paint.reconfigure_surface();
-                return;
+                return false;
             }
             wgpu::CurrentSurfaceTexture::Timeout
             | wgpu::CurrentSurfaceTexture::Occluded
-            | wgpu::CurrentSurfaceTexture::Validation => return,
+            | wgpu::CurrentSurfaceTexture::Validation => return false,
         };
         let view = frame
             .texture
@@ -478,6 +478,7 @@ impl RawPaintPlugin {
         self.perf.submitted();
         frame.present();
         self.perf.presented();
+        true
     }
 }
 
