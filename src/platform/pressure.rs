@@ -77,7 +77,7 @@ mod macos_impl {
     use super::PressureStateHandle;
     use block2::{DynBlock, RcBlock};
     use objc2::{MainThreadMarker, rc::Retained, runtime::AnyObject};
-    use objc2_app_kit::{NSEvent, NSEventMask, NSEventType, NSPointingDeviceType, NSView};
+    use objc2_app_kit::{NSEvent, NSEventMask, NSEventSubtype, NSEventType, NSView};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     pub struct MacosPressureMonitor {
@@ -115,26 +115,28 @@ mod macos_impl {
                 };
 
                 let event = unsafe { event_ptr.as_ref() };
-                let Some(event_window) = event.window(mtm) else {
-                    return event_ptr.as_ptr();
-                };
-                if !std::ptr::eq(&*event_window, &*ns_window) {
-                    return event_ptr.as_ptr();
+                let event_type = event.r#type();
+                match event.window(mtm) {
+                    Some(event_window) if !std::ptr::eq(&*event_window, &*ns_window) => {
+                        return event_ptr.as_ptr();
+                    }
+                    // Tablet-proximity events are not necessarily associated with
+                    // a window. Other windowless events cannot belong to this
+                    // monitor's paint window.
+                    None if event_type != NSEventType::TabletProximity => {
+                        return event_ptr.as_ptr();
+                    }
+                    _ => {}
                 }
 
-                let event_type = event.r#type();
-                let is_pen_device = matches!(
-                    event.pointingDeviceType(),
-                    NSPointingDeviceType::Pen | NSPointingDeviceType::Eraser
-                );
-                let pressure = event.pressure();
-                let has_meaningful_pressure = pressure > 0.0;
-                let should_use_pressure = is_pen_device || has_meaningful_pressure;
-
+                // AppKit event accessors are only valid for particular event
+                // types. Querying tablet-only properties on an ordinary mouse
+                // event raises an Objective-C exception, which cannot unwind
+                // through Tao's `sendEvent:` callback and aborts the process.
                 let changed = match event_type {
                     NSEventType::LeftMouseDown | NSEventType::LeftMouseDragged => {
-                        if should_use_pressure {
-                            pressure_state.note_pen_pressure(pressure, true)
+                        if event.subtype() == NSEventSubtype::TabletPoint {
+                            pressure_state.note_pen_pressure(event.pressure(), true)
                         } else {
                             pressure_state.clear_pen()
                         }
@@ -142,12 +144,11 @@ mod macos_impl {
                     NSEventType::LeftMouseUp | NSEventType::MouseCancelled => {
                         pressure_state.clear_pen()
                     }
-                    NSEventType::TabletPoint | NSEventType::Pressure => {
-                        if should_use_pressure {
-                            pressure_state.note_pen_pressure(pressure, true)
-                        } else {
-                            false
-                        }
+                    NSEventType::TabletPoint => {
+                        pressure_state.note_pen_pressure(event.pressure(), true)
+                    }
+                    NSEventType::Pressure => {
+                        pressure_state.note_pen_pressure(event.pressure(), true)
                     }
                     NSEventType::TabletProximity => {
                         if event.isEnteringProximity() {
