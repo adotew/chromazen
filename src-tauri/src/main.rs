@@ -50,11 +50,14 @@ fn main() {
     app.set_menu(native_menu.menu)
         .expect("failed to install native application menu");
     app.on_menu_event(desktop::handle_menu_event);
+    let window_builder = WindowBuilder::new(&app, "main")
+        .title("Chromazen")
+        .resizable(true)
+        .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT);
+    #[cfg(target_os = "macos")]
+    let window_builder = window_builder.title_bar_style(tauri::TitleBarStyle::Transparent);
     let window = Arc::new(
-        WindowBuilder::new(&app, "main")
-            .title("Chromazen")
-            .resizable(true)
-            .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT)
+        window_builder
             .build()
             .expect("failed to create native paint window"),
     );
