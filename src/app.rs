@@ -25,6 +25,7 @@ use self::{
     ui::GuiLayer,
 };
 use crate::{
+    perf::PaintPerf,
     platform::{MacosPressureMonitor, PressureStateHandle},
     renderer::PaintRenderer,
 };
@@ -51,6 +52,7 @@ pub struct App {
     pending_commands: Vec<AppCommand>,
     settings: SettingsController,
     native_menu: NativeMenu,
+    perf: PaintPerf,
 }
 
 impl ApplicationHandler<AppEvent> for App {
@@ -129,18 +131,25 @@ impl ApplicationHandler<AppEvent> for App {
                 let egui_consumed = egui_response.consumed;
 
                 if !egui_consumed {
+                    let received_at = self.perf.input_received();
                     if let Some(command) = self.input.history_command(&event) {
                         self.pending_commands.push(command);
                         needs_redraw = true;
                     } else if let (Some(paint), Some(gui)) =
                         (self.paint.as_mut(), self.gui.as_ref())
                     {
-                        needs_redraw |= self.input.handle_event(
+                        let outcome = self.input.handle_event(
                             &event,
                             paint,
                             gui.brush,
                             gui.stroke_smoothing,
                             &self.pressure_state,
+                        );
+                        needs_redraw |= outcome.needs_redraw;
+                        self.perf.stamps_queued(
+                            received_at,
+                            outcome.queued_stamps,
+                            outcome.pressure_sampled,
                         );
                     }
                 }
@@ -203,6 +212,7 @@ impl App {
             pending_commands: Vec::new(),
             settings,
             native_menu,
+            perf: PaintPerf::default(),
         }
     }
 
@@ -422,7 +432,9 @@ impl App {
                 .into_iter()
                 .chain(std::iter::once(encoder.finish())),
         );
+        self.perf.submitted();
         frame.present();
+        self.perf.presented();
 
         for id in &full_output.textures_delta.free {
             gui.renderer.free_texture(id);

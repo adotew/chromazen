@@ -1,8 +1,8 @@
 use wgpu::util::DeviceExt;
 
 use super::layers::{LayerId, PaintLayer};
-use super::stamps::{StampRaw, MAX_STAMPS_PER_FRAME};
-use super::{PaintUniform, ViewUniform, DOCUMENT_FORMAT};
+use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
+use super::{DOCUMENT_FORMAT, PaintUniform, ViewUniform};
 
 pub(crate) struct RenderResources {
     pub(crate) stamp_buffer: wgpu::Buffer,

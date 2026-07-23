@@ -11,6 +11,30 @@ use crate::{
 
 use super::command::AppCommand;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct InputOutcome {
+    pub(crate) needs_redraw: bool,
+    pub(crate) queued_stamps: usize,
+    pub(crate) pressure_sampled: bool,
+}
+
+impl InputOutcome {
+    fn redraw() -> Self {
+        Self {
+            needs_redraw: true,
+            ..Self::default()
+        }
+    }
+
+    fn stamps(queued_stamps: usize) -> Self {
+        Self {
+            needs_redraw: queued_stamps > 0,
+            queued_stamps,
+            pressure_sampled: queued_stamps > 0,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct PaintInputController {
     cursor_pos: [f32; 2],
@@ -61,7 +85,7 @@ impl PaintInputController {
         brush: BrushSettings,
         smoothing_options: StrokeSmoothingOptions,
         pressure_state: &PressureStateHandle,
-    ) -> bool {
+    ) -> InputOutcome {
         match event {
             WindowEvent::CursorMoved { position, .. } => {
                 let next = [position.x as f32, position.y as f32];
@@ -75,29 +99,29 @@ impl PaintInputController {
                     self.last_pan_pos = next;
                     if delta[0] != 0.0 || delta[1] != 0.0 {
                         paint.pan_by_window_delta(delta);
-                        return true;
+                        return InputOutcome::redraw();
                     }
-                    return false;
+                    return InputOutcome::default();
                 }
 
                 if self.is_drawing {
                     let point = self.stroke_point_from_window(paint, next, brush, pressure_state);
                     let smoothed_points = self.smoother.push(point);
                     let queued = self.queue_smoothed_points(paint, smoothed_points, brush);
-                    return queued > 0;
+                    return InputOutcome::stamps(queued);
                 }
 
-                false
+                InputOutcome::default()
             }
             WindowEvent::MouseInput { state, button, .. } => match (state, button) {
                 (ElementState::Pressed, MouseButton::Left) if self.is_space_down => {
                     self.is_panning = true;
                     self.last_pan_pos = self.cursor_pos;
-                    false
+                    InputOutcome::default()
                 }
                 (ElementState::Pressed, MouseButton::Left) => {
                     if !paint.can_paint() {
-                        return false;
+                        return InputOutcome::default();
                     }
                     let point = self.stroke_point_from_window(
                         paint,
@@ -111,15 +135,18 @@ impl PaintInputController {
                     self.smoother
                         .begin_with_strength(point, smoothing_options.strength);
                     paint.begin_stroke(self.tool, point);
-                    self.tool != PaintTool::Smudge && paint.queue_stamp(point, brush.rgba())
+                    let queued = usize::from(
+                        self.tool != PaintTool::Smudge && paint.queue_stamp(point, brush.rgba()),
+                    );
+                    InputOutcome::stamps(queued)
                 }
                 (ElementState::Pressed, MouseButton::Middle | MouseButton::Right) => {
                     self.is_panning = true;
                     self.last_pan_pos = self.cursor_pos;
-                    false
+                    InputOutcome::default()
                 }
                 (ElementState::Released, _) => self.end_stroke(paint, brush),
-                _ => false,
+                _ => InputOutcome::default(),
             },
             WindowEvent::MouseWheel { delta, .. } => {
                 let scroll = match delta {
@@ -130,9 +157,13 @@ impl PaintInputController {
                     let old_zoom = paint.zoom();
                     let factor = if scroll > 0.0 { 1.1 } else { 0.9 };
                     paint.apply_zoom_at(factor, self.cursor_pos);
-                    return (paint.zoom() - old_zoom).abs() > f32::EPSILON;
+                    return if (paint.zoom() - old_zoom).abs() > f32::EPSILON {
+                        InputOutcome::redraw()
+                    } else {
+                        InputOutcome::default()
+                    };
                 }
-                false
+                InputOutcome::default()
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed
@@ -140,7 +171,7 @@ impl PaintInputController {
                     && let PhysicalKey::Code(key) = event.physical_key
                     && self.select_tool_for_key(key)
                 {
-                    return true;
+                    return InputOutcome::redraw();
                 }
                 if event.physical_key == PhysicalKey::Code(KeyCode::Space) {
                     self.is_space_down = event.state == ElementState::Pressed;
@@ -148,12 +179,12 @@ impl PaintInputController {
                         self.is_panning = false;
                     }
                 }
-                false
+                InputOutcome::default()
             }
             WindowEvent::CursorLeft { .. } | WindowEvent::Focused(false) => {
                 self.end_stroke(paint, brush)
             }
-            _ => false,
+            _ => InputOutcome::default(),
         }
     }
 
@@ -199,7 +230,7 @@ impl PaintInputController {
         queued
     }
 
-    fn end_stroke(&mut self, paint: &mut PaintRenderer, brush: BrushSettings) -> bool {
+    fn end_stroke(&mut self, paint: &mut PaintRenderer, brush: BrushSettings) -> InputOutcome {
         let queued = if self.is_drawing {
             let smoothed_points = self.smoother.finish();
             let queued = self.queue_smoothed_points(paint, smoothed_points, brush);
@@ -212,7 +243,7 @@ impl PaintInputController {
         self.is_drawing = false;
         self.is_panning = false;
         self.last_point = None;
-        queued > 0
+        InputOutcome::stamps(queued)
     }
 }
 
