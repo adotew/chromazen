@@ -10,6 +10,7 @@ chromazen = { path = ".." }
 env_logger = "0.11"
 log = "0.4"
 pollster = "0.4"
+# Keep this family exactly pinned: raw_event_plugin.rs is the sole unstable Wry boundary.
 tauri = { version = "=2.11.3", features = ["unstable", "wry"] }
 tauri-plugin-opener = "=2.5.4"
 tauri-runtime = "=2.11.3"

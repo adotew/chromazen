@@ -1,6 +1,6 @@
 use std::sync::{
-    atomic::{AtomicBool, AtomicU32, Ordering},
     Arc,
+    atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 #[derive(Clone, Debug, Default)]
@@ -76,7 +76,7 @@ mod macos_impl {
 
     use super::PressureStateHandle;
     use block2::{DynBlock, RcBlock};
-    use objc2::{rc::Retained, runtime::AnyObject, MainThreadMarker};
+    use objc2::{MainThreadMarker, rc::Retained, runtime::AnyObject};
     use objc2_app_kit::{NSEvent, NSEventMask, NSEventSubtype, NSEventType, NSView};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 

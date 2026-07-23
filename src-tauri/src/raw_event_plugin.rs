@@ -1,3 +1,8 @@
+//! Compatibility boundary for Tauri's unstable raw Wry event hook.
+//!
+//! Keep `tauri_runtime`, `tauri_runtime_wry`, and Tao types in this module so
+//! upgrading Tauri cannot leak runtime-specific APIs into the paint engine.
+
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::{Receiver, TryRecvError},
@@ -17,8 +22,9 @@ use tauri::{Emitter, EventLoopMessage, LogicalPosition, LogicalSize, Rect, Webvi
 use tauri_runtime::window::WindowId as RuntimeWindowId;
 use tauri_runtime_wry::{
     tao::{
-        event::{Event, WindowEvent},
+        event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
         event_loop::{ControlFlow, EventLoopProxy, EventLoopWindowTarget},
+        keyboard::KeyCode,
         window::WindowId,
     },
     Context, EventLoopIterationContext, Message, Plugin, PluginBuilder, WebContextStore,
@@ -27,7 +33,10 @@ use tauri_runtime_wry::{
 
 use crate::{
     desktop::HistoryMenu,
-    input_adapter::{InputAction, NativeInputController},
+    input_adapter::{
+        ButtonState, CanvasEvent, CanvasKey, InputAction, KeyModifiers, NativeInputController,
+        PointerButton,
+    },
 };
 
 const PAINT_WINDOW_LABEL: &str = "main";
@@ -191,9 +200,12 @@ impl RawPaintPlugin {
                 self.redraw_pending = true;
             }
             _ => {
+                let Some(canvas_event) = canvas_event(event) else {
+                    return;
+                };
                 let received_at = self.perf.input_received();
                 let outcome = self.input.handle_event(
-                    event,
+                    &canvas_event,
                     &mut self.paint,
                     self.brush,
                     self.smoothing,
@@ -218,7 +230,7 @@ impl RawPaintPlugin {
                 }
                 if outcome.needs_redraw
                     || outcome.action.is_some()
-                    || matches!(event, WindowEvent::MouseInput { .. })
+                    || matches!(canvas_event, CanvasEvent::Pointer { .. })
                 {
                     self.snapshot_dirty = true;
                 }
@@ -482,6 +494,65 @@ impl RawPaintPlugin {
     }
 }
 
+fn canvas_event(event: &WindowEvent<'_>) -> Option<CanvasEvent> {
+    match event {
+        WindowEvent::ModifiersChanged(modifiers) => {
+            Some(CanvasEvent::ModifiersChanged(KeyModifiers {
+                control: modifiers.control_key(),
+                alt: modifiers.alt_key(),
+                super_key: modifiers.super_key(),
+                shift: modifiers.shift_key(),
+            }))
+        }
+        WindowEvent::CursorMoved { position, .. } => Some(CanvasEvent::CursorMoved([
+            position.x as f32,
+            position.y as f32,
+        ])),
+        WindowEvent::MouseInput { state, button, .. } => Some(CanvasEvent::Pointer {
+            state: match state {
+                ElementState::Pressed => ButtonState::Pressed,
+                ElementState::Released => ButtonState::Released,
+                _ => return None,
+            },
+            button: match button {
+                MouseButton::Left => PointerButton::Left,
+                MouseButton::Middle => PointerButton::Middle,
+                MouseButton::Right => PointerButton::Right,
+                _ => PointerButton::Other,
+            },
+        }),
+        WindowEvent::MouseWheel { delta, .. } => Some(CanvasEvent::Scroll(match delta {
+            MouseScrollDelta::LineDelta(_, y) => *y,
+            MouseScrollDelta::PixelDelta(position) => -(position.y as f32) / 120.0,
+            _ => 0.0,
+        })),
+        WindowEvent::KeyboardInput { event, .. } => Some(CanvasEvent::KeyInput {
+            state: match event.state {
+                ElementState::Pressed => ButtonState::Pressed,
+                ElementState::Released => ButtonState::Released,
+                _ => return None,
+            },
+            key: canvas_key(event.physical_key),
+            repeat: event.repeat,
+        }),
+        WindowEvent::CursorLeft { .. } => Some(CanvasEvent::CursorLeft),
+        WindowEvent::Focused(false) => Some(CanvasEvent::FocusLost),
+        _ => None,
+    }
+}
+
+fn canvas_key(key: KeyCode) -> CanvasKey {
+    match key {
+        KeyCode::KeyB => CanvasKey::B,
+        KeyCode::KeyE => CanvasKey::E,
+        KeyCode::KeyS => CanvasKey::S,
+        KeyCode::Space => CanvasKey::Space,
+        KeyCode::KeyY => CanvasKey::Y,
+        KeyCode::KeyZ => CanvasKey::Z,
+        _ => CanvasKey::Other,
+    }
+}
+
 fn brush_settings_from_config(
     config: &chromazen::config::AppConfig,
     preset: &LoadedBrushPreset,
@@ -517,7 +588,14 @@ fn canvas_viewport_width(surface_width: u32, controls_width: f64, scale_factor: 
 
 #[cfg(test)]
 mod tests {
-    use super::canvas_viewport_width;
+    use super::*;
+
+    #[test]
+    fn maps_runtime_keys_at_the_compatibility_boundary() {
+        assert_eq!(canvas_key(KeyCode::KeyB), CanvasKey::B);
+        assert_eq!(canvas_key(KeyCode::KeyZ), CanvasKey::Z);
+        assert_eq!(canvas_key(KeyCode::Escape), CanvasKey::Other);
+    }
 
     #[test]
     fn viewport_excludes_physical_controls_width() {

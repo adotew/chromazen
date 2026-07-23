@@ -3,10 +3,56 @@ use chromazen::{
     platform::PressureStateHandle,
     renderer::PaintRenderer,
 };
-use tauri_runtime_wry::tao::{
-    event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
-    keyboard::{KeyCode, ModifiersState},
-};
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ButtonState {
+    Pressed,
+    Released,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PointerButton {
+    Left,
+    Middle,
+    Right,
+    Other,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CanvasKey {
+    B,
+    E,
+    S,
+    Space,
+    Y,
+    Z,
+    Other,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct KeyModifiers {
+    pub(crate) control: bool,
+    pub(crate) alt: bool,
+    pub(crate) super_key: bool,
+    pub(crate) shift: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum CanvasEvent {
+    ModifiersChanged(KeyModifiers),
+    CursorMoved([f32; 2]),
+    Pointer {
+        state: ButtonState,
+        button: PointerButton,
+    },
+    Scroll(f32),
+    KeyInput {
+        state: ButtonState,
+        key: CanvasKey,
+        repeat: bool,
+    },
+    CursorLeft,
+    FocusLost,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InputAction {
@@ -58,7 +104,7 @@ pub(crate) struct NativeInputController {
     last_pan_pos: [f32; 2],
     smoother: StrokeSmoother,
     smoothing_options: StrokeSmoothingOptions,
-    modifiers: ModifiersState,
+    modifiers: KeyModifiers,
     tool: PaintTool,
 }
 
@@ -77,27 +123,26 @@ impl NativeInputController {
 
     pub(crate) fn handle_event(
         &mut self,
-        event: &WindowEvent<'_>,
+        event: &CanvasEvent,
         paint: &mut PaintRenderer,
         brush: BrushSettings,
         smoothing_options: StrokeSmoothingOptions,
         pressure_state: &PressureStateHandle,
     ) -> InputOutcome {
         match event {
-            WindowEvent::ModifiersChanged(modifiers) => {
+            CanvasEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = *modifiers;
                 InputOutcome::default()
             }
-            WindowEvent::CursorMoved { position, .. } => {
-                let next = [position.x as f32, position.y as f32];
-                self.cursor_pos = next;
+            CanvasEvent::CursorMoved(next) => {
+                self.cursor_pos = *next;
 
                 if self.is_panning {
                     let delta = [
                         next[0] - self.last_pan_pos[0],
                         next[1] - self.last_pan_pos[1],
                     ];
-                    self.last_pan_pos = next;
+                    self.last_pan_pos = *next;
                     if delta[0] != 0.0 || delta[1] != 0.0 {
                         paint.pan_by_window_delta(delta);
                         return InputOutcome::redraw();
@@ -109,7 +154,7 @@ impl NativeInputController {
                     if !self.cursor_is_on_canvas(paint) {
                         return self.end_stroke(paint, brush);
                     }
-                    let point = self.stroke_point_from_window(paint, next, brush, pressure_state);
+                    let point = self.stroke_point_from_window(paint, *next, brush, pressure_state);
                     let smoothed_points = self.smoother.push(point);
                     let queued = self.queue_smoothed_points(paint, smoothed_points, brush);
                     return InputOutcome::stamps(queued);
@@ -117,15 +162,15 @@ impl NativeInputController {
 
                 InputOutcome::default()
             }
-            WindowEvent::MouseInput { state, button, .. } => match (state, button) {
-                (ElementState::Pressed, MouseButton::Left) if self.is_space_down => {
+            CanvasEvent::Pointer { state, button } => match (*state, *button) {
+                (ButtonState::Pressed, PointerButton::Left) if self.is_space_down => {
                     if self.cursor_is_on_canvas(paint) {
                         self.is_panning = true;
                         self.last_pan_pos = self.cursor_pos;
                     }
                     InputOutcome::default()
                 }
-                (ElementState::Pressed, MouseButton::Left) => {
+                (ButtonState::Pressed, PointerButton::Left) => {
                     if !paint.can_paint() || !self.cursor_is_on_canvas(paint) {
                         return InputOutcome::default();
                     }
@@ -146,65 +191,59 @@ impl NativeInputController {
                     );
                     InputOutcome::stamps(queued)
                 }
-                (ElementState::Pressed, MouseButton::Middle | MouseButton::Right) => {
+                (ButtonState::Pressed, PointerButton::Middle | PointerButton::Right) => {
                     if self.cursor_is_on_canvas(paint) {
                         self.is_panning = true;
                         self.last_pan_pos = self.cursor_pos;
                     }
                     InputOutcome::default()
                 }
-                (ElementState::Released, MouseButton::Left) => {
+                (ButtonState::Released, PointerButton::Left) => {
                     let outcome = self.end_stroke(paint, brush);
                     pressure_state.clear_pen();
                     outcome
                 }
-                (ElementState::Released, _) => self.end_stroke(paint, brush),
+                (ButtonState::Released, _) => self.end_stroke(paint, brush),
                 _ => InputOutcome::default(),
             },
-            WindowEvent::MouseWheel { delta, .. } if self.cursor_is_on_canvas(paint) => {
-                let scroll = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => *y,
-                    MouseScrollDelta::PixelDelta(pos) => -(pos.y as f32) / 120.0,
-                    _ => 0.0,
-                };
-                if scroll == 0.0 {
+            CanvasEvent::Scroll(scroll) if self.cursor_is_on_canvas(paint) => {
+                if *scroll == 0.0 {
                     return InputOutcome::default();
                 }
                 let old_zoom = paint.zoom();
-                paint.apply_zoom_at(if scroll > 0.0 { 1.1 } else { 0.9 }, self.cursor_pos);
+                paint.apply_zoom_at(if *scroll > 0.0 { 1.1 } else { 0.9 }, self.cursor_pos);
                 if (paint.zoom() - old_zoom).abs() > f32::EPSILON {
                     InputOutcome::redraw()
                 } else {
                     InputOutcome::default()
                 }
             }
-            WindowEvent::KeyboardInput { event, .. } => {
-                if event.state == ElementState::Pressed && !event.repeat {
-                    if let Some(action) = history_action_for_key(event.physical_key, self.modifiers)
-                    {
+            CanvasEvent::KeyInput { state, key, repeat } => {
+                if *state == ButtonState::Pressed && !repeat {
+                    if let Some(action) = history_action_for_key(*key, self.modifiers) {
                         return InputOutcome::action(action);
                     }
-                    if let Some(tool) = paint_tool_for_key(event.physical_key, self.modifiers)
+                    if let Some(tool) = paint_tool_for_key(*key, self.modifiers)
                         && self.set_tool(tool)
                     {
                         return InputOutcome::redraw();
                     }
                 }
-                if event.physical_key == KeyCode::Space {
-                    self.is_space_down = event.state == ElementState::Pressed;
+                if *key == CanvasKey::Space {
+                    self.is_space_down = *state == ButtonState::Pressed;
                     if !self.is_space_down {
                         self.is_panning = false;
                     }
                 }
                 InputOutcome::default()
             }
-            WindowEvent::CursorLeft { .. } => self.end_stroke(paint, brush),
-            WindowEvent::Focused(false) => {
-                self.modifiers = ModifiersState::empty();
+            CanvasEvent::CursorLeft => self.end_stroke(paint, brush),
+            CanvasEvent::FocusLost => {
+                self.modifiers = KeyModifiers::default();
                 self.is_space_down = false;
                 self.end_stroke(paint, brush)
             }
-            _ => InputOutcome::default(),
+            CanvasEvent::Scroll(_) => InputOutcome::default(),
         }
     }
 
@@ -261,30 +300,30 @@ impl NativeInputController {
     }
 }
 
-fn paint_tool_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<PaintTool> {
-    if modifiers.control_key() || modifiers.alt_key() || modifiers.super_key() {
+fn paint_tool_for_key(key: CanvasKey, modifiers: KeyModifiers) -> Option<PaintTool> {
+    if modifiers.control || modifiers.alt || modifiers.super_key {
         return None;
     }
     match key {
-        KeyCode::KeyB => Some(PaintTool::Brush),
-        KeyCode::KeyE => Some(PaintTool::Eraser),
-        KeyCode::KeyS => Some(PaintTool::Smudge),
+        CanvasKey::B => Some(PaintTool::Brush),
+        CanvasKey::E => Some(PaintTool::Eraser),
+        CanvasKey::S => Some(PaintTool::Smudge),
         _ => None,
     }
 }
 
-fn history_action_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<InputAction> {
+fn history_action_for_key(key: CanvasKey, modifiers: KeyModifiers) -> Option<InputAction> {
     let command_modifier = if cfg!(target_os = "macos") {
-        modifiers.super_key()
+        modifiers.super_key
     } else {
-        modifiers.control_key()
+        modifiers.control
     };
-    if !command_modifier || modifiers.alt_key() {
+    if !command_modifier || modifiers.alt {
         return None;
     }
-    match (key, modifiers.shift_key()) {
-        (KeyCode::KeyZ, false) => Some(InputAction::Undo),
-        (KeyCode::KeyZ, true) | (KeyCode::KeyY, false) => Some(InputAction::Redo),
+    match (key, modifiers.shift) {
+        (CanvasKey::Z, false) => Some(InputAction::Undo),
+        (CanvasKey::Z, true) | (CanvasKey::Y, false) => Some(InputAction::Redo),
         _ => None,
     }
 }
@@ -296,32 +335,46 @@ mod tests {
     #[test]
     fn maps_native_tool_shortcuts() {
         assert_eq!(
-            paint_tool_for_key(KeyCode::KeyB, ModifiersState::empty()),
+            paint_tool_for_key(CanvasKey::B, KeyModifiers::default()),
             Some(PaintTool::Brush)
         );
         assert_eq!(
-            paint_tool_for_key(KeyCode::KeyE, ModifiersState::SHIFT),
+            paint_tool_for_key(
+                CanvasKey::E,
+                KeyModifiers {
+                    shift: true,
+                    ..KeyModifiers::default()
+                },
+            ),
             Some(PaintTool::Eraser)
         );
         assert_eq!(
-            paint_tool_for_key(KeyCode::KeyS, ModifiersState::CONTROL),
+            paint_tool_for_key(
+                CanvasKey::S,
+                KeyModifiers {
+                    control: true,
+                    ..KeyModifiers::default()
+                },
+            ),
             None
         );
     }
 
     #[test]
     fn maps_platform_history_shortcuts() {
-        let modifier = if cfg!(target_os = "macos") {
-            ModifiersState::SUPER
+        let mut modifiers = KeyModifiers::default();
+        if cfg!(target_os = "macos") {
+            modifiers.super_key = true;
         } else {
-            ModifiersState::CONTROL
-        };
+            modifiers.control = true;
+        }
         assert_eq!(
-            history_action_for_key(KeyCode::KeyZ, modifier),
+            history_action_for_key(CanvasKey::Z, modifiers),
             Some(InputAction::Undo)
         );
+        modifiers.shift = true;
         assert_eq!(
-            history_action_for_key(KeyCode::KeyZ, modifier | ModifiersState::SHIFT),
+            history_action_for_key(CanvasKey::Z, modifiers),
             Some(InputAction::Redo)
         );
     }

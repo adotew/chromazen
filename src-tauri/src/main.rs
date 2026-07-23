@@ -86,16 +86,12 @@ fn main() {
     let pressure_state = PressureStateHandle::default();
     let pressure_redraw = Arc::new(AtomicBool::new(false));
     let pressure_redraw_callback = pressure_redraw.clone();
-    let pressure_monitor =
+    // Keep the AppKit monitor on the main stack for the lifetime of `app.run`.
+    let _pressure_monitor =
         MacosPressureMonitor::install(window.clone(), pressure_state.clone(), move || {
             pressure_redraw_callback.store(true, Ordering::Release)
         })
         .expect("failed to initialize pressure monitor");
-    if let Some(pressure_monitor) = pressure_monitor {
-        // AppKit local monitor tokens are main-thread-only, while Tauri requires
-        // runtime plugins to be Send. The monitor intentionally lives until exit.
-        std::mem::forget(pressure_monitor);
-    }
 
     app.wry_plugin(RawPaintPluginBuilder::new(
         paint,
