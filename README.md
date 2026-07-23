@@ -1,48 +1,73 @@
 # Chromazen
 
-Minimal native Rust painting application focused on brush performance.
+Chromazen is a Tauri desktop painting application with a web control surface and a native Rust/wgpu
+canvas. Pointer input, tablet pressure, stroke smoothing, stamp generation, history, rendering, and
+presentation never cross IPC.
 
-Implemented:
+## Architecture
 
-- `winit` native window
-- `wgpu` renderer
-- `egui` controls/stats overlay
-- 4000 × 4000 paint texture
-- bundled charcoal brush using the original stamp PNG
-- pressure-sensitive brush size/opacity on macOS via AppKit tablet and
-  pressure events
-- mouse/fallback input remains full-size and fully opaque
-- instanced GPU brush stamping with dedicated paint and eraser blend pipelines
-- ordered GPU smudging within the selected paint layer
-- always-on centripetal Catmull–Rom stroke smoothing for fast, sparse input
-- transparent paint layers composited over a configurable Background color
-- chronological GPU undo/redo for strokes, layer changes, and Background
-  color changes with a bounded 256 MiB history
-- wheel zoom, pan, clear, fit, 100% zoom
+- `src/` is the reusable Rust paint engine: configuration, brush behavior, smoothing, history,
+  layers, pressure integration, and wgpu rendering.
+- `src-tauri/` owns the desktop lifecycle, raw Tao input adapter, native menus, capabilities, and
+  the bounded control-command queue.
+- `ui/` is the dependency-free web control surface. It receives revisioned snapshots and sends
+  only low-frequency commands such as tool, brush, layer, and settings changes.
+- The native wgpu surface renders directly into the window. The child webview is bounded to the
+  300-pixel controls region; there is no web canvas, frame readback, or pixel transfer.
 
-Run:
+## Build and run
+
+From the repository root:
 
 ```bash
+npm --prefix ui run build
 cargo run --release
 ```
 
-Settings are loaded from `config.toml` in the platform configuration directory.
-On macOS and Windows, use **Settings → Save Settings** in the native menu bar
-to create or update it atomically:
+The UI build uses only Node’s standard library. `cargo run` selects the Tauri workspace member by
+default.
+
+Verification:
+
+```bash
+npm --prefix ui run check
+npm --prefix ui run build
+cargo fmt --all -- --check
+cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+```
+
+Set `CHROMAZEN_PERF=1` when launching to log native input-to-stamp, submit, and present latency
+percentiles every five seconds.
+
+## Painting controls
+
+- Left drag: paint with the selected tool on the selected paint layer.
+- `B`, `E`, `S`: select Brush, Eraser, or Smudge.
+- Wheel: zoom around the cursor.
+- Middle/right drag or Space + left drag: pan.
+- Undo: `Command-Z` on macOS; `Control-Z` on Windows and Linux.
+- Redo: `Command-Shift-Z` on macOS; `Control-Y` on Windows;
+  `Control-Shift-Z` or `Control-Y` on Linux.
+- The web panel controls brushes, color, smoothing, layers, canvas fitting, and settings.
+- Tauri’s native Edit and Settings menus provide history and configuration actions.
+
+## Settings and brushes
+
+Settings are loaded from `config.toml` in the platform configuration directory:
 
 - Linux: `~/.config/chromazen/config.toml`
 - macOS: `~/Library/Application Support/chromazen/config.toml`
-- Windows: the user's roaming application-data directory
+- Windows: the user’s roaming application-data directory
 
-Stroke smoothing is always enabled. Its global strength applies to every brush
-preset and is configured in `config.toml`:
+Use **Settings → Save Settings** to write it atomically. Stroke smoothing is global:
 
 ```toml
 [smoothing]
-strength = 0.8 # greater than 0.0, up to 1.0
+strength = 0.8 # from greater than 0.0 through 1.0
 ```
 
-Custom brush presets can be installed under `brushes/<id>/` in that directory:
+Custom brush presets live under `brushes/<id>/` in that directory:
 
 ```text
 brushes/pencil/
@@ -50,30 +75,5 @@ brushes/pencil/
 └── tip.png
 ```
 
-Set `active_brush = "pencil"` in `config.toml`. The preset's `stamp` path is
-resolved relative to `brush.toml`; invalid presets fall back to the bundled
-charcoal brush.
-
-Controls:
-
-- Left drag: use the selected tool on the selected paint layer
-- `B`: select Brush
-- `E`: select Eraser; erasing makes the selected layer transparent to reveal
-  lower layers and the Background
-- `S`: select Smudge; smudging drags colors already on the selected layer
-- Wheel: zoom around cursor
-- Middle/right drag or Space + left drag: pan
-- Undo: `Command-Z` on macOS; `Control-Z` on Windows and Linux
-- Redo: `Command-Shift-Z` on macOS; `Control-Y` on Windows;
-  `Control-Shift-Z` or `Control-Y` on Linux
-- On macOS and Windows, Undo and Redo are also available from the native
-  **Edit** menu
-- Use the minimal egui panels for brush controls and adding, selecting, or
-  deleting layers
-- Select **Background** in the Layers panel to change its color; it cannot be
-  painted on or deleted
-- On macOS and Windows, use the native **Settings** menu to save, reload, reset,
-  or open the configuration folder
-- Edit brush behavior in each preset's `brush.toml`
-- Use **Reload** after editing TOML externally, or **Open config folder** to
-  locate the files
+The preset’s `stamp` path is resolved relative to `brush.toml`. Invalid or unavailable presets fall
+back to the bundled charcoal brush.

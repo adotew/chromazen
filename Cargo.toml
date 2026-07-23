@@ -3,25 +3,20 @@ name = "chromazen"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = [".", "src-tauri"]
+default-members = ["src-tauri"]
+resolver = "2"
+
 [dependencies]
 atomic-write-file = "0.3.0"
 bytemuck = { version = "1.16", features = ["derive"] }
 directories = "6.0.0"
-egui = "0.34.1"
-egui-wgpu = { version = "0.34.1", features = ["winit"] }
-egui-winit = "0.34.1"
-env_logger = "0.11"
 image = { version = "0.25", default-features = false, features = ["png"] }
 log = "0.4"
-open = "5.3.6"
-pollster = "0.4"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
 wgpu = "29.0.3"
-winit = "0.30.13"
-
-[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
-muda = { version = "0.19.3", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"

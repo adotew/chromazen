@@ -134,13 +134,6 @@ impl ConfigStore {
         self.root.join("brushes")
     }
 
-    pub(crate) fn open_config_directory(&self) -> Result<(), ConfigError> {
-        fs::create_dir_all(&self.root).map_err(|error| {
-            ConfigError::io("create configuration directory for", &self.root, error)
-        })?;
-        open::that_detached(&self.root).map_err(|error| ConfigError::io("open", &self.root, error))
-    }
-
     pub(crate) fn load_brush(&self, id: &str) -> Result<LoadedBrushPreset, ConfigError> {
         let config_path = self.brushes_path().join(id).join("brush.toml");
         if !config_path.exists() {

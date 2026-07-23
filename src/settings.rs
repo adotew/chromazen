@@ -9,7 +9,6 @@ pub enum SettingsCommand {
     },
     SwitchBrush(String),
     ReloadFromDisk,
-    OpenConfigDirectory,
 }
 
 pub enum SettingsEffect {
@@ -184,13 +183,6 @@ impl SettingsController {
                     }
                     Err(error) => Some(command_error("brush preset action failed", error)),
                 }
-            }
-            SettingsCommand::OpenConfigDirectory => {
-                let result = self.store().and_then(ConfigStore::open_config_directory);
-                Some(match result {
-                    Ok(()) => SettingsEffect::Success("Opened the configuration folder".to_owned()),
-                    Err(error) => command_error("brush preset action failed", error),
-                })
             }
         }
     }

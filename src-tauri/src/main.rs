@@ -9,10 +9,10 @@ use std::sync::{
 };
 
 use chromazen::{
-    app::settings::SettingsController,
     platform::{MacosPressureMonitor, PressureStateHandle},
     protocol::UiCommand,
     renderer::PaintRenderer,
+    settings::SettingsController,
 };
 use tauri::{
     LogicalPosition, LogicalSize, State, WebviewUrl, webview::WebviewBuilder, window::WindowBuilder,

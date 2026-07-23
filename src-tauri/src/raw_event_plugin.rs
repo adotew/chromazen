@@ -5,13 +5,13 @@ use std::sync::{
 };
 
 use chromazen::{
-    app::settings::{SettingsCommand, SettingsController, SettingsEffect},
     config::{BrushCatalog, CurrentBrushConfig, LoadedBrushPreset},
     paint::{BrushSettings, BrushSpacing, PressureSettings, StrokeSmoothingOptions},
     perf::PaintPerf,
     platform::PressureStateHandle,
     protocol::{BrushUiState, UiCommand, UiMessage, UiSnapshot},
     renderer::PaintRenderer,
+    settings::{SettingsCommand, SettingsController, SettingsEffect},
 };
 use tauri::{Emitter, EventLoopMessage, LogicalPosition, LogicalSize, Rect, Webview};
 use tauri_runtime::window::WindowId as RuntimeWindowId;
