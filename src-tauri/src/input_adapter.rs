@@ -153,6 +153,11 @@ impl NativeInputController {
                     }
                     InputOutcome::default()
                 }
+                (ElementState::Released, MouseButton::Left) => {
+                    let outcome = self.end_stroke(paint, brush);
+                    pressure_state.clear_pen();
+                    outcome
+                }
                 (ElementState::Released, _) => self.end_stroke(paint, brush),
                 _ => InputOutcome::default(),
             },

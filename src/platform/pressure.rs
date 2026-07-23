@@ -1,6 +1,6 @@
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, AtomicU32, Ordering},
+    Arc,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -41,7 +41,7 @@ impl PressureStateHandle {
         previous_active != active || (previous_pressure - pressure).abs() > f32::EPSILON
     }
 
-    fn clear_pen(&self) -> bool {
+    pub fn clear_pen(&self) -> bool {
         let previous_active = self.0.pen_active.swap(false, Ordering::Relaxed);
         let previous_pressure = f32::from_bits(
             self.0
@@ -76,7 +76,7 @@ mod macos_impl {
 
     use super::PressureStateHandle;
     use block2::{DynBlock, RcBlock};
-    use objc2::{MainThreadMarker, rc::Retained, runtime::AnyObject};
+    use objc2::{rc::Retained, runtime::AnyObject, MainThreadMarker};
     use objc2_app_kit::{NSEvent, NSEventMask, NSEventSubtype, NSEventType, NSView};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -141,9 +141,10 @@ mod macos_impl {
                             pressure_state.clear_pen()
                         }
                     }
-                    NSEventType::LeftMouseUp | NSEventType::MouseCancelled => {
-                        pressure_state.clear_pen()
-                    }
+                    // Tao emits a final CursorMoved before MouseInput::Released.
+                    // Keep the last pressure until the input controller finishes the stroke.
+                    NSEventType::LeftMouseUp => false,
+                    NSEventType::MouseCancelled => pressure_state.clear_pen(),
                     NSEventType::TabletPoint => {
                         pressure_state.note_pen_pressure(event.pressure(), true)
                     }
@@ -198,3 +199,18 @@ mod macos_impl {
 
 #[cfg(target_os = "macos")]
 pub use macos_impl::MacosPressureMonitor;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pen_pressure_is_retained_until_input_clears_it() {
+        let state = PressureStateHandle::default();
+        state.note_pen_pressure(0.25, true);
+
+        assert_eq!(state.brush_pressure(), 0.25);
+        assert!(state.clear_pen());
+        assert_eq!(state.brush_pressure(), 1.0);
+    }
+}
