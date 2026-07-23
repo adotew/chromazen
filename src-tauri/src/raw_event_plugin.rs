@@ -3,10 +3,13 @@
 //! Keep `tauri_runtime`, `tauri_runtime_wry`, and Tao types in this module so
 //! upgrading Tauri cannot leak runtime-specific APIs into the paint engine.
 
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    mpsc::{Receiver, TryRecvError},
-    Arc,
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{Receiver, TryRecvError},
+    },
+    time::{Duration, Instant},
 };
 
 use chromazen::{
@@ -21,14 +24,14 @@ use chromazen::{
 use tauri::{Emitter, EventLoopMessage, LogicalPosition, LogicalSize, Rect, Webview};
 use tauri_runtime::window::WindowId as RuntimeWindowId;
 use tauri_runtime_wry::{
+    Context, EventLoopIterationContext, Message, Plugin, PluginBuilder, WebContextStore,
+    WindowMessage,
     tao::{
         event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
         event_loop::{ControlFlow, EventLoopProxy, EventLoopWindowTarget},
         keyboard::KeyCode,
         window::WindowId,
     },
-    Context, EventLoopIterationContext, Message, Plugin, PluginBuilder, WebContextStore,
-    WindowMessage,
 };
 
 use crate::{
@@ -40,6 +43,14 @@ use crate::{
 };
 
 const PAINT_WINDOW_LABEL: &str = "main";
+const SURFACE_RETRY_DELAY: Duration = Duration::from_millis(16);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RenderOutcome {
+    Presented,
+    Retry,
+    WaitForExternalRedraw,
+}
 
 pub(crate) struct RawPaintPluginBuilder {
     paint: PaintRenderer,
@@ -100,6 +111,7 @@ impl PluginBuilder<EventLoopMessage> for RawPaintPluginBuilder {
             tao_window_id: None,
             runtime_window_id: None,
             redraw_pending: true,
+            redraw_retry_at: None,
             commands: self.commands,
             settings: self.settings,
             catalog,
@@ -127,6 +139,7 @@ pub(crate) struct RawPaintPlugin {
     tao_window_id: Option<WindowId>,
     runtime_window_id: Option<RuntimeWindowId>,
     redraw_pending: bool,
+    redraw_retry_at: Option<Instant>,
     commands: Receiver<UiCommand>,
     settings: SettingsController,
     catalog: BrushCatalog,
@@ -148,7 +161,7 @@ impl Plugin<EventLoopMessage> for RawPaintPlugin {
         event: &Event<Message<EventLoopMessage>>,
         _event_loop: &EventLoopWindowTarget<Message<EventLoopMessage>>,
         proxy: &EventLoopProxy<Message<EventLoopMessage>>,
-        _control_flow: &mut ControlFlow,
+        control_flow: &mut ControlFlow,
         context: EventLoopIterationContext<'_, EventLoopMessage>,
         _web_context: &WebContextStore,
     ) -> bool {
@@ -165,18 +178,15 @@ impl Plugin<EventLoopMessage> for RawPaintPlugin {
                 self.drain_commands();
                 self.apply_pending_brush_change();
                 self.emit_snapshot_if_dirty();
-                if self.redraw_pending {
-                    self.request_redraw(proxy);
-                }
+                self.request_redraw_if_ready(proxy, control_flow);
             }
-            Event::RedrawRequested(window_id)
-                if self.is_paint_window(*window_id, &context) && self.redraw_pending =>
-            {
-                let presented = self.render();
-                self.redraw_pending = !presented || self.paint.has_pending_stamps();
-                if self.redraw_pending {
-                    self.request_redraw(proxy);
-                }
+            Event::RedrawRequested(window_id) if self.is_paint_window(*window_id, &context) => {
+                (self.redraw_pending, self.redraw_retry_at) = redraw_schedule(
+                    self.render(),
+                    self.paint.has_pending_stamps(),
+                    Instant::now(),
+                );
+                self.request_redraw_if_ready(proxy, control_flow);
             }
             _ => {}
         }
@@ -450,17 +460,44 @@ impl RawPaintPlugin {
         }
     }
 
-    fn render(&mut self) -> bool {
+    fn request_redraw_if_ready(
+        &mut self,
+        proxy: &EventLoopProxy<Message<EventLoopMessage>>,
+        control_flow: &mut ControlFlow,
+    ) {
+        if let Some(retry_at) = self.redraw_retry_at {
+            if Instant::now() < retry_at {
+                *control_flow = ControlFlow::WaitUntil(retry_at);
+                return;
+            }
+            self.redraw_retry_at = None;
+        }
+        if self.redraw_pending {
+            self.request_redraw(proxy);
+        }
+    }
+
+    fn render(&mut self) -> RenderOutcome {
         let frame = match self.paint.acquire_frame() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
+            wgpu::CurrentSurfaceTexture::Outdated => {
                 self.paint.reconfigure_surface();
-                return false;
+                return RenderOutcome::Retry;
             }
-            wgpu::CurrentSurfaceTexture::Timeout
-            | wgpu::CurrentSurfaceTexture::Occluded
-            | wgpu::CurrentSurfaceTexture::Validation => return false,
+            wgpu::CurrentSurfaceTexture::Lost => {
+                self.paint.reconfigure_surface();
+                log::error!("paint surface was lost; waiting for an external redraw");
+                return RenderOutcome::WaitForExternalRedraw;
+            }
+            wgpu::CurrentSurfaceTexture::Timeout => return RenderOutcome::Retry,
+            wgpu::CurrentSurfaceTexture::Occluded => {
+                return RenderOutcome::WaitForExternalRedraw;
+            }
+            wgpu::CurrentSurfaceTexture::Validation => {
+                log::error!("surface validation failed while acquiring a paint frame");
+                return RenderOutcome::WaitForExternalRedraw;
+            }
         };
         let view = frame
             .texture
@@ -476,7 +513,19 @@ impl RawPaintPlugin {
         self.perf.submitted();
         frame.present();
         self.perf.presented();
-        true
+        RenderOutcome::Presented
+    }
+}
+
+fn redraw_schedule(
+    outcome: RenderOutcome,
+    has_pending_stamps: bool,
+    now: Instant,
+) -> (bool, Option<Instant>) {
+    match outcome {
+        RenderOutcome::Presented => (has_pending_stamps, None),
+        RenderOutcome::Retry => (true, now.checked_add(SURFACE_RETRY_DELAY)),
+        RenderOutcome::WaitForExternalRedraw => (false, None),
     }
 }
 
@@ -607,6 +656,19 @@ mod tests {
             },
             InputOutcome::default()
         ));
+    }
+
+    #[test]
+    fn failed_frames_do_not_retry_immediately() {
+        let now = Instant::now();
+        let (pending, retry_at) = redraw_schedule(RenderOutcome::Retry, false, now);
+        assert!(pending);
+        assert!(retry_at.is_some_and(|retry_at| retry_at > now));
+
+        assert_eq!(
+            redraw_schedule(RenderOutcome::WaitForExternalRedraw, true, now),
+            (false, None)
+        );
     }
 
     #[test]
