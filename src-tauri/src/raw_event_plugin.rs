@@ -172,6 +172,7 @@ impl Plugin<EventLoopMessage> for RawPaintPlugin {
                 self.handle_window_event(event);
             }
             Event::MainEventsCleared => {
+                self.resolve_runtime_window_id(&context);
                 if self.pressure_redraw.swap(false, Ordering::Acquire) {
                     self.redraw_pending = true;
                 }
@@ -407,6 +408,21 @@ impl RawPaintPlugin {
             Ok(()) => self.snapshot_dirty = false,
             Err(error) => log::warn!("failed to emit control snapshot: {error}"),
         }
+    }
+
+    fn resolve_runtime_window_id(
+        &mut self,
+        context: &EventLoopIterationContext<'_, EventLoopMessage>,
+    ) {
+        if self.runtime_window_id.is_some() {
+            return;
+        }
+        self.runtime_window_id = context
+            .windows
+            .0
+            .borrow()
+            .iter()
+            .find_map(|(id, window)| (window.label() == PAINT_WINDOW_LABEL).then_some(*id));
     }
 
     fn is_paint_window(
