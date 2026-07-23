@@ -624,6 +624,7 @@ dependencies = [
  "pollster",
  "tauri",
  "tauri-build",
+ "tauri-runtime",
  "tauri-runtime-wry",
  "wgpu",
 ]

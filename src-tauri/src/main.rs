@@ -2,14 +2,9 @@ mod raw_event_plugin;
 
 use std::sync::Arc;
 
-use chromazen::{
-    config::LoadedBrushPreset,
-    renderer::PaintRenderer,
-};
+use chromazen::{config::LoadedBrushPreset, renderer::PaintRenderer};
 use tauri::{
-    LogicalPosition, LogicalSize, WebviewUrl,
-    webview::WebviewBuilder,
-    window::WindowBuilder,
+    LogicalPosition, LogicalSize, WebviewUrl, webview::WebviewBuilder, window::WindowBuilder,
 };
 
 use raw_event_plugin::RawPaintPluginBuilder;
@@ -33,12 +28,21 @@ fn main() {
             .expect("failed to create native paint window"),
     );
     let size = window.inner_size().expect("failed to read window size");
-    let paint = pollster::block_on(PaintRenderer::new(
+    let scale_factor = window
+        .scale_factor()
+        .expect("failed to read window scale factor");
+    let mut paint = pollster::block_on(PaintRenderer::new(
         window.clone(),
         [size.width, size.height],
         &LoadedBrushPreset::bundled_charcoal(),
     ))
     .expect("failed to initialize native wgpu paint renderer");
+    paint.set_canvas_viewport_size([
+        size.width
+            .saturating_sub((CONTROLS_WIDTH * scale_factor).round() as u32),
+        size.height,
+    ]);
+    paint.fit_to_screen();
 
     let controls = window
         .add_child(
@@ -48,6 +52,11 @@ fn main() {
         )
         .expect("failed to create bounded controls webview");
 
-    app.wry_plugin(RawPaintPluginBuilder::new(paint, controls));
+    app.wry_plugin(RawPaintPluginBuilder::new(
+        paint,
+        controls,
+        CONTROLS_WIDTH,
+        scale_factor,
+    ));
     app.run(|_, _| {});
 }

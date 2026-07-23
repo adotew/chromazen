@@ -46,6 +46,7 @@ struct ViewUniform {
 
 pub struct PaintRenderer {
     gpu: GpuContext,
+    canvas_viewport_size: [u32; 2],
     document_size: [u32; 2],
     resources: RenderResources,
     layers: Vec<PaintLayer>,
@@ -91,6 +92,7 @@ impl PaintRenderer {
         let history = PaintHistory::new(device, document_size);
         let mut renderer = Self {
             gpu,
+            canvas_viewport_size: surface_size,
             document_size,
             resources,
             layers: vec![first_layer],
@@ -120,6 +122,9 @@ impl PaintRenderer {
     pub fn surface_size(&self) -> [u32; 2] {
         self.gpu.surface_size()
     }
+    pub fn canvas_viewport_size(&self) -> [u32; 2] {
+        self.canvas_viewport_size
+    }
     pub fn zoom(&self) -> f32 {
         self.view.zoom()
     }
@@ -129,6 +134,13 @@ impl PaintRenderer {
 
     pub fn resize(&mut self, size: [u32; 2]) {
         self.gpu.resize(size);
+    }
+
+    pub fn set_canvas_viewport_size(&mut self, size: [u32; 2]) {
+        self.canvas_viewport_size = [
+            size[0].clamp(1, self.surface_size()[0]),
+            size[1].clamp(1, self.surface_size()[1]),
+        ];
     }
 
     pub fn try_set_brush_preset(&mut self, preset: &LoadedBrushPreset) -> Result<bool, String> {
@@ -150,7 +162,7 @@ impl PaintRenderer {
 
     pub fn fit_to_screen(&mut self) {
         self.view
-            .fit_to_screen(self.surface_size(), self.document_size);
+            .fit_to_screen(self.canvas_viewport_size, self.document_size);
     }
 
     pub fn apply_zoom_at(&mut self, factor: f32, cursor: [f32; 2]) {
@@ -549,6 +561,20 @@ impl PaintRenderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
+        pass.set_viewport(
+            0.0,
+            0.0,
+            self.canvas_viewport_size[0] as f32,
+            self.canvas_viewport_size[1] as f32,
+            0.0,
+            1.0,
+        );
+        pass.set_scissor_rect(
+            0,
+            0,
+            self.canvas_viewport_size[0],
+            self.canvas_viewport_size[1],
+        );
         pass.set_pipeline(&self.resources.background_pipeline);
         pass.set_bind_group(0, &self.layers[0].blit_bind_group, &[]);
         pass.draw(0..3, 0..1);
