@@ -486,9 +486,11 @@ impl RawPaintPlugin {
                 return RenderOutcome::Retry;
             }
             wgpu::CurrentSurfaceTexture::Lost => {
-                self.paint.reconfigure_surface();
-                log::error!("paint surface was lost; waiting for an external redraw");
-                return RenderOutcome::WaitForExternalRedraw;
+                if let Err(error) = self.paint.recreate_surface() {
+                    log::error!("{error}; waiting for an external redraw");
+                    return RenderOutcome::WaitForExternalRedraw;
+                }
+                return RenderOutcome::Retry;
             }
             wgpu::CurrentSurfaceTexture::Timeout => return RenderOutcome::Retry,
             wgpu::CurrentSurfaceTexture::Occluded => {

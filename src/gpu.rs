@@ -4,6 +4,9 @@ use wgpu::rwh::{HasDisplayHandle, HasWindowHandle};
 
 pub(crate) struct GpuContext {
     surface: wgpu::Surface<'static>,
+    // Retain both so a lost surface can be recreated for the same native window.
+    instance: wgpu::Instance,
+    window: Arc<dyn wgpu::DisplayAndWindowHandle + Send + Sync>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -15,8 +18,9 @@ impl GpuContext {
         W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static,
     {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let window: Arc<dyn wgpu::DisplayAndWindowHandle + Send + Sync> = window;
         let surface = instance
-            .create_surface(window)
+            .create_surface(window.clone())
             .map_err(|err| format!("failed to create surface: {err}"))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -59,6 +63,8 @@ impl GpuContext {
 
         Ok(Self {
             surface,
+            instance,
+            window,
             device,
             queue,
             config,
@@ -96,5 +102,15 @@ impl GpuContext {
 
     pub(crate) fn reconfigure_surface(&self) {
         self.surface.configure(&self.device, &self.config);
+    }
+
+    pub(crate) fn recreate_surface(&mut self) -> Result<(), String> {
+        let surface = self
+            .instance
+            .create_surface(self.window.clone())
+            .map_err(|error| format!("failed to recreate surface: {error}"))?;
+        surface.configure(&self.device, &self.config);
+        self.surface = surface;
+        Ok(())
     }
 }

@@ -536,6 +536,10 @@ impl PaintRenderer {
         self.gpu.reconfigure_surface();
     }
 
+    pub fn recreate_surface(&mut self) -> Result<(), String> {
+        self.gpu.recreate_surface()
+    }
+
     pub fn render_to_view(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         self.flush_stamps(encoder);
         self.write_view_uniform();
