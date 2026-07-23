@@ -209,7 +209,7 @@ fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), ConfigError> {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ConfigError {
+pub struct ConfigError {
     message: String,
 }
 
@@ -236,6 +236,14 @@ impl fmt::Display for ConfigError {
 }
 
 impl Error for ConfigError {}
+
+pub fn ensure_config_directory() -> Result<PathBuf, ConfigError> {
+    let store = ConfigStore::discover()?;
+    fs::create_dir_all(&store.root).map_err(|error| {
+        ConfigError::io("create configuration directory for", &store.root, error)
+    })?;
+    Ok(store.root)
+}
 
 #[cfg(test)]
 mod tests {

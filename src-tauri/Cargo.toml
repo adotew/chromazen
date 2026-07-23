@@ -11,6 +11,7 @@ env_logger = "0.11"
 log = "0.4"
 pollster = "0.4"
 tauri = { version = "=2.11.3", features = ["unstable", "wry"] }
+tauri-plugin-opener = "=2.5.4"
 tauri-runtime = "=2.11.3"
 tauri-runtime-wry = "=2.11.3"
 wgpu = "29.0.3"

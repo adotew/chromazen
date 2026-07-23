@@ -25,7 +25,10 @@ use tauri_runtime_wry::{
     },
 };
 
-use crate::input_adapter::{InputAction, NativeInputController};
+use crate::{
+    desktop::HistoryMenu,
+    input_adapter::{InputAction, NativeInputController},
+};
 
 const PAINT_WINDOW_LABEL: &str = "main";
 
@@ -38,6 +41,7 @@ pub(crate) struct RawPaintPluginBuilder {
     settings: SettingsController,
     pressure_state: PressureStateHandle,
     pressure_redraw: Arc<AtomicBool>,
+    history_menu: HistoryMenu,
 }
 
 impl RawPaintPluginBuilder {
@@ -51,6 +55,7 @@ impl RawPaintPluginBuilder {
         settings: SettingsController,
         pressure_state: PressureStateHandle,
         pressure_redraw: Arc<AtomicBool>,
+        history_menu: HistoryMenu,
     ) -> Self {
         Self {
             paint,
@@ -61,6 +66,7 @@ impl RawPaintPluginBuilder {
             settings,
             pressure_state,
             pressure_redraw,
+            history_menu,
         }
     }
 }
@@ -96,6 +102,7 @@ impl PluginBuilder<EventLoopMessage> for RawPaintPluginBuilder {
             },
             pressure_state: self.pressure_state,
             pressure_redraw: self.pressure_redraw,
+            history_menu: self.history_menu,
             snapshot_dirty: true,
             revision: 0,
             perf: PaintPerf::default(),
@@ -120,6 +127,7 @@ pub(crate) struct RawPaintPlugin {
     smoothing: StrokeSmoothingOptions,
     pressure_state: PressureStateHandle,
     pressure_redraw: Arc<AtomicBool>,
+    history_menu: HistoryMenu,
     snapshot_dirty: bool,
     revision: u64,
     perf: PaintPerf,
@@ -385,6 +393,8 @@ impl RawPaintPlugin {
             can_delete_layer: self.paint.can_delete_selected_layer(),
             message: self.message.clone(),
         };
+        self.history_menu
+            .set_enabled(snapshot.can_undo, snapshot.can_redo);
         match self.controls.emit("ui-state", &snapshot) {
             Ok(()) => self.snapshot_dirty = false,
             Err(error) => log::warn!("failed to emit control snapshot: {error}"),

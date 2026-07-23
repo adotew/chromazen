@@ -1,3 +1,4 @@
+mod desktop;
 mod input_adapter;
 mod raw_event_plugin;
 
@@ -17,7 +18,7 @@ use tauri::{
     LogicalPosition, LogicalSize, State, WebviewUrl, webview::WebviewBuilder, window::WindowBuilder,
 };
 
-use raw_event_plugin::RawPaintPluginBuilder;
+use self::{desktop::NativeMenu, raw_event_plugin::RawPaintPluginBuilder};
 
 const WINDOW_WIDTH: f64 = 1_280.0;
 const WINDOW_HEIGHT: f64 = 900.0;
@@ -40,10 +41,15 @@ fn main() {
     let (command_sender, command_receiver) = sync_channel(CONTROL_QUEUE_CAPACITY);
     let settings = SettingsController::load();
     let mut app = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .manage(ControlSender(command_sender))
         .invoke_handler(tauri::generate_handler![dispatch])
         .build(tauri::generate_context!())
         .expect("failed to build Tauri application");
+    let native_menu = NativeMenu::new(&app).expect("failed to build native application menu");
+    app.set_menu(native_menu.menu)
+        .expect("failed to install native application menu");
+    app.on_menu_event(desktop::handle_menu_event);
     let window = Arc::new(
         WindowBuilder::new(&app, "main")
             .title("Chromazen")
@@ -100,6 +106,7 @@ fn main() {
         settings,
         pressure_state,
         pressure_redraw,
+        native_menu.history,
     ));
     app.run(|_, _| {});
 }

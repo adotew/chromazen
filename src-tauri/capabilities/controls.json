@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "controls",
+  "description": "Allows the bundled controls webview to invoke Chromazen commands and receive state events.",
+  "local": true,
+  "webviews": ["controls"],
+  "permissions": ["core:default"]
+}
