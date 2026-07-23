@@ -131,7 +131,7 @@ pub struct LoadedBrushPreset {
 }
 
 impl LoadedBrushPreset {
-    pub(crate) fn bundled_charcoal() -> Self {
+    pub fn bundled_charcoal() -> Self {
         Self {
             id: DEFAULT_BRUSH_ID.to_owned(),
             preset: BrushPreset::default(),
@@ -139,7 +139,7 @@ impl LoadedBrushPreset {
         }
     }
 
-    pub(crate) fn bundled_sketch() -> Self {
+    pub fn bundled_sketch() -> Self {
         Self {
             id: SKETCH_ID.to_owned(),
             preset: BrushPreset {

@@ -1,8 +1,5 @@
 use std::sync::{Arc, Mutex};
 
-#[cfg(not(target_os = "macos"))]
-use winit::window::Window;
-
 #[derive(Clone, Debug, Default)]
 pub struct PressureStateHandle(Arc<Mutex<PressureState>>);
 
@@ -55,10 +52,15 @@ pub struct MacosPressureMonitor;
 
 #[cfg(not(target_os = "macos"))]
 impl MacosPressureMonitor {
-    pub fn install(
-        _window: Arc<Window>,
+    pub fn install<W, F>(
+        _window: Arc<W>,
         _pressure_state: PressureStateHandle,
-    ) -> Result<Option<Self>, String> {
+        _request_redraw: F,
+    ) -> Result<Option<Self>, String>
+    where
+        W: Send + Sync + 'static,
+        F: Fn() + Send + Sync + 'static,
+    {
         Ok(None)
     }
 }
@@ -67,13 +69,11 @@ impl MacosPressureMonitor {
 mod macos_impl {
     use std::{ptr::NonNull, sync::Arc};
 
+    use super::PressureStateHandle;
     use block2::{DynBlock, RcBlock};
     use objc2::{MainThreadMarker, rc::Retained, runtime::AnyObject};
     use objc2_app_kit::{NSEvent, NSEventMask, NSEventType, NSPointingDeviceType, NSView};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use winit::window::Window;
-
-    use super::PressureStateHandle;
 
     pub struct MacosPressureMonitor {
         monitor: Retained<AnyObject>,
@@ -81,10 +81,15 @@ mod macos_impl {
     }
 
     impl MacosPressureMonitor {
-        pub fn install(
-            window: Arc<Window>,
+        pub fn install<W, F>(
+            window: Arc<W>,
             pressure_state: PressureStateHandle,
-        ) -> Result<Option<Self>, String> {
+            request_redraw: F,
+        ) -> Result<Option<Self>, String>
+        where
+            W: HasWindowHandle + Send + Sync + 'static,
+            F: Fn() + Send + Sync + 'static,
+        {
             let _mtm = MainThreadMarker::new().ok_or("AppKit access requires the main thread")?;
             let window_handle = window
                 .window_handle()
@@ -150,7 +155,7 @@ mod macos_impl {
                 };
 
                 if changed {
-                    window.request_redraw();
+                    request_redraw();
                 }
 
                 event_ptr.as_ptr()

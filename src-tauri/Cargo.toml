@@ -3,6 +3,16 @@ name = "chromazen-tauri"
 version = "0.1.0"
 edition = "2024"
 publish = false
+build = "build.rs"
 
 [dependencies]
 chromazen = { path = ".." }
+env_logger = "0.11"
+log = "0.4"
+pollster = "0.4"
+tauri = { version = "=2.11.3", features = ["unstable", "wry"] }
+tauri-runtime-wry = "=2.11.3"
+wgpu = "29.0.3"
+
+[build-dependencies]
+tauri-build = "=2.6.3"

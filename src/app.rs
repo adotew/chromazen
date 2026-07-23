@@ -77,9 +77,12 @@ impl ApplicationHandler<AppEvent> for App {
             .unwrap_or_else(|error| panic!("failed to install native menu: {error}"));
 
         let pressure_state = PressureStateHandle::default();
+        let pressure_window = window.clone();
         let pressure_monitor =
-            MacosPressureMonitor::install(window.clone(), pressure_state.clone())
-                .expect("failed to initialize pressure monitor");
+            MacosPressureMonitor::install(window.clone(), pressure_state.clone(), move || {
+                pressure_window.request_redraw()
+            })
+            .expect("failed to initialize pressure monitor");
         let catalog = self.settings.take_startup_catalog();
         let startup_error = self.settings.take_startup_error();
         let size = window.inner_size();

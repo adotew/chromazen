@@ -1,3 +1,3 @@
 mod pressure;
 
-pub(crate) use pressure::{MacosPressureMonitor, PressureStateHandle};
+pub use pressure::{MacosPressureMonitor, PressureStateHandle};

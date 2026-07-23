@@ -1,6 +1,7 @@
 # Rust build output
 /target/
 **/target/
+/src-tauri/gen/
 
 # Rust backup files
 **/*.rs.bk
