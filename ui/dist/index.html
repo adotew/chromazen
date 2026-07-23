@@ -11,41 +11,46 @@
   <body>
     <main>
       <header class="brand">
-        <div class="brand-mark" aria-hidden="true"></div>
-        <div>
-          <h1>Chromazen</h1>
-          <p>Native canvas</p>
-        </div>
+        <h1>Chromazen</h1>
       </header>
 
-      <section aria-labelledby="tools-heading">
-        <h2 id="tools-heading">Tool</h2>
+      <section class="tools-section" aria-labelledby="tools-heading">
+        <h2 id="tools-heading" class="visually-hidden">Tool</h2>
         <div class="segmented" id="tools">
-          <button data-tool="brush" type="button">Brush <kbd>B</kbd></button>
-          <button data-tool="eraser" type="button">Eraser <kbd>E</kbd></button>
-          <button data-tool="smudge" type="button">Smudge <kbd>S</kbd></button>
+          <button data-tool="brush" type="button">
+            <span>Brush</span><kbd>B</kbd>
+          </button>
+          <button data-tool="eraser" type="button">
+            <span>Eraser</span><kbd>E</kbd>
+          </button>
+          <button data-tool="smudge" type="button">
+            <span>Smudge</span><kbd>S</kbd>
+          </button>
         </div>
       </section>
 
       <section aria-labelledby="brush-heading">
-        <div class="section-title">
-          <h2 id="brush-heading">Brush</h2>
-          <span id="size-output">—</span>
-        </div>
-        <label>
-          <span>Preset</span>
+        <h2 id="brush-heading">Brush</h2>
+        <label class="select-row">
+          <span class="visually-hidden">Preset</span>
           <select id="brush-preset"></select>
         </label>
         <label class="color-row">
           <span id="color-label">Color</span>
           <input id="paint-color" type="color" value="#aabbcc" />
         </label>
-        <label>
-          <span>Size</span>
+        <label class="range-row">
+          <span class="control-title">
+            <span>Size</span>
+            <output id="size-output">—</output>
+          </span>
           <input id="brush-size" type="range" min="1" max="2000" value="300" />
         </label>
-        <label>
-          <span>Smoothing</span>
+        <label class="range-row">
+          <span class="control-title">
+            <span>Smoothing</span>
+            <output id="smoothing-output">—</output>
+          </span>
           <input id="smoothing" type="range" min="0" max="1" step="0.01" value="0.8" />
         </label>
       </section>
@@ -72,10 +77,10 @@
 
       <section class="settings" aria-labelledby="settings-heading">
         <h2 id="settings-heading">Settings</h2>
-        <div class="button-row">
+        <div class="button-row settings-actions">
           <button id="save-settings" type="button">Save</button>
           <button id="reload-settings" type="button">Reload</button>
-          <button id="reset-brush" type="button">Reset brush</button>
+          <button id="reset-brush" type="button">Reset</button>
         </div>
         <p id="message" class="message" hidden></p>
       </section>

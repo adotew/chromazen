@@ -10,6 +10,7 @@ const elements = {
   brushSize: document.querySelector("#brush-size"),
   sizeOutput: document.querySelector("#size-output"),
   smoothing: document.querySelector("#smoothing"),
+  smoothingOutput: document.querySelector("#smoothing-output"),
   undo: document.querySelector("#undo"),
   redo: document.querySelector("#redo"),
   fit: document.querySelector("#fit"),
@@ -78,6 +79,7 @@ function render(next) {
   if (!elements.smoothing.matches(":active")) {
     elements.smoothing.value = String(next.smoothingStrength);
   }
+  elements.smoothingOutput.textContent = `${Math.round(next.smoothingStrength * 100)}%`;
 
   elements.undo.disabled = !next.canUndo;
   elements.redo.disabled = !next.canRedo;
@@ -177,6 +179,9 @@ elements.brushSize.addEventListener("input", () => {
   coalesce("brush-size", { type: "setBrushSize", size });
 });
 elements.smoothing.addEventListener("input", () => {
+  elements.smoothingOutput.textContent = `${Math.round(
+    Number(elements.smoothing.value) * 100,
+  )}%`;
   coalesce("smoothing", {
     type: "setSmoothingStrength",
     strength: Number(elements.smoothing.value),
