@@ -43,6 +43,9 @@ h2 {
 
 section {
 	padding: 14px 0;
+}
+
+.layers-section {
 	border-top: 1px solid var(--border);
 }
 
