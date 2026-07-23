@@ -210,6 +210,9 @@ impl RawPaintPlugin {
                 self.resize([new_inner_size.width, new_inner_size.height]);
                 self.redraw_pending = true;
             }
+            WindowEvent::Focused(true) => {
+                self.redraw_pending = true;
+            }
             _ => {
                 let Some(canvas_event) = canvas_event(event) else {
                     return;
