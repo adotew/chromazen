@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-use winit::{dpi::PhysicalSize, window::Window};
+use wgpu::rwh::{HasDisplayHandle, HasWindowHandle};
 
 mod history;
 mod layers;
@@ -60,11 +60,15 @@ pub struct PaintRenderer {
 }
 
 impl PaintRenderer {
-    pub async fn new(
-        window: Arc<Window>,
+    pub async fn new<W>(
+        window: Arc<W>,
+        surface_size: [u32; 2],
         brush_preset: &LoadedBrushPreset,
-    ) -> Result<Self, String> {
-        let gpu = GpuContext::new(window).await?;
+    ) -> Result<Self, String>
+    where
+        W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static,
+    {
+        let gpu = GpuContext::new(window, surface_size).await?;
         let device = gpu.device();
         let queue = gpu.queue();
         let surface_format = gpu.surface_format();
@@ -123,7 +127,7 @@ impl PaintRenderer {
         self.stamp_queue.has_pending()
     }
 
-    pub fn resize(&mut self, size: PhysicalSize<u32>) {
+    pub fn resize(&mut self, size: [u32; 2]) {
         self.gpu.resize(size);
     }
 

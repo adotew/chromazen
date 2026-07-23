@@ -82,8 +82,10 @@ impl ApplicationHandler<AppEvent> for App {
                 .expect("failed to initialize pressure monitor");
         let catalog = self.settings.take_startup_catalog();
         let startup_error = self.settings.take_startup_error();
+        let size = window.inner_size();
         let paint = pollster::block_on(PaintRenderer::new(
             window.clone(),
+            [size.width, size.height],
             self.settings.active_brush(),
         ))
         .expect("failed to initialize wgpu paint renderer");
@@ -157,13 +159,14 @@ impl ApplicationHandler<AppEvent> for App {
                 match event {
                     WindowEvent::Resized(size) => {
                         if let Some(paint) = self.paint.as_mut() {
-                            paint.resize(size);
+                            paint.resize([size.width, size.height]);
                         }
                         needs_redraw = true;
                     }
                     WindowEvent::ScaleFactorChanged { .. } => {
                         if let Some(paint) = self.paint.as_mut() {
-                            paint.resize(window.inner_size());
+                            let size = window.inner_size();
+                            paint.resize([size.width, size.height]);
                         }
                         needs_redraw = true;
                     }

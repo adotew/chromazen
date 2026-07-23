@@ -16,13 +16,13 @@ const MAX_STAMP_DIMENSION: u32 = 4096;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct BrushPreset {
-    pub(crate) schema_version: u32,
-    pub(crate) name: String,
-    pub(crate) stamp: String,
-    pub(crate) size: SizeConfig,
-    pub(crate) spacing: SpacingConfig,
-    pub(crate) pressure: PressureConfig,
+pub struct BrushPreset {
+    pub schema_version: u32,
+    pub name: String,
+    pub stamp: String,
+    pub size: SizeConfig,
+    pub spacing: SpacingConfig,
+    pub pressure: PressureConfig,
 }
 
 impl Default for BrushPreset {
@@ -73,10 +73,10 @@ impl BrushPreset {
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct SizeConfig {
-    pub(crate) default: f32,
-    pub(crate) min: f32,
-    pub(crate) max: f32,
+pub struct SizeConfig {
+    pub default: f32,
+    pub min: f32,
+    pub max: f32,
 }
 
 impl Default for SizeConfig {
@@ -91,9 +91,9 @@ impl Default for SizeConfig {
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct SpacingConfig {
-    pub(crate) ratio: f32,
-    pub(crate) minimum: f32,
+pub struct SpacingConfig {
+    pub ratio: f32,
+    pub minimum: f32,
 }
 
 impl Default for SpacingConfig {
@@ -107,10 +107,10 @@ impl Default for SpacingConfig {
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct PressureConfig {
-    pub(crate) min_size: f32,
-    pub(crate) min_opacity: f32,
-    pub(crate) opacity_gamma: f32,
+pub struct PressureConfig {
+    pub min_size: f32,
+    pub min_opacity: f32,
+    pub opacity_gamma: f32,
 }
 
 impl Default for PressureConfig {
@@ -124,10 +124,10 @@ impl Default for PressureConfig {
 }
 
 #[derive(Debug)]
-pub(crate) struct LoadedBrushPreset {
-    pub(crate) id: String,
-    pub(crate) preset: BrushPreset,
-    pub(crate) stamp_image: Option<RgbaImage>,
+pub struct LoadedBrushPreset {
+    pub id: String,
+    pub preset: BrushPreset,
+    pub stamp_image: Option<RgbaImage>,
 }
 
 impl LoadedBrushPreset {
@@ -166,14 +166,14 @@ impl LoadedBrushPreset {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct BrushSummary {
-    pub(crate) id: String,
-    pub(crate) name: String,
+pub struct BrushSummary {
+    pub id: String,
+    pub name: String,
 }
 
-pub(crate) struct BrushCatalog {
-    pub(crate) brushes: Vec<BrushSummary>,
-    pub(crate) warnings: Vec<String>,
+pub struct BrushCatalog {
+    pub brushes: Vec<BrushSummary>,
+    pub warnings: Vec<String>,
 }
 
 impl Default for BrushCatalog {

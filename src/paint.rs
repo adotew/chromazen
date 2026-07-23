@@ -1,5 +1,5 @@
 mod brush;
 mod smoothing;
 
-pub(crate) use brush::{BrushSettings, BrushSpacing, PaintTool, PressureSettings, StrokePoint};
-pub(crate) use smoothing::{StrokeSmoother, StrokeSmoothingOptions};
+pub use brush::{BrushSettings, BrushSpacing, PaintTool, PressureSettings, StrokePoint};
+pub use smoothing::{StrokeSmoother, StrokeSmoothingOptions};

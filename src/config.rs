@@ -11,7 +11,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 mod brush;
 
-pub(crate) use brush::{BrushCatalog, BrushSummary, LoadedBrushPreset};
+pub use brush::{BrushCatalog, BrushSummary, LoadedBrushPreset};
 
 const APP_NAME: &str = "chromazen";
 const CONFIG_FILE_NAME: &str = "config.toml";
@@ -19,11 +19,11 @@ const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct AppConfig {
-    pub(crate) schema_version: u32,
-    pub(crate) active_brush: String,
-    pub(crate) brush: CurrentBrushConfig,
-    pub(crate) smoothing: SmoothingConfig,
+pub struct AppConfig {
+    pub schema_version: u32,
+    pub active_brush: String,
+    pub brush: CurrentBrushConfig,
+    pub smoothing: SmoothingConfig,
 }
 
 impl Default for AppConfig {
@@ -55,8 +55,8 @@ impl AppConfig {
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct SmoothingConfig {
-    pub(crate) strength: f32,
+pub struct SmoothingConfig {
+    pub strength: f32,
 }
 
 impl Default for SmoothingConfig {
@@ -78,9 +78,9 @@ impl SmoothingConfig {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct CurrentBrushConfig {
-    pub(crate) size: f32,
-    pub(crate) color: [u8; 4],
+pub struct CurrentBrushConfig {
+    pub size: f32,
+    pub color: [u8; 4],
 }
 
 impl Default for CurrentBrushConfig {

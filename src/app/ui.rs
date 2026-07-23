@@ -121,7 +121,15 @@ impl GuiLayer {
                                     after: rgb(background),
                                 });
                             }
-                            color_picker::show(ui, &mut self.brush.color);
+                            let mut color = egui::Color32::from_rgba_unmultiplied(
+                                self.brush.color[0],
+                                self.brush.color[1],
+                                self.brush.color[2],
+                                self.brush.color[3],
+                            );
+                            if color_picker::show(ui, &mut color) {
+                                self.brush.color = color.to_array();
+                            }
                         }
                     }
 
@@ -203,7 +211,7 @@ impl GuiLayer {
 
     pub(crate) fn reset_brush(&mut self) {
         self.brush.size = self.default_size;
-        self.brush.color = brush_color(&CurrentBrushConfig::default());
+        self.brush.color = CurrentBrushConfig::default().color;
         self.settings_message = None;
         self.context.request_repaint();
     }
@@ -211,7 +219,7 @@ impl GuiLayer {
     pub fn current_brush_config(&self) -> CurrentBrushConfig {
         CurrentBrushConfig {
             size: self.brush.size,
-            color: self.brush.color.to_array(),
+            color: self.brush.color,
         }
     }
 
@@ -234,7 +242,7 @@ impl GuiLayer {
     }
 
     pub(crate) fn settings_reloaded(&mut self, config: &AppConfig) {
-        self.brush.color = brush_color(&config.brush);
+        self.brush.color = config.brush.color;
         self.brush.size = config
             .brush
             .size
@@ -289,7 +297,7 @@ fn brush_settings_from_config(
 ) -> BrushSettings {
     let preset = &loaded.preset;
     BrushSettings {
-        color: brush_color(config),
+        color: config.color,
         size: config.size.clamp(preset.size.min, preset.size.max),
         pressure: PressureSettings {
             min_size: preset.pressure.min_size,
@@ -301,15 +309,6 @@ fn brush_settings_from_config(
             minimum: preset.spacing.minimum,
         },
     }
-}
-
-fn brush_color(config: &CurrentBrushConfig) -> egui::Color32 {
-    egui::Color32::from_rgba_unmultiplied(
-        config.color[0],
-        config.color[1],
-        config.color[2],
-        config.color[3],
-    )
 }
 
 fn background_color(color: [f32; 4]) -> egui::Color32 {

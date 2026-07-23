@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use winit::{dpi::PhysicalSize, window::Window};
+use wgpu::rwh::{HasDisplayHandle, HasWindowHandle};
 
 pub(crate) struct GpuContext {
     surface: wgpu::Surface<'static>,
@@ -10,8 +10,10 @@ pub(crate) struct GpuContext {
 }
 
 impl GpuContext {
-    pub(crate) async fn new(window: Arc<Window>) -> Result<Self, String> {
-        let size = window.inner_size();
+    pub(crate) async fn new<W>(window: Arc<W>, size: [u32; 2]) -> Result<Self, String>
+    where
+        W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static,
+    {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let surface = instance
             .create_surface(window)
@@ -37,13 +39,17 @@ impl GpuContext {
             .map_err(|err| format!("failed to create device: {err}"))?;
 
         let caps = surface.get_capabilities(&adapter);
-        let surface_format = egui_wgpu::preferred_framebuffer_format(&caps.formats)
-            .unwrap_or_else(|_| caps.formats[0]);
+        let surface_format = caps
+            .formats
+            .iter()
+            .copied()
+            .find(wgpu::TextureFormat::is_srgb)
+            .unwrap_or(caps.formats[0]);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
-            width: size.width.max(1),
-            height: size.height.max(1),
+            width: size[0].max(1),
+            height: size[1].max(1),
             present_mode: wgpu::PresentMode::AutoVsync,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![surface_format],
@@ -75,12 +81,12 @@ impl GpuContext {
         [self.config.width, self.config.height]
     }
 
-    pub(crate) fn resize(&mut self, size: PhysicalSize<u32>) {
-        if size.width == 0 || size.height == 0 {
+    pub(crate) fn resize(&mut self, size: [u32; 2]) {
+        if size[0] == 0 || size[1] == 0 {
             return;
         }
-        self.config.width = size.width;
-        self.config.height = size.height;
+        self.config.width = size[0];
+        self.config.height = size[1];
         self.reconfigure_surface();
     }
 

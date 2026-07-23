@@ -1,7 +1,5 @@
-use egui::Color32;
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum PaintTool {
+pub enum PaintTool {
     #[default]
     Brush,
     Eraser,
@@ -10,7 +8,7 @@ pub(crate) enum PaintTool {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BrushSettings {
-    pub color: Color32,
+    pub color: [u8; 4],
     pub size: f32,
     pub pressure: PressureSettings,
     pub spacing: BrushSpacing,
@@ -19,7 +17,7 @@ pub struct BrushSettings {
 impl Default for BrushSettings {
     fn default() -> Self {
         Self {
-            color: Color32::from_rgb(170, 187, 204),
+            color: [170, 187, 204, 255],
             size: 300.0,
             pressure: PressureSettings::default(),
             spacing: BrushSpacing::default(),
@@ -29,7 +27,7 @@ impl Default for BrushSettings {
 
 impl BrushSettings {
     pub fn rgba(self) -> [f32; 4] {
-        color32_to_rgba(self.color)
+        color_to_rgba(self.color)
     }
 
     pub fn stroke_point(self, document_point: [f32; 2], pressure: f32) -> StrokePoint {
@@ -43,10 +41,10 @@ impl BrushSettings {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct PressureSettings {
-    pub(crate) min_size: f32,
-    pub(crate) min_opacity: f32,
-    pub(crate) opacity_gamma: f32,
+pub struct PressureSettings {
+    pub min_size: f32,
+    pub min_opacity: f32,
+    pub opacity_gamma: f32,
 }
 
 impl Default for PressureSettings {
@@ -60,9 +58,9 @@ impl Default for PressureSettings {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct BrushSpacing {
-    pub(crate) ratio: f32,
-    pub(crate) minimum: f32,
+pub struct BrushSpacing {
+    pub ratio: f32,
+    pub minimum: f32,
 }
 
 impl Default for BrushSpacing {
@@ -93,11 +91,11 @@ fn pressure_opacity(pressure: f32, settings: PressureSettings) -> f32 {
     settings.min_opacity + (1.0 - settings.min_opacity) * pressure.powf(settings.opacity_gamma)
 }
 
-pub fn color32_to_rgba(color: Color32) -> [f32; 4] {
+pub fn color_to_rgba(color: [u8; 4]) -> [f32; 4] {
     [
-        color.r() as f32 / 255.0,
-        color.g() as f32 / 255.0,
-        color.b() as f32 / 255.0,
+        color[0] as f32 / 255.0,
+        color[1] as f32 / 255.0,
+        color[2] as f32 / 255.0,
         1.0,
     ]
 }

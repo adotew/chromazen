@@ -1,5 +1,6 @@
 # Rust build output
 /target/
+**/target/
 
 # Rust backup files
 **/*.rs.bk

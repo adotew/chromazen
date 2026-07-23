@@ -12,7 +12,7 @@ const MAX_ADAPTIVE_DEPTH: usize = 10;
 const MAX_CURVE_SAMPLES: usize = 96;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct StrokeSmoothingOptions {
+pub struct StrokeSmoothingOptions {
     pub strength: f32,
 }
 
@@ -31,7 +31,7 @@ struct CurveInterval {
 }
 
 #[derive(Debug)]
-pub(crate) struct StrokeSmoother {
+pub struct StrokeSmoother {
     points: VecDeque<StrokePoint>,
     first_segment_emitted: bool,
     latest_raw_point: Option<StrokePoint>,
@@ -55,14 +55,14 @@ impl StrokeSmoother {
         self.begin_with_strength(point, 1.0);
     }
 
-    pub(crate) fn begin_with_strength(&mut self, point: StrokePoint, strength: f32) {
+    pub fn begin_with_strength(&mut self, point: StrokePoint, strength: f32) {
         self.reset();
         self.latest_raw_point = Some(point);
         self.points.push_back(point);
         self.strength = strength.clamp(0.0, 1.0);
     }
 
-    pub(crate) fn push(&mut self, point: StrokePoint) -> Vec<StrokePoint> {
+    pub fn push(&mut self, point: StrokePoint) -> Vec<StrokePoint> {
         self.latest_raw_point = Some(point);
         if self.coalesce_stationary_duplicate(point) {
             return Vec::new();
@@ -72,7 +72,7 @@ impl StrokeSmoother {
         self.emit_available_segment()
     }
 
-    pub(crate) fn finish(&mut self) -> Vec<StrokePoint> {
+    pub fn finish(&mut self) -> Vec<StrokePoint> {
         let mut smoothed = Vec::new();
 
         if let Some(latest_raw_point) = self.latest_raw_point
@@ -113,7 +113,7 @@ impl StrokeSmoother {
         smoothed
     }
 
-    pub(crate) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.points.clear();
         self.first_segment_emitted = false;
         self.latest_raw_point = None;
