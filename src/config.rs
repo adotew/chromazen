@@ -418,6 +418,33 @@ mod tests {
     }
 
     #[test]
+    fn discovery_keeps_brush_preview_metadata() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+        write_test_brush(
+            &store,
+            "pencil",
+            "name = \"Pencil\"\nstamp = \"tip.png\"\n[spacing]\nratio = 0.4\n",
+        );
+
+        let catalog = store.discover_brushes();
+        let pencil = catalog
+            .brushes
+            .iter()
+            .find(|brush| brush.id == "pencil")
+            .expect("pencil summary");
+
+        assert_eq!(pencil.preview.spacing.ratio, 0.4);
+        assert_eq!(
+            pencil.preview.stamp_path,
+            Some(
+                fs::canonicalize(store.brushes_path().join("pencil/tip.png"))
+                    .expect("canonical stamp path")
+            )
+        );
+    }
+
+    #[test]
     fn oversized_stamp_is_rejected_during_metadata_inspection() {
         let temp = tempfile::tempdir().expect("temp directory");
         let store = ConfigStore::from_root(temp.path());

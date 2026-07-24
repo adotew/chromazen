@@ -165,10 +165,34 @@ impl LoadedBrushPreset {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct BrushSummary {
     pub(crate) id: String,
     pub(crate) name: String,
+    pub(crate) preview: BrushPreviewSpec,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct BrushPreviewSpec {
+    pub(crate) stamp_path: Option<PathBuf>,
+    pub(crate) size: SizeConfig,
+    pub(crate) spacing: SpacingConfig,
+    pub(crate) pressure: PressureConfig,
+}
+
+impl BrushSummary {
+    fn new(id: String, preset: BrushPreset, stamp_path: Option<PathBuf>) -> Self {
+        Self {
+            id,
+            name: preset.name,
+            preview: BrushPreviewSpec {
+                stamp_path,
+                size: preset.size,
+                spacing: preset.spacing,
+                pressure: preset.pressure,
+            },
+        }
+    }
 }
 
 pub(crate) struct BrushCatalog {
@@ -180,14 +204,12 @@ impl Default for BrushCatalog {
     fn default() -> Self {
         Self {
             brushes: vec![
-                BrushSummary {
-                    id: DEFAULT_BRUSH_ID.to_owned(),
-                    name: BrushPreset::default().name,
-                },
-                BrushSummary {
-                    id: SKETCH_ID.to_owned(),
-                    name: "Sketch".to_owned(),
-                },
+                BrushSummary::new(DEFAULT_BRUSH_ID.to_owned(), BrushPreset::default(), None),
+                BrushSummary::new(
+                    SKETCH_ID.to_owned(),
+                    LoadedBrushPreset::bundled_sketch().preset,
+                    None,
+                ),
             ],
             warnings: Vec::new(),
         }
@@ -227,10 +249,7 @@ fn load_user_brush_summary(brushes_root: &Path, id: &str) -> Result<BrushSummary
             ))
         })?;
 
-    Ok(BrushSummary {
-        id: id.to_owned(),
-        name: preset.name,
-    })
+    Ok(BrushSummary::new(id.to_owned(), preset, Some(stamp_path)))
 }
 
 fn load_user_brush_metadata(
