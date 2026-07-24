@@ -180,6 +180,10 @@ impl PaintRenderer {
         }
     }
 
+    pub(crate) fn layer_views(&self) -> impl Iterator<Item = (LayerId, &wgpu::TextureView)> {
+        self.layers.iter().map(|layer| (layer.id, &layer.view))
+    }
+
     pub(crate) fn select_layer(&mut self, id: LayerId) -> bool {
         if self.layers.iter().any(|layer| layer.id == id) {
             self.selection = LayerSelection::Paint(id);

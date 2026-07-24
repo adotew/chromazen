@@ -223,6 +223,7 @@ impl App {
             let Some(gui) = self.gui.as_mut() else {
                 return;
             };
+            gui.sync_layer_thumbnails(paint);
             let output = gui.run(window, &layer_snapshot, tool);
             (output, gui.take_commands())
         };

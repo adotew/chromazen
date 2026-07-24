@@ -10,7 +10,7 @@ use winit::window::Window;
 use crate::{
     config::{AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset},
     paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings, StrokeSmoothingOptions},
-    renderer::{LayerSelection, LayerSnapshot, PaintRenderer},
+    renderer::{LayerId, LayerSelection, LayerSnapshot, PaintRenderer},
 };
 
 use super::command::AppCommand;
@@ -28,6 +28,7 @@ pub struct GuiLayer {
     commands: Vec<AppCommand>,
     settings_message: Option<SettingsMessage>,
     background_edit_start: Option<[u8; 3]>,
+    layer_thumbnails: Vec<(LayerId, egui::TextureId)>,
 }
 
 struct SettingsMessage {
@@ -45,6 +46,7 @@ impl GuiLayer {
         load_error: Option<String>,
     ) -> Self {
         let context = egui::Context::default();
+        egui_extras::install_image_loaders(&context);
         let state = EguiWinitState::new(
             context.clone(),
             ViewportId::ROOT,
@@ -78,6 +80,37 @@ impl GuiLayer {
                 is_error: true,
             }),
             background_edit_start: None,
+            layer_thumbnails: Vec::new(),
+        }
+    }
+
+    pub(crate) fn sync_layer_thumbnails(&mut self, paint: &PaintRenderer) {
+        let mut index = 0;
+        while index < self.layer_thumbnails.len() {
+            if paint
+                .layer_views()
+                .any(|(id, _)| id == self.layer_thumbnails[index].0)
+            {
+                index += 1;
+            } else {
+                let (_, texture_id) = self.layer_thumbnails.remove(index);
+                self.renderer.free_texture(&texture_id);
+            }
+        }
+
+        for (id, view) in paint.layer_views() {
+            if self
+                .layer_thumbnails
+                .iter()
+                .all(|(existing_id, _)| *existing_id != id)
+            {
+                let texture_id = self.renderer.register_native_texture(
+                    paint.device(),
+                    view,
+                    wgpu::FilterMode::Linear,
+                );
+                self.layer_thumbnails.push((id, texture_id));
+            }
         }
     }
 
@@ -160,30 +193,69 @@ impl GuiLayer {
 
                     ui.separator();
                     ui.horizontal(|ui| {
-                        if ui.button("Add").clicked() {
-                            self.commands.push(AppCommand::AddLayer);
-                        }
-                        let can_delete = layers.layers.len() > 1
-                            && matches!(layers.selection, LayerSelection::Paint(_));
-                        if ui
-                            .add_enabled(can_delete, egui::Button::new("Delete"))
-                            .clicked()
-                        {
-                            self.commands.push(AppCommand::DeleteSelectedLayer);
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let can_delete = layers.layers.len() > 1
+                                && matches!(layers.selection, LayerSelection::Paint(_));
+                            let delete_icon = egui::Image::new(egui::include_image!(
+                                "../../assets/icons/trash-2.svg"
+                            ))
+                            .fit_to_exact_size(egui::Vec2::splat(16.0))
+                            .alt_text("Delete layer");
+                            let delete_button = egui::Button::image(delete_icon)
+                                .image_tint_follows_text_color(true)
+                                .min_size(egui::Vec2::splat(28.0))
+                                .corner_radius(8);
+                            if ui
+                                .add_enabled(can_delete, delete_button)
+                                .on_hover_text("Delete layer")
+                                .clicked()
+                            {
+                                self.commands.push(AppCommand::DeleteSelectedLayer);
+                            }
+
+                            let add_icon = egui::Image::new(egui::include_image!(
+                                "../../assets/icons/plus.svg"
+                            ))
+                            .fit_to_exact_size(egui::Vec2::splat(16.0))
+                            .alt_text("Add layer");
+                            let add_button = egui::Button::image(add_icon)
+                                .image_tint_follows_text_color(true)
+                                .min_size(egui::Vec2::splat(28.0))
+                                .corner_radius(8);
+                            if ui.add(add_button).on_hover_text("Add layer").clicked() {
+                                self.commands.push(AppCommand::AddLayer);
+                            }
+                        });
                     });
-                    for layer in layers.layers.iter().rev() {
-                        let selected = layers.selection == LayerSelection::Paint(layer.id);
-                        if ui.selectable_label(selected, &layer.name).clicked() && !selected {
-                            self.commands.push(AppCommand::SelectLayer(layer.id));
-                        }
-                    }
-                    ui.horizontal(|ui| {
-                        let selected = layers.selection == LayerSelection::Background;
-                        if ui.selectable_label(selected, "Background").clicked() && !selected {
-                            self.commands.push(AppCommand::SelectBackground);
-                        }
-                    });
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("layer list")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            for layer in layers.layers.iter().rev() {
+                                let selected = layers.selection == LayerSelection::Paint(layer.id);
+                                let thumbnail = self
+                                    .layer_thumbnails
+                                    .iter()
+                                    .find(|(id, _)| *id == layer.id)
+                                    .map(|(_, texture_id)| *texture_id);
+                                if show_layer_row(ui, &layer.name, selected, thumbnail, None)
+                                    .clicked()
+                                    && !selected
+                                {
+                                    self.commands.push(AppCommand::SelectLayer(layer.id));
+                                }
+                                ui.add_space(4.0);
+                            }
+
+                            let selected = layers.selection == LayerSelection::Background;
+                            if show_layer_row(ui, "Background", selected, None, Some(background))
+                                .clicked()
+                                && !selected
+                            {
+                                self.commands.push(AppCommand::SelectBackground);
+                            }
+                        });
                 });
 
             egui::Area::new(egui::Id::new("tool mode"))
@@ -259,6 +331,80 @@ impl GuiLayer {
         });
         self.context.request_repaint();
     }
+}
+
+fn show_layer_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    selected: bool,
+    texture_id: Option<egui::TextureId>,
+    solid_color: Option<egui::Color32>,
+) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 60.0), egui::Sense::click());
+    let visuals = ui.style().interact(&response);
+    let dark_mode = ui.visuals().dark_mode;
+    let fill = if selected {
+        egui::Color32::from_gray(if dark_mode { 58 } else { 224 })
+    } else if response.hovered() {
+        egui::Color32::from_gray(if dark_mode { 42 } else { 240 })
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    let stroke = if selected {
+        egui::Stroke::new(
+            1.0,
+            egui::Color32::from_gray(if dark_mode { 110 } else { 155 }),
+        )
+    } else {
+        egui::Stroke::NONE
+    };
+    let painter = ui.painter();
+    painter.rect(rect, 12, fill, stroke, egui::StrokeKind::Inside);
+
+    let thumbnail =
+        egui::Rect::from_min_size(rect.min + egui::vec2(6.0, 6.0), egui::Vec2::splat(48.0));
+    if let Some(color) = solid_color {
+        painter.rect_filled(thumbnail, 8, color);
+        painter.rect_stroke(
+            thumbnail,
+            8,
+            ui.visuals().widgets.noninteractive.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
+    } else {
+        let (light, dark) = if ui.visuals().dark_mode {
+            (egui::Color32::from_gray(82), egui::Color32::from_gray(62))
+        } else {
+            (egui::Color32::from_gray(220), egui::Color32::from_gray(195))
+        };
+        painter.rect_filled(thumbnail, 8, light);
+        let checker = thumbnail.shrink(3.0);
+        let checker_size = checker.width() / 4.0;
+        for y in 0..4 {
+            for x in 0..4 {
+                let square = egui::Rect::from_min_size(
+                    checker.min + egui::vec2(x as f32 * checker_size, y as f32 * checker_size),
+                    egui::Vec2::splat(checker_size),
+                );
+                painter.rect_filled(square, 0, if (x + y) % 2 == 0 { light } else { dark });
+            }
+        }
+        if let Some(texture_id) = texture_id {
+            egui::Image::new((texture_id, thumbnail.size()))
+                .corner_radius(8)
+                .paint_at(ui, thumbnail);
+        }
+    }
+    painter.text(
+        egui::pos2(thumbnail.max.x + 10.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        name,
+        egui::TextStyle::Button.resolve(ui.style()),
+        visuals.text_color(),
+    );
+
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn show_tool_badge(ui: &mut egui::Ui, tool: PaintTool) {
