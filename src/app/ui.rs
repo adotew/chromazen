@@ -374,12 +374,22 @@ impl GuiLayer {
         }
     }
 
-    pub(crate) fn apply_brush_preset(&mut self, loaded: &LoadedBrushPreset, catalog: BrushCatalog) {
+    pub(crate) fn apply_brush_preset(
+        &mut self,
+        loaded: &LoadedBrushPreset,
+        catalog: BrushCatalog,
+        reloaded: bool,
+    ) {
         let preset = &loaded.preset;
         self.active_brush.clone_from(&loaded.id);
-        self.brushes = catalog.brushes;
-        self.brush_previews.clear();
+        if reloaded {
+            self.brush_previews.clear();
+        } else {
+            self.brush_previews
+                .retain(|(id, _)| catalog.brushes.iter().any(|brush| brush.id == *id));
+        }
         self.failed_brush_previews.clear();
+        self.brushes = catalog.brushes;
         self.size_range = preset.size.min..=preset.size.max;
         self.default_size = preset.size.default;
         self.brush.size = self.default_size;

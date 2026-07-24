@@ -453,7 +453,11 @@ impl App {
                 let Some(gui) = self.gui.as_mut() else {
                     return true;
                 };
-                gui.apply_brush_preset(self.settings.active_brush(), completed.catalog);
+                gui.apply_brush_preset(
+                    self.settings.active_brush(),
+                    completed.catalog,
+                    completed.reloaded,
+                );
                 if completed.reloaded {
                     gui.settings_reloaded(self.settings.config());
                 }
