@@ -193,6 +193,15 @@ impl BrushSummary {
             },
         }
     }
+
+    pub(crate) fn load_preview_stamp(&self) -> Result<RgbaImage, ConfigError> {
+        if let Some(path) = &self.preview.stamp_path {
+            return decode_stamp(path);
+        }
+        image::load_from_memory(include_bytes!("../../assets/charcoal.png"))
+            .map(image::DynamicImage::into_rgba8)
+            .map_err(|error| ConfigError::new(format!("failed to decode bundled brush: {error}")))
+    }
 }
 
 pub(crate) struct BrushCatalog {
@@ -221,15 +230,7 @@ pub(super) fn load_user_brush(
     id: &str,
 ) -> Result<LoadedBrushPreset, ConfigError> {
     let (preset, stamp_path) = load_user_brush_metadata(brushes_root, id)?;
-    let stamp_image = open_stamp_reader(&stamp_path)?
-        .decode()
-        .map_err(|error| {
-            ConfigError::new(format!(
-                "failed to decode brush stamp {}: {error}",
-                stamp_path.display()
-            ))
-        })?
-        .to_rgba8();
+    let stamp_image = decode_stamp(&stamp_path)?;
 
     Ok(LoadedBrushPreset {
         id: id.to_owned(),
@@ -290,6 +291,18 @@ fn load_user_brush_metadata(
     }
 
     Ok((preset, canonical_stamp))
+}
+
+fn decode_stamp(path: &Path) -> Result<RgbaImage, ConfigError> {
+    open_stamp_reader(path)?
+        .decode()
+        .map(image::DynamicImage::into_rgba8)
+        .map_err(|error| {
+            ConfigError::new(format!(
+                "failed to decode brush stamp {}: {error}",
+                path.display()
+            ))
+        })
 }
 
 fn open_stamp_reader(path: &Path) -> Result<ImageReader<BufReader<File>>, ConfigError> {

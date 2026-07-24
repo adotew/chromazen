@@ -1,3 +1,4 @@
+mod brush_preview;
 mod color_picker;
 
 use std::time::Duration;
@@ -29,6 +30,8 @@ pub struct GuiLayer {
     settings_message: Option<SettingsMessage>,
     background_edit_start: Option<[u8; 3]>,
     layer_thumbnails: Vec<(LayerId, egui::TextureId)>,
+    brush_previews: Vec<(String, egui::TextureHandle)>,
+    failed_brush_previews: Vec<String>,
 }
 
 struct SettingsMessage {
@@ -81,6 +84,8 @@ impl GuiLayer {
             }),
             background_edit_start: None,
             layer_thumbnails: Vec::new(),
+            brush_previews: Vec::new(),
+            failed_brush_previews: Vec::new(),
         }
     }
 
@@ -114,12 +119,69 @@ impl GuiLayer {
         }
     }
 
+    fn brush_preview_texture(&self, brush_id: &str) -> Option<egui::TextureId> {
+        self.brush_previews
+            .iter()
+            .find(|(id, _)| id == brush_id)
+            .map(|(_, texture)| texture.id())
+    }
+
+    fn load_brush_preview(&mut self, brush_id: &str) {
+        if self.brush_preview_texture(brush_id).is_some()
+            || self.failed_brush_previews.iter().any(|id| id == brush_id)
+        {
+            return;
+        }
+        let Some(brush) = self
+            .brushes
+            .iter()
+            .find(|brush| brush.id == brush_id)
+            .cloned()
+        else {
+            return;
+        };
+
+        match brush_preview::generate(&brush) {
+            Ok(image) => {
+                let texture = self.context.load_texture(
+                    format!("brush preview {}", brush.id),
+                    image,
+                    egui::TextureOptions::LINEAR,
+                );
+                self.brush_previews.push((brush.id, texture));
+            }
+            Err(error) => {
+                log::warn!(
+                    "failed to generate preview for brush '{}': {error}",
+                    brush.id
+                );
+                self.failed_brush_previews.push(brush.id);
+            }
+        }
+    }
+
+    fn load_next_brush_preview(&mut self) {
+        let next_id = self
+            .brushes
+            .iter()
+            .find(|brush| {
+                self.brush_preview_texture(&brush.id).is_none()
+                    && !self.failed_brush_previews.iter().any(|id| id == &brush.id)
+            })
+            .map(|brush| brush.id.clone());
+        if let Some(id) = next_id {
+            self.load_brush_preview(&id);
+            self.context.request_repaint();
+        }
+    }
+
     pub fn run(
         &mut self,
         window: &Window,
         layers: &LayerSnapshot,
         tool: PaintTool,
     ) -> egui::FullOutput {
+        self.load_brush_preview(&self.active_brush.clone());
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
 
@@ -159,25 +221,42 @@ impl GuiLayer {
                     }
 
                     ui.separator();
-                    let selected_name = self
+                    let active_brush = self
                         .brushes
                         .iter()
-                        .find(|brush| brush.id == self.active_brush)
+                        .find(|brush| brush.id == self.active_brush);
+                    let selected_name = active_brush
                         .map_or(self.active_brush.as_str(), |brush| brush.name.as_str());
-                    egui::ComboBox::from_label("")
-                        .selected_text(selected_name)
-                        .show_ui(ui, |ui| {
-                            for brush in &self.brushes {
-                                if ui
-                                    .selectable_label(brush.id == self.active_brush, &brush.name)
-                                    .clicked()
-                                    && brush.id != self.active_brush
-                                {
-                                    self.commands
-                                        .push(AppCommand::SwitchBrush(brush.id.clone()));
-                                }
-                            }
+                    let selected_preview = self.brush_preview_texture(&self.active_brush);
+                    let brush_button = show_brush_row(ui, selected_name, selected_preview, false);
+                    let brush_popup_id = egui::Popup::default_response_id(&brush_button);
+                    egui::Popup::menu(&brush_button)
+                        .width(brush_button.rect.width())
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                        .show(|ui| {
+                            egui::ScrollArea::vertical()
+                                .max_height(320.0)
+                                .show(ui, |ui| {
+                                    for brush in &self.brushes {
+                                        let selected = brush.id == self.active_brush;
+                                        let preview = self.brush_preview_texture(&brush.id);
+                                        if show_brush_row(ui, &brush.name, preview, selected)
+                                            .clicked()
+                                        {
+                                            if !selected {
+                                                self.commands.push(AppCommand::SwitchBrush(
+                                                    brush.id.clone(),
+                                                ));
+                                            }
+                                            ui.close();
+                                        }
+                                        ui.add_space(4.0);
+                                    }
+                                });
                         });
+                    if egui::Popup::is_id_open(ui.ctx(), brush_popup_id) {
+                        self.load_next_brush_preview();
+                    }
                     ui.add(
                         egui::Slider::new(&mut self.brush.size, self.size_range.clone())
                             .suffix(" px"),
@@ -291,6 +370,8 @@ impl GuiLayer {
         let preset = &loaded.preset;
         self.active_brush.clone_from(&loaded.id);
         self.brushes = catalog.brushes;
+        self.brush_previews.clear();
+        self.failed_brush_previews.clear();
         self.size_range = preset.size.min..=preset.size.max;
         self.default_size = preset.size.default;
         self.brush.size = self.default_size;
@@ -331,6 +412,75 @@ impl GuiLayer {
         });
         self.context.request_repaint();
     }
+}
+
+fn show_brush_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    texture_id: Option<egui::TextureId>,
+    selected: bool,
+) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 58.0), egui::Sense::click());
+    let dark_mode = ui.visuals().dark_mode;
+    let fill = if selected {
+        egui::Color32::from_gray(if dark_mode { 58 } else { 224 })
+    } else if response.hovered() {
+        egui::Color32::from_gray(if dark_mode { 42 } else { 240 })
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    let stroke = selected.then(|| {
+        egui::Stroke::new(
+            1.0,
+            egui::Color32::from_gray(if dark_mode { 110 } else { 155 }),
+        )
+    });
+    let visuals = ui.style().interact(&response);
+    let painter = ui.painter();
+    painter.rect(
+        rect,
+        10,
+        fill,
+        stroke.unwrap_or(egui::Stroke::NONE),
+        egui::StrokeKind::Inside,
+    );
+
+    painter
+        .with_clip_rect(egui::Rect::from_min_max(
+            rect.min,
+            egui::pos2(rect.min.x + 82.0, rect.max.y),
+        ))
+        .text(
+            egui::pos2(rect.min.x + 10.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            name,
+            egui::TextStyle::Button.resolve(ui.style()),
+            visuals.text_color(),
+        );
+
+    let preview = egui::Rect::from_min_max(
+        egui::pos2(rect.min.x + 82.0, rect.min.y + 5.0),
+        egui::pos2(rect.max.x - 8.0, rect.max.y - 5.0),
+    );
+    if let Some(texture_id) = texture_id {
+        painter.image(
+            texture_id,
+            preview,
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            visuals.text_color(),
+        );
+    } else {
+        painter.line_segment(
+            [preview.left_center(), preview.right_center()],
+            egui::Stroke::new(
+                2.0,
+                egui::Color32::from_gray(if dark_mode { 90 } else { 175 }),
+            ),
+        );
+    }
+
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn show_layer_row(
