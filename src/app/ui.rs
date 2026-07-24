@@ -176,6 +176,10 @@ impl GuiLayer {
     }
 
     fn show_brush_controls(&mut self, ui: &mut egui::Ui) {
+        ui.label("Color");
+        color_picker::show(ui, &mut self.brush.color);
+        ui.add_space(8.0);
+
         let active_brush = self
             .brushes
             .iter()
@@ -218,9 +222,6 @@ impl GuiLayer {
             });
         });
         ui.add(egui::Slider::new(&mut self.brush.size, self.size_range.clone()).show_value(false));
-        ui.add_space(6.0);
-        ui.label("Color");
-        color_picker::show(ui, &mut self.brush.color);
     }
 
     pub fn run(
