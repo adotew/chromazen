@@ -104,4 +104,16 @@ mod tests {
         assert_eq!(preview.size, [WIDTH as usize, HEIGHT as usize]);
         assert!(preview.pixels.iter().any(|pixel| pixel.a() > 0));
     }
+
+    #[test]
+    fn missing_stamp_returns_error() {
+        let mut brush = BrushCatalog::default()
+            .brushes
+            .into_iter()
+            .next()
+            .expect("bundled brush");
+        brush.preview.stamp_path = Some("missing-preview.png".into());
+
+        assert!(generate(&brush).is_err());
+    }
 }

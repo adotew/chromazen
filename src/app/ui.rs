@@ -175,6 +175,54 @@ impl GuiLayer {
         }
     }
 
+    fn show_brush_controls(&mut self, ui: &mut egui::Ui) {
+        let active_brush = self
+            .brushes
+            .iter()
+            .find(|brush| brush.id == self.active_brush);
+        let selected_name =
+            active_brush.map_or(self.active_brush.as_str(), |brush| brush.name.as_str());
+        let selected_preview = self.brush_preview_texture(&self.active_brush);
+        let brush_button = show_brush_row(ui, selected_name, selected_preview, false);
+        let brush_popup_id = egui::Popup::default_response_id(&brush_button);
+        egui::Popup::menu(&brush_button)
+            .width(brush_button.rect.width())
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(320.0)
+                    .show(ui, |ui| {
+                        for brush in &self.brushes {
+                            let selected = brush.id == self.active_brush;
+                            let preview = self.brush_preview_texture(&brush.id);
+                            if show_brush_row(ui, &brush.name, preview, selected).clicked() {
+                                if !selected {
+                                    self.commands
+                                        .push(AppCommand::SwitchBrush(brush.id.clone()));
+                                }
+                                ui.close();
+                            }
+                            ui.add_space(4.0);
+                        }
+                    });
+            });
+        if egui::Popup::is_id_open(ui.ctx(), brush_popup_id) {
+            self.load_next_brush_preview();
+        }
+
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.label("Size");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.weak(format!("{:.0} px", self.brush.size));
+            });
+        });
+        ui.add(egui::Slider::new(&mut self.brush.size, self.size_range.clone()).show_value(false));
+        ui.add_space(6.0);
+        ui.label("Color");
+        color_picker::show(ui, &mut self.brush.color);
+    }
+
     pub fn run(
         &mut self,
         window: &Window,
@@ -194,6 +242,7 @@ impl GuiLayer {
                 .show_inside(ui, |ui| {
                     match layers.selection {
                         LayerSelection::Background => {
+                            ui.label("Background color");
                             let mut color = background;
                             if color_picker::show(ui, &mut color) {
                                 self.background_edit_start.get_or_insert(rgb(background));
@@ -216,51 +265,10 @@ impl GuiLayer {
                                     after: rgb(background),
                                 });
                             }
-                            color_picker::show(ui, &mut self.brush.color);
+                            self.show_brush_controls(ui);
                         }
                     }
 
-                    ui.separator();
-                    let active_brush = self
-                        .brushes
-                        .iter()
-                        .find(|brush| brush.id == self.active_brush);
-                    let selected_name = active_brush
-                        .map_or(self.active_brush.as_str(), |brush| brush.name.as_str());
-                    let selected_preview = self.brush_preview_texture(&self.active_brush);
-                    let brush_button = show_brush_row(ui, selected_name, selected_preview, false);
-                    let brush_popup_id = egui::Popup::default_response_id(&brush_button);
-                    egui::Popup::menu(&brush_button)
-                        .width(brush_button.rect.width())
-                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                        .show(|ui| {
-                            egui::ScrollArea::vertical()
-                                .max_height(320.0)
-                                .show(ui, |ui| {
-                                    for brush in &self.brushes {
-                                        let selected = brush.id == self.active_brush;
-                                        let preview = self.brush_preview_texture(&brush.id);
-                                        if show_brush_row(ui, &brush.name, preview, selected)
-                                            .clicked()
-                                        {
-                                            if !selected {
-                                                self.commands.push(AppCommand::SwitchBrush(
-                                                    brush.id.clone(),
-                                                ));
-                                            }
-                                            ui.close();
-                                        }
-                                        ui.add_space(4.0);
-                                    }
-                                });
-                        });
-                    if egui::Popup::is_id_open(ui.ctx(), brush_popup_id) {
-                        self.load_next_brush_preview();
-                    }
-                    ui.add(
-                        egui::Slider::new(&mut self.brush.size, self.size_range.clone())
-                            .suffix(" px"),
-                    );
                     if let Some(message) = &self.settings_message {
                         let color = if message.is_error {
                             egui::Color32::LIGHT_RED
