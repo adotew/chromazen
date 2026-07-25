@@ -13,7 +13,7 @@ use egui_wgpu::ScreenDescriptor;
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, MouseButton, StartCause, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     window::{Window, WindowAttributes},
 };
 
@@ -25,7 +25,7 @@ use self::{
     ui::GuiLayer,
 };
 use crate::{
-    platform::{MacosPressureMonitor, PressureStateHandle},
+    platform::{MacosPressureMonitor, PenEvent, PressureStateHandle, WaylandTabletMonitor},
     renderer::PaintRenderer,
 };
 
@@ -33,6 +33,7 @@ const WINDOW_TITLE: &str = "Chromazen";
 
 enum AppEvent {
     Command(AppCommand),
+    Pen(PenEvent),
 }
 
 struct RenderOutcome {
@@ -47,10 +48,12 @@ pub struct App {
     input: PaintInputController,
     pressure_state: PressureStateHandle,
     _pressure_monitor: Option<MacosPressureMonitor>,
+    _tablet_monitor: Option<WaylandTabletMonitor>,
     next_repaint: Option<Instant>,
     pending_commands: Vec<AppCommand>,
     settings: SettingsController,
     native_menu: NativeMenu,
+    pen_proxy: EventLoopProxy<AppEvent>,
 }
 
 impl ApplicationHandler<AppEvent> for App {
@@ -78,6 +81,16 @@ impl ApplicationHandler<AppEvent> for App {
         let pressure_monitor =
             MacosPressureMonitor::install(window.clone(), pressure_state.clone())
                 .expect("failed to initialize pressure monitor");
+        let pen_proxy = self.pen_proxy.clone();
+        let tablet_monitor = WaylandTabletMonitor::install(window.clone(), move |pen| {
+            if pen_proxy.send_event(AppEvent::Pen(pen)).is_err() {
+                log::debug!("pen event ignored after event loop shutdown");
+            }
+        })
+        .unwrap_or_else(|error| {
+            log::warn!("tablet input unavailable: {error}");
+            None
+        });
         let catalog = self.settings.take_startup_catalog();
         let startup_error = self.settings.take_startup_error();
         let paint = pollster::block_on(PaintRenderer::new(
@@ -99,6 +112,7 @@ impl ApplicationHandler<AppEvent> for App {
         self.gui = Some(gui);
         self.pressure_state = pressure_state;
         self._pressure_monitor = pressure_monitor;
+        self._tablet_monitor = tablet_monitor;
         self.sync_history_menu();
         window.request_redraw();
     }
@@ -119,75 +133,20 @@ impl ApplicationHandler<AppEvent> for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => self.render(window.as_ref()),
-            event => {
-                let Some(gui) = self.gui.as_mut() else {
-                    return;
-                };
-                self.input.observe_event(&event);
-                let egui_response = gui.state.on_window_event(window.as_ref(), &event);
-                let mut needs_redraw = egui_response.repaint;
-                let egui_consumed = egui_response.consumed;
-                if !egui_consumed
-                    && matches!(
-                        &event,
-                        WindowEvent::MouseInput {
-                            state: ElementState::Pressed,
-                            button: MouseButton::Left,
-                            ..
-                        }
-                    )
-                {
-                    needs_redraw |= gui.close_popups();
-                }
-
-                if !egui_consumed {
-                    if let Some(command) = self.input.history_command(&event) {
-                        self.pending_commands.push(command);
-                        needs_redraw = true;
-                    } else if let (Some(paint), Some(gui)) =
-                        (self.paint.as_mut(), self.gui.as_ref())
-                    {
-                        needs_redraw |= self.input.handle_event(
-                            &event,
-                            paint,
-                            gui.brush,
-                            gui.stroke_smoothing,
-                            &self.pressure_state,
-                        );
-                    }
-                }
-
-                match event {
-                    WindowEvent::Resized(size) => {
-                        if let Some(paint) = self.paint.as_mut() {
-                            paint.resize(size);
-                        }
-                        needs_redraw = true;
-                    }
-                    WindowEvent::ScaleFactorChanged { .. } => {
-                        if let Some(paint) = self.paint.as_mut() {
-                            paint.resize(window.inner_size());
-                        }
-                        needs_redraw = true;
-                    }
-                    _ => {}
-                }
-
-                self.sync_history_menu();
-                if needs_redraw {
-                    self.next_repaint = None;
-                    window.request_redraw();
-                }
-            }
+            event => self.process_input_event(window.as_ref(), event),
         }
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
-        let AppEvent::Command(command) = event;
-        self.pending_commands.push(command);
-        self.next_repaint = None;
-        if let Some(window) = self.window.as_ref() {
-            window.request_redraw();
+        match event {
+            AppEvent::Command(command) => {
+                self.pending_commands.push(command);
+                self.next_repaint = None;
+                if let Some(window) = self.window.as_ref() {
+                    window.request_redraw();
+                }
+            }
+            AppEvent::Pen(pen) => self.handle_pen_event(pen),
         }
     }
 
@@ -203,7 +162,11 @@ impl ApplicationHandler<AppEvent> for App {
 }
 
 impl App {
-    fn new(settings: SettingsController, native_menu: NativeMenu) -> Self {
+    fn new(
+        settings: SettingsController,
+        native_menu: NativeMenu,
+        pen_proxy: EventLoopProxy<AppEvent>,
+    ) -> Self {
         Self {
             window: None,
             paint: None,
@@ -211,10 +174,12 @@ impl App {
             input: PaintInputController::default(),
             pressure_state: PressureStateHandle::default(),
             _pressure_monitor: None,
+            _tablet_monitor: None,
             next_repaint: None,
             pending_commands: Vec::new(),
             settings,
             native_menu,
+            pen_proxy,
         }
     }
 
@@ -333,6 +298,89 @@ impl App {
             .as_ref()
             .map_or((false, false), |paint| (paint.can_undo(), paint.can_redo()));
         self.native_menu.set_history_enabled(can_undo, can_redo);
+    }
+
+    /// Processes a window event through the egui and paint input pipeline.
+    /// Used both for real winit events and for synthetic events translated
+    /// from platform pen/tablet input.
+    fn process_input_event(&mut self, window: &Window, event: WindowEvent) {
+        let Some(gui) = self.gui.as_mut() else {
+            return;
+        };
+        self.input.observe_event(&event);
+        let egui_response = gui.state.on_window_event(window, &event);
+        let mut needs_redraw = egui_response.repaint;
+        let egui_consumed = egui_response.consumed;
+        if !egui_consumed
+            && matches!(
+                &event,
+                WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    button: MouseButton::Left,
+                    ..
+                }
+            )
+        {
+            needs_redraw |= gui.close_popups();
+        }
+
+        if !egui_consumed {
+            if let Some(command) = self.input.history_command(&event) {
+                self.pending_commands.push(command);
+                needs_redraw = true;
+            } else if let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_ref()) {
+                needs_redraw |= self.input.handle_event(
+                    &event,
+                    paint,
+                    gui.brush,
+                    gui.stroke_smoothing,
+                    &self.pressure_state,
+                );
+            }
+        }
+
+        match event {
+            WindowEvent::Resized(size) => {
+                if let Some(paint) = self.paint.as_mut() {
+                    paint.resize(size);
+                }
+                needs_redraw = true;
+            }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                if let Some(paint) = self.paint.as_mut() {
+                    paint.resize(window.inner_size());
+                }
+                needs_redraw = true;
+            }
+            _ => {}
+        }
+
+        self.sync_history_menu();
+        if needs_redraw {
+            self.next_repaint = None;
+            window.request_redraw();
+        }
+    }
+
+    /// Feeds a platform pen/tablet event through the regular input pipeline by
+    /// translating it into equivalent window events. Pen pressure is published
+    /// before each event so stroke points sample the current pressure.
+    fn handle_pen_event(&mut self, pen: PenEvent) {
+        let Some(window) = self.window.as_ref().cloned() else {
+            return;
+        };
+        match pen {
+            PenEvent::Down { pressure, .. } | PenEvent::Move { pressure, .. } => {
+                self.pressure_state.note_pen_pressure(pressure, true);
+            }
+            PenEvent::Up | PenEvent::Leave => {}
+        }
+        for event in input::window_events_for_pen(pen, window.scale_factor()) {
+            self.process_input_event(window.as_ref(), event);
+        }
+        if matches!(pen, PenEvent::Up | PenEvent::Leave) {
+            self.pressure_state.clear_pen();
+        }
     }
 
     fn process_settings_commands(&mut self, commands: Vec<SettingsCommand>) {
@@ -534,6 +582,10 @@ pub fn run() {
         }
     });
 
-    let mut app = App::new(SettingsController::load(), native_menu);
+    let mut app = App::new(
+        SettingsController::load(),
+        native_menu,
+        event_loop.create_proxy(),
+    );
     event_loop.run_app(&mut app).expect("event loop error");
 }

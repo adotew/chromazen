@@ -1,15 +1,53 @@
 use winit::{
-    event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
+    dpi::PhysicalPosition,
+    event::{DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent},
     keyboard::{KeyCode, ModifiersState, PhysicalKey},
 };
 
 use crate::{
     paint::{BrushSettings, PaintTool, StrokePoint, StrokeSmoother, StrokeSmoothingOptions},
-    platform::PressureStateHandle,
+    platform::{PenEvent, PressureStateHandle},
     renderer::PaintRenderer,
 };
 
 use super::command::AppCommand;
+
+/// Translates a platform pen/tablet event into equivalent winit window events
+/// so pen input flows through the exact same pipeline as mouse input.
+///
+/// Pen positions are surface-local logical coordinates; they are scaled to
+/// physical pixels to match winit's cursor events.
+pub(crate) fn window_events_for_pen(pen: PenEvent, scale_factor: f64) -> Vec<WindowEvent> {
+    fn cursor_moved(position: [f32; 2], scale_factor: f64) -> WindowEvent {
+        WindowEvent::CursorMoved {
+            device_id: DeviceId::dummy(),
+            position: PhysicalPosition::new(
+                position[0] as f64 * scale_factor,
+                position[1] as f64 * scale_factor,
+            ),
+        }
+    }
+
+    match pen {
+        PenEvent::Move { position, .. } => vec![cursor_moved(position, scale_factor)],
+        PenEvent::Down { position, .. } => vec![
+            cursor_moved(position, scale_factor),
+            WindowEvent::MouseInput {
+                device_id: DeviceId::dummy(),
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+            },
+        ],
+        PenEvent::Up => vec![WindowEvent::MouseInput {
+            device_id: DeviceId::dummy(),
+            state: ElementState::Released,
+            button: MouseButton::Left,
+        }],
+        PenEvent::Leave => vec![WindowEvent::CursorLeft {
+            device_id: DeviceId::dummy(),
+        }],
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct PaintInputController {
@@ -298,5 +336,62 @@ mod tests {
             history_command_for_key(KeyCode::KeyZ, ModifiersState::SHIFT),
             None
         );
+    }
+
+    #[test]
+    fn pen_down_moves_cursor_then_presses_left_button() {
+        let events = window_events_for_pen(
+            PenEvent::Down {
+                position: [10.0, 20.0],
+                pressure: 0.5,
+            },
+            2.0,
+        );
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            WindowEvent::CursorMoved { position, .. }
+                if position.x == 20.0 && position.y == 40.0
+        ));
+        assert!(matches!(
+            events[1],
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn pen_move_maps_to_cursor_moved_without_scaling_errors() {
+        let events = window_events_for_pen(
+            PenEvent::Move {
+                position: [3.5, 7.25],
+                pressure: 1.0,
+            },
+            1.0,
+        );
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            WindowEvent::CursorMoved { position, .. }
+                if position.x == 3.5 && position.y == 7.25
+        ));
+    }
+
+    #[test]
+    fn pen_up_and_leave_end_interaction() {
+        let up = window_events_for_pen(PenEvent::Up, 1.0);
+        assert!(matches!(
+            up.as_slice(),
+            [WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
+            }]
+        ));
+        let leave = window_events_for_pen(PenEvent::Leave, 1.0);
+        assert!(matches!(leave.as_slice(), [WindowEvent::CursorLeft { .. }]));
     }
 }
