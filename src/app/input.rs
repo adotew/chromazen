@@ -14,6 +14,7 @@ use super::command::AppCommand;
 #[derive(Debug, Default)]
 pub struct PaintInputController {
     cursor_pos: [f32; 2],
+    cursor_inside: bool,
     is_drawing: bool,
     is_panning: bool,
     is_space_down: bool,
@@ -30,11 +31,37 @@ impl PaintInputController {
         self.tool
     }
 
-    pub fn observe_event(&mut self, event: &WindowEvent) {
+    pub fn brush_cursor_pos(&self) -> Option<[f32; 2]> {
+        (self.cursor_inside && !self.is_panning && !self.is_space_down).then_some(self.cursor_pos)
+    }
+
+    pub fn brush_cursor_pressure(&self, drawing_pressure: f32) -> f32 {
+        if self.is_drawing {
+            drawing_pressure
+        } else {
+            0.0
+        }
+    }
+
+    pub fn observe_event(&mut self, event: &WindowEvent) -> bool {
         match event {
-            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
-            WindowEvent::Focused(false) => self.modifiers = ModifiersState::empty(),
-            _ => {}
+            WindowEvent::CursorMoved { position, .. } => {
+                let next = [position.x as f32, position.y as f32];
+                let changed = !self.cursor_inside || self.cursor_pos != next;
+                self.cursor_pos = next;
+                self.cursor_inside = true;
+                changed
+            }
+            WindowEvent::CursorLeft { .. } => std::mem::replace(&mut self.cursor_inside, false),
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.modifiers = modifiers.state();
+                false
+            }
+            WindowEvent::Focused(false) => {
+                self.modifiers = ModifiersState::empty();
+                std::mem::replace(&mut self.cursor_inside, false)
+            }
+            _ => false,
         }
     }
 
@@ -65,7 +92,6 @@ impl PaintInputController {
         match event {
             WindowEvent::CursorMoved { position, .. } => {
                 let next = [position.x as f32, position.y as f32];
-                self.cursor_pos = next;
 
                 if self.is_panning {
                     let delta = [
@@ -87,13 +113,13 @@ impl PaintInputController {
                     return queued > 0;
                 }
 
-                false
+                true
             }
             WindowEvent::MouseInput { state, button, .. } => match (state, button) {
                 (ElementState::Pressed, MouseButton::Left) if self.is_space_down => {
                     self.is_panning = true;
                     self.last_pan_pos = self.cursor_pos;
-                    false
+                    true
                 }
                 (ElementState::Pressed, MouseButton::Left) => {
                     if !paint.can_paint() {
@@ -116,7 +142,7 @@ impl PaintInputController {
                 (ElementState::Pressed, MouseButton::Middle | MouseButton::Right) => {
                     self.is_panning = true;
                     self.last_pan_pos = self.cursor_pos;
-                    false
+                    true
                 }
                 (ElementState::Released, _) => self.end_stroke(paint, brush),
                 _ => false,
@@ -143,10 +169,13 @@ impl PaintInputController {
                     return true;
                 }
                 if event.physical_key == PhysicalKey::Code(KeyCode::Space) {
-                    self.is_space_down = event.state == ElementState::Pressed;
+                    let is_space_down = event.state == ElementState::Pressed;
+                    let changed = self.is_space_down != is_space_down;
+                    self.is_space_down = is_space_down;
                     if !self.is_space_down {
                         self.is_panning = false;
                     }
+                    return changed;
                 }
                 false
             }
@@ -200,6 +229,7 @@ impl PaintInputController {
     }
 
     fn end_stroke(&mut self, paint: &mut PaintRenderer, brush: BrushSettings) -> bool {
+        let was_active = self.is_drawing || self.is_panning;
         let queued = if self.is_drawing {
             let smoothed_points = self.smoother.finish();
             let queued = self.queue_smoothed_points(paint, smoothed_points, brush);
@@ -212,7 +242,7 @@ impl PaintInputController {
         self.is_drawing = false;
         self.is_panning = false;
         self.last_point = None;
-        queued > 0
+        queued > 0 || was_active
     }
 }
 
@@ -275,6 +305,14 @@ mod tests {
         input.is_drawing = true;
         assert!(!input.select_tool_for_key(KeyCode::KeyB));
         assert_eq!(input.tool(), PaintTool::Eraser);
+    }
+
+    #[test]
+    fn cursor_uses_minimum_pressure_until_drawing() {
+        let mut input = PaintInputController::default();
+        assert_eq!(input.brush_cursor_pressure(0.6), 0.0);
+        input.is_drawing = true;
+        assert_eq!(input.brush_cursor_pressure(0.6), 0.6);
     }
 
     #[test]

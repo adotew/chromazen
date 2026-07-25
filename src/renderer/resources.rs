@@ -2,13 +2,15 @@ use wgpu::util::DeviceExt;
 
 use super::layers::{LayerId, PaintLayer};
 use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
-use super::{DOCUMENT_FORMAT, PaintUniform, ViewUniform};
+use super::{CursorRaw, DOCUMENT_FORMAT, PaintUniform, ViewUniform};
 
 pub(crate) struct RenderResources {
     pub(crate) stamp_buffer: wgpu::Buffer,
+    pub(crate) cursor_buffer: wgpu::Buffer,
     pub(crate) stamp_uniform_buffer: wgpu::Buffer,
     pub(crate) view_uniform_buffer: wgpu::Buffer,
     pub(crate) stamp_bind_group: wgpu::BindGroup,
+    pub(crate) cursor_bind_group: wgpu::BindGroup,
     pub(crate) smudge_texture: wgpu::Texture,
     smudge_texture_view: wgpu::TextureView,
     brush_texture: wgpu::Texture,
@@ -19,6 +21,7 @@ pub(crate) struct RenderResources {
     pub(crate) stamp_pipeline: wgpu::RenderPipeline,
     pub(crate) eraser_pipeline: wgpu::RenderPipeline,
     pub(crate) smudge_pipeline: wgpu::RenderPipeline,
+    pub(crate) cursor_pipeline: wgpu::RenderPipeline,
     pub(crate) background_pipeline: wgpu::RenderPipeline,
     pub(crate) layer_pipeline: wgpu::RenderPipeline,
 }
@@ -34,6 +37,12 @@ impl RenderResources {
         let stamp_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("stamp storage buffer"),
             size: (MAX_STAMPS_PER_FRAME * std::mem::size_of::<StampRaw>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let cursor_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("brush cursor storage buffer"),
+            size: std::mem::size_of::<CursorRaw>() as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -159,6 +168,32 @@ impl RenderResources {
                 },
             ],
         });
+        let cursor_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("brush cursor bind group"),
+            layout: &stamp_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&brush_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&brush_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: cursor_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: stamp_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&smudge_texture_view),
+                },
+            ],
+        });
 
         let blit_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -210,6 +245,10 @@ impl RenderResources {
         let smudge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("smudge shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/smudge.wgsl").into()),
+        });
+        let cursor_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("brush cursor shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/cursor.wgsl").into()),
         });
         let blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("blit shader"),
@@ -269,6 +308,34 @@ impl RenderResources {
             Some(wgpu::BlendFactor::Zero),
         );
         let smudge_pipeline = create_stamp_pipeline("smudge pipeline", &smudge_shader, None);
+        let cursor_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("brush cursor pipeline"),
+            layout: Some(&stamp_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &cursor_shader,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &cursor_shader,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
         let create_blit_pipeline = |label, entry_point| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
@@ -304,9 +371,11 @@ impl RenderResources {
 
         Ok(Self {
             stamp_buffer,
+            cursor_buffer,
             stamp_uniform_buffer,
             view_uniform_buffer,
             stamp_bind_group,
+            cursor_bind_group,
             smudge_texture,
             smudge_texture_view,
             brush_texture,
@@ -317,6 +386,7 @@ impl RenderResources {
             stamp_pipeline,
             eraser_pipeline,
             smudge_pipeline,
+            cursor_pipeline,
             background_pipeline,
             layer_pipeline,
         })
@@ -399,8 +469,35 @@ impl RenderResources {
                 },
             ],
         });
+        let cursor_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("brush cursor bind group"),
+            layout: &self.stamp_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&self.brush_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&brush_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.cursor_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.stamp_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&self.smudge_texture_view),
+                },
+            ],
+        });
         self.brush_texture = brush_texture;
         self.stamp_bind_group = stamp_bind_group;
+        self.cursor_bind_group = cursor_bind_group;
         Ok(())
     }
 }

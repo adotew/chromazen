@@ -26,7 +26,7 @@ use self::{
 };
 use crate::{
     platform::{MacosPressureMonitor, PressureStateHandle},
-    renderer::PaintRenderer,
+    renderer::{BrushCursor, PaintRenderer},
 };
 
 const WINDOW_TITLE: &str = "Chromazen";
@@ -123,9 +123,9 @@ impl ApplicationHandler<AppEvent> for App {
                 let Some(gui) = self.gui.as_mut() else {
                     return;
                 };
-                self.input.observe_event(&event);
+                let cursor_changed = self.input.observe_event(&event);
                 let egui_response = gui.state.on_window_event(window.as_ref(), &event);
-                let mut needs_redraw = egui_response.repaint;
+                let mut needs_redraw = egui_response.repaint || cursor_changed;
                 let egui_consumed = egui_response.consumed;
                 if !egui_consumed
                     && matches!(
@@ -355,11 +355,24 @@ impl App {
         window: &Window,
         full_output: egui::FullOutput,
     ) -> Option<RenderOutcome> {
+        let cursor_pos = self.input.brush_cursor_pos();
+        let brush_pressure = self
+            .input
+            .brush_cursor_pressure(self.pressure_state.brush_pressure());
         let paint = self.paint.as_mut()?;
         let gui = self.gui.as_mut()?;
+        let brush_cursor = cursor_pos
+            .filter(|position| {
+                !gui.context.is_pointer_over_egui() && paint.window_point_is_on_canvas(*position)
+            })
+            .map(|center| BrushCursor {
+                center,
+                diameter: gui.brush.radius(brush_pressure) * 2.0,
+            });
         let repaint_delay = ui::repaint_delay(&full_output);
         gui.state
             .handle_platform_output(window, full_output.platform_output);
+        window.set_cursor_visible(brush_cursor.is_none());
 
         for (id, image_delta) in &full_output.textures_delta.set {
             gui.renderer
@@ -389,7 +402,7 @@ impl App {
                 label: Some("frame encoder"),
             });
 
-        paint.render_to_view(&mut encoder, &view);
+        paint.render_to_view(&mut encoder, &view, brush_cursor);
         let canvas_needs_redraw = paint.has_pending_stamps();
 
         let screen_descriptor = ScreenDescriptor {

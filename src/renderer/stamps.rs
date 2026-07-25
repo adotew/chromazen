@@ -68,6 +68,11 @@ impl StampQueue {
         self.stamp_aspect = stamp_aspect;
     }
 
+    pub(crate) fn half_size(&self, radius: f32) -> [f32; 2] {
+        let (width, height) = get_stamp_half_size(radius, self.stamp_aspect);
+        [width, height]
+    }
+
     pub(crate) fn clear(&mut self) {
         self.pending.clear();
         self.distance_since_last_stamp = 0.0;

@@ -10,6 +10,7 @@ pub struct PressureStateHandle(Arc<Mutex<PressureState>>);
 struct PressureState {
     pressure: f32,
     pen_active: bool,
+    pen_in_proximity: bool,
 }
 
 impl Default for PressureState {
@@ -17,36 +18,63 @@ impl Default for PressureState {
         Self {
             pressure: 1.0,
             pen_active: false,
+            pen_in_proximity: false,
+        }
+    }
+}
+
+impl PressureState {
+    fn brush_pressure(&self) -> f32 {
+        if self.pen_active {
+            self.pressure
+        } else if self.pen_in_proximity {
+            0.0
+        } else {
+            1.0
         }
     }
 }
 
 impl PressureStateHandle {
     pub fn brush_pressure(&self) -> f32 {
-        let state = self.0.lock().expect("pressure state poisoned");
-        if state.pen_active {
-            state.pressure
-        } else {
-            1.0
-        }
+        self.0
+            .lock()
+            .expect("pressure state poisoned")
+            .brush_pressure()
     }
 
-    fn note_pen_pressure(&self, pressure: f32, active: bool) -> bool {
+    fn note_pen_pressure(&self, pressure: f32, active: bool, is_pen_device: bool) -> bool {
         let mut state = self.0.lock().expect("pressure state poisoned");
-        let pressure = pressure.clamp(0.0, 1.0);
-        let changed =
-            state.pen_active != active || (state.pressure - pressure).abs() > f32::EPSILON;
+        let before = state.brush_pressure();
+        state.pressure = pressure.clamp(0.0, 1.0);
         state.pen_active = active;
-        state.pressure = pressure;
-        changed
+        state.pen_in_proximity |= is_pen_device;
+        (state.brush_pressure() - before).abs() > f32::EPSILON
+    }
+
+    fn end_pen_contact(&self, is_pen_device: bool) -> bool {
+        let mut state = self.0.lock().expect("pressure state poisoned");
+        let before = state.brush_pressure();
+        state.pressure = 0.0;
+        state.pen_active = false;
+        state.pen_in_proximity |= is_pen_device;
+        (state.brush_pressure() - before).abs() > f32::EPSILON
+    }
+
+    fn set_pen_proximity(&self, in_proximity: bool) -> bool {
+        let mut state = self.0.lock().expect("pressure state poisoned");
+        let before = state.brush_pressure();
+        state.pressure = 0.0;
+        state.pen_active = false;
+        state.pen_in_proximity = in_proximity;
+        (state.brush_pressure() - before).abs() > f32::EPSILON
     }
 
     fn clear_pen(&self) -> bool {
         let mut state = self.0.lock().expect("pressure state poisoned");
-        let changed = state.pen_active || (state.pressure - 1.0).abs() > f32::EPSILON;
-        state.pen_active = false;
-        state.pressure = 1.0;
-        changed
+        let before = state.brush_pressure();
+        *state = PressureState::default();
+        (state.brush_pressure() - before).abs() > f32::EPSILON
     }
 }
 
@@ -105,14 +133,14 @@ mod macos_impl {
                 };
 
                 let event = unsafe { event_ptr.as_ref() };
-                let Some(event_window) = event.window(mtm) else {
-                    return event_ptr.as_ptr();
-                };
-                if !std::ptr::eq(&*event_window, &*ns_window) {
+                let event_type = event.r#type();
+                if let Some(event_window) = event.window(mtm) {
+                    if !std::ptr::eq(&*event_window, &*ns_window) {
+                        return event_ptr.as_ptr();
+                    }
+                } else if !matches!(event_type, NSEventType::TabletProximity) {
                     return event_ptr.as_ptr();
                 }
-
-                let event_type = event.r#type();
                 let is_pen_device = matches!(
                     event.pointingDeviceType(),
                     NSPointingDeviceType::Pen | NSPointingDeviceType::Eraser
@@ -124,27 +152,27 @@ mod macos_impl {
                 let changed = match event_type {
                     NSEventType::LeftMouseDown | NSEventType::LeftMouseDragged => {
                         if should_use_pressure {
-                            pressure_state.note_pen_pressure(pressure, true)
+                            pressure_state.note_pen_pressure(pressure, true, is_pen_device)
                         } else {
                             pressure_state.clear_pen()
                         }
                     }
                     NSEventType::LeftMouseUp | NSEventType::MouseCancelled => {
-                        pressure_state.clear_pen()
+                        pressure_state.end_pen_contact(is_pen_device)
                     }
                     NSEventType::TabletPoint | NSEventType::Pressure => {
                         if should_use_pressure {
-                            pressure_state.note_pen_pressure(pressure, true)
+                            pressure_state.note_pen_pressure(
+                                pressure,
+                                has_meaningful_pressure,
+                                is_pen_device,
+                            )
                         } else {
                             false
                         }
                     }
                     NSEventType::TabletProximity => {
-                        if event.isEnteringProximity() {
-                            false
-                        } else {
-                            pressure_state.clear_pen()
-                        }
+                        pressure_state.set_pen_proximity(event.isEnteringProximity())
                     }
                     _ => false,
                 };
@@ -187,3 +215,26 @@ mod macos_impl {
 
 #[cfg(target_os = "macos")]
 pub use macos_impl::MacosPressureMonitor;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pen_hover_uses_minimum_pressure_and_mouse_uses_full_pressure() {
+        let pressure = PressureStateHandle::default();
+        assert_eq!(pressure.brush_pressure(), 1.0);
+
+        pressure.set_pen_proximity(true);
+        assert_eq!(pressure.brush_pressure(), 0.0);
+
+        pressure.note_pen_pressure(0.4, true, true);
+        assert_eq!(pressure.brush_pressure(), 0.4);
+
+        pressure.end_pen_contact(true);
+        assert_eq!(pressure.brush_pressure(), 0.0);
+
+        pressure.clear_pen();
+        assert_eq!(pressure.brush_pressure(), 1.0);
+    }
+}

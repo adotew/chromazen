@@ -44,6 +44,21 @@ struct ViewUniform {
     background_color: [f32; 4],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct CursorRaw {
+    center: [f32; 2],
+    half_size: [f32; 2],
+    surface_size: [f32; 2],
+    padding: [f32; 2],
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct BrushCursor {
+    pub(crate) center: [f32; 2],
+    pub(crate) diameter: f32,
+}
+
 pub struct PaintRenderer {
     gpu: GpuContext,
     document_size: [u32; 2],
@@ -159,6 +174,10 @@ impl PaintRenderer {
 
     pub fn window_to_document(&self, point: [f32; 2]) -> [f32; 2] {
         self.view.window_to_document(point)
+    }
+
+    pub fn window_point_is_on_canvas(&self, point: [f32; 2]) -> bool {
+        point_in_document(self.window_to_document(point), self.document_size)
     }
 
     pub fn can_paint(&self) -> bool {
@@ -513,9 +532,17 @@ impl PaintRenderer {
         self.gpu.reconfigure_surface();
     }
 
-    pub fn render_to_view(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+    pub fn render_to_view(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        brush_cursor: Option<BrushCursor>,
+    ) {
         self.flush_stamps(encoder);
         self.write_view_uniform();
+        if let Some(cursor) = brush_cursor {
+            self.write_brush_cursor(cursor);
+        }
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("blit pass"),
@@ -545,6 +572,11 @@ impl PaintRenderer {
         for layer in &self.layers {
             pass.set_bind_group(0, &layer.blit_bind_group, &[]);
             pass.draw(0..3, 0..1);
+        }
+        if brush_cursor.is_some() {
+            pass.set_pipeline(&self.resources.cursor_pipeline);
+            pass.set_bind_group(0, &self.resources.cursor_bind_group, &[]);
+            pass.draw(0..6, 0..1);
         }
     }
 
@@ -693,6 +725,29 @@ impl PaintRenderer {
             }),
         );
     }
+
+    fn write_brush_cursor(&self, cursor: BrushCursor) {
+        let half_size = self.stamp_queue.half_size(cursor.diameter * 0.5);
+        let zoom = self.view.zoom();
+        let surface_size = self.surface_size();
+        self.gpu.queue().write_buffer(
+            &self.resources.cursor_buffer,
+            0,
+            bytemuck::bytes_of(&CursorRaw {
+                center: cursor.center,
+                half_size: [
+                    (half_size[0] * zoom).max(0.5),
+                    (half_size[1] * zoom).max(0.5),
+                ],
+                surface_size: [surface_size[0] as f32, surface_size[1] as f32],
+                padding: [0.0; 2],
+            }),
+        );
+    }
+}
+
+fn point_in_document(point: [f32; 2], size: [u32; 2]) -> bool {
+    point[0] >= 0.0 && point[1] >= 0.0 && point[0] <= size[0] as f32 && point[1] <= size[1] as f32
 }
 
 fn opaque_color(color: [u8; 3]) -> [f32; 4] {
@@ -702,4 +757,18 @@ fn opaque_color(color: [u8; 3]) -> [f32; 4] {
         f32::from(color[2]) / 255.0,
         1.0,
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canvas_bounds_include_edges() {
+        let size = [4000, 3000];
+        assert!(point_in_document([0.0, 0.0], size));
+        assert!(point_in_document([4000.0, 3000.0], size));
+        assert!(!point_in_document([-0.1, 10.0], size));
+        assert!(!point_in_document([10.0, 3000.1], size));
+    }
 }

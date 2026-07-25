@@ -32,11 +32,15 @@ impl BrushSettings {
         color32_to_rgba(self.color)
     }
 
+    pub fn radius(self, pressure: f32) -> f32 {
+        pressure_radius(self.size, pressure, self.pressure)
+    }
+
     pub fn stroke_point(self, document_point: [f32; 2], pressure: f32) -> StrokePoint {
         StrokePoint {
             x: document_point[0],
             y: document_point[1],
-            radius: pressure_radius(self.size, pressure, self.pressure),
+            radius: self.radius(pressure),
             opacity: pressure_opacity(pressure, self.pressure),
         }
     }
@@ -108,9 +112,12 @@ mod tests {
 
     #[test]
     fn pressure_changes_radius_with_minimum_floor() {
-        let pressure = PressureSettings::default();
-        assert_eq!(pressure_radius(100.0, 0.0, pressure), 22.5);
-        assert_eq!(pressure_radius(100.0, 1.0, pressure), 50.0);
+        let brush = BrushSettings {
+            size: 100.0,
+            ..BrushSettings::default()
+        };
+        assert_eq!(brush.radius(0.0), 22.5);
+        assert_eq!(brush.radius(1.0), 50.0);
     }
 
     #[test]
