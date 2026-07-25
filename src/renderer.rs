@@ -9,7 +9,7 @@ mod resources;
 mod stamps;
 mod view;
 
-pub(crate) use self::layers::{LayerId, LayerInfo, LayerSelection, LayerSnapshot};
+pub(crate) use self::layers::{LayerId, LayerInfo, LayerSnapshot};
 use self::{
     history::{HistoryTarget, PaintHistory, TextureRect},
     layers::{PaintLayer, insertion_index, layer_name, replacement_index_after_delete},
@@ -49,7 +49,7 @@ pub struct PaintRenderer {
     document_size: [u32; 2],
     resources: RenderResources,
     layers: Vec<PaintLayer>,
-    selection: LayerSelection,
+    selection: LayerId,
     background_color: [f32; 4],
     next_layer_id: u64,
     next_layer_number: u64,
@@ -90,7 +90,7 @@ impl PaintRenderer {
             document_size,
             resources,
             layers: vec![first_layer],
-            selection: LayerSelection::Paint(LayerId(1)),
+            selection: LayerId(1),
             background_color: [1.0; 4],
             next_layer_id: 2,
             next_layer_number: 2,
@@ -186,15 +186,11 @@ impl PaintRenderer {
 
     pub(crate) fn select_layer(&mut self, id: LayerId) -> bool {
         if self.layers.iter().any(|layer| layer.id == id) {
-            self.selection = LayerSelection::Paint(id);
+            self.selection = id;
             true
         } else {
             false
         }
-    }
-
-    pub(crate) fn select_background(&mut self) {
-        self.selection = LayerSelection::Background;
     }
 
     pub(crate) fn set_background_color(&mut self, color: [u8; 3]) {
@@ -213,11 +209,7 @@ impl PaintRenderer {
             return false;
         }
         let selection_before = self.selection;
-        let index = insertion_index(
-            self.selection,
-            self.selected_layer_index(),
-            self.layers.len(),
-        );
+        let index = insertion_index(self.selected_layer_index(), self.layers.len());
         let id = LayerId(self.next_layer_id);
         self.next_layer_id += 1;
         let name = layer_name(self.next_layer_number);
@@ -250,7 +242,7 @@ impl PaintRenderer {
             });
         }
         self.layers.insert(index, layer);
-        self.selection = LayerSelection::Paint(id);
+        self.selection = id;
         self.history
             .record_add(id, index, selection_before, self.layer_texture_byte_len());
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
@@ -258,10 +250,7 @@ impl PaintRenderer {
     }
 
     pub(crate) fn can_delete_selected_layer(&self) -> bool {
-        matches!(self.selection, LayerSelection::Paint(_))
-            && self.layers.len() > 1
-            && !self.history.stroke_active()
-            && !self.stamp_queue.has_pending()
+        self.layers.len() > 1 && !self.history.stroke_active() && !self.stamp_queue.has_pending()
     }
 
     pub(crate) fn delete_selected_layer(&mut self) -> bool {
@@ -276,7 +265,7 @@ impl PaintRenderer {
             .expect("deletion requires another paint layer");
         let next_id = self.layers[replacement_index].id;
         let layer = self.layers.remove(index);
-        self.selection = LayerSelection::Paint(next_id);
+        self.selection = next_id;
         self.history.record_delete(
             layer,
             index,
@@ -685,16 +674,10 @@ impl PaintRenderer {
         u64::from(self.document_size[0]) * u64::from(self.document_size[1]) * 4
     }
 
-    fn selected_layer_id(&self) -> Option<LayerId> {
-        match self.selection {
-            LayerSelection::Background => None,
-            LayerSelection::Paint(id) => Some(id),
-        }
-    }
-
     fn selected_layer_index(&self) -> Option<usize> {
-        let id = self.selected_layer_id()?;
-        self.layers.iter().position(|layer| layer.id == id)
+        self.layers
+            .iter()
+            .position(|layer| layer.id == self.selection)
     }
 
     fn write_view_uniform(&self) {

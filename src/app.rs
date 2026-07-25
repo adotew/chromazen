@@ -12,7 +12,7 @@ use std::{
 use egui_wgpu::ScreenDescriptor;
 use winit::{
     application::ApplicationHandler,
-    event::{StartCause, WindowEvent},
+    event::{ElementState, MouseButton, StartCause, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowAttributes},
 };
@@ -127,6 +127,18 @@ impl ApplicationHandler<AppEvent> for App {
                 let egui_response = gui.state.on_window_event(window.as_ref(), &event);
                 let mut needs_redraw = egui_response.repaint;
                 let egui_consumed = egui_response.consumed;
+                if !egui_consumed
+                    && matches!(
+                        &event,
+                        WindowEvent::MouseInput {
+                            state: ElementState::Pressed,
+                            button: MouseButton::Left,
+                            ..
+                        }
+                    )
+                {
+                    needs_redraw |= gui.close_popups();
+                }
 
                 if !egui_consumed {
                     if let Some(command) = self.input.history_command(&event) {
@@ -262,11 +274,6 @@ impl App {
                 AppCommand::SelectLayer(id) => {
                     if let Some(paint) = self.paint.as_mut() {
                         paint.select_layer(id);
-                    }
-                }
-                AppCommand::SelectBackground => {
-                    if let Some(paint) = self.paint.as_mut() {
-                        paint.select_background();
                     }
                 }
                 AppCommand::AddLayer => {

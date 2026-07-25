@@ -1,6 +1,6 @@
 use super::{
     DOCUMENT_FORMAT,
-    layers::{LayerId, LayerSelection, PaintLayer},
+    layers::{LayerId, PaintLayer},
 };
 
 const HISTORY_BUDGET_BYTES: u64 = 256 * 1024 * 1024;
@@ -66,16 +66,16 @@ enum HistoryAction {
     AddLayer {
         layer_id: LayerId,
         index: usize,
-        selection_before: LayerSelection,
-        selection_after: LayerSelection,
+        selection_before: LayerId,
+        selection_after: LayerId,
         detached: Option<PaintLayer>,
         bytes: u64,
     },
     DeleteLayer {
         layer_id: LayerId,
         index: usize,
-        selection_before: LayerSelection,
-        selection_after: LayerSelection,
+        selection_before: LayerId,
+        selection_after: LayerId,
         detached: Option<PaintLayer>,
         bytes: u64,
     },
@@ -237,7 +237,7 @@ impl PaintHistory {
         &mut self,
         layer_id: LayerId,
         index: usize,
-        selection_before: LayerSelection,
+        selection_before: LayerId,
         layer_bytes: u64,
     ) {
         self.discard_redo();
@@ -245,7 +245,7 @@ impl PaintHistory {
             layer_id,
             index,
             selection_before,
-            selection_after: LayerSelection::Paint(layer_id),
+            selection_after: layer_id,
             detached: None,
             bytes: layer_bytes,
         });
@@ -257,8 +257,8 @@ impl PaintHistory {
         &mut self,
         layer: PaintLayer,
         index: usize,
-        selection_before: LayerSelection,
-        selection_after: LayerSelection,
+        selection_before: LayerId,
+        selection_after: LayerId,
         layer_bytes: u64,
     ) {
         let layer_id = layer.id;
@@ -323,7 +323,7 @@ impl PaintHistory {
     pub(crate) fn undo_structure(
         &mut self,
         layers: &mut Vec<PaintLayer>,
-        selection: &mut LayerSelection,
+        selection: &mut LayerId,
         background_color: &mut [f32; 4],
     ) -> bool {
         if self.undo_target() != Some(HistoryTarget::Structure) {
@@ -365,7 +365,7 @@ impl PaintHistory {
     pub(crate) fn redo_structure(
         &mut self,
         layers: &mut Vec<PaintLayer>,
-        selection: &mut LayerSelection,
+        selection: &mut LayerId,
         background_color: &mut [f32; 4],
     ) -> bool {
         if self.redo_target() != Some(HistoryTarget::Structure) {

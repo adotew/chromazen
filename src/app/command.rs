@@ -5,7 +5,6 @@ pub(super) enum AppCommand {
     Undo,
     Redo,
     SelectLayer(LayerId),
-    SelectBackground,
     AddLayer,
     DeleteSelectedLayer,
     SetBackgroundColor([u8; 3]),

@@ -11,7 +11,7 @@ use winit::window::Window;
 use crate::{
     config::{AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset},
     paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings, StrokeSmoothingOptions},
-    renderer::{LayerId, LayerSelection, LayerSnapshot, PaintRenderer},
+    renderer::{LayerId, LayerSnapshot, PaintRenderer},
 };
 
 use super::command::AppCommand;
@@ -176,7 +176,6 @@ impl GuiLayer {
     }
 
     fn show_brush_controls(&mut self, ui: &mut egui::Ui) {
-        ui.label("Color");
         color_picker::show(ui, &mut self.brush.color);
         ui.add_space(8.0);
 
@@ -241,34 +240,7 @@ impl GuiLayer {
                 .default_size(300.0)
                 .resizable(false)
                 .show_inside(ui, |ui| {
-                    match layers.selection {
-                        LayerSelection::Background => {
-                            ui.label("Background color");
-                            let mut color = background;
-                            if color_picker::show(ui, &mut color) {
-                                self.background_edit_start.get_or_insert(rgb(background));
-                                self.commands
-                                    .push(AppCommand::SetBackgroundColor(rgb(color)));
-                            }
-                            if !ui.ctx().input(|input| input.pointer.primary_down())
-                                && let Some(before) = self.background_edit_start.take()
-                            {
-                                self.commands.push(AppCommand::CommitBackgroundColor {
-                                    before,
-                                    after: rgb(color),
-                                });
-                            }
-                        }
-                        LayerSelection::Paint(_) => {
-                            if let Some(before) = self.background_edit_start.take() {
-                                self.commands.push(AppCommand::CommitBackgroundColor {
-                                    before,
-                                    after: rgb(background),
-                                });
-                            }
-                            self.show_brush_controls(ui);
-                        }
-                    }
+                    self.show_brush_controls(ui);
 
                     if let Some(message) = &self.settings_message {
                         let color = if message.is_error {
@@ -297,8 +269,7 @@ impl GuiLayer {
                                     self.commands.push(AppCommand::AddLayer);
                                 }
 
-                                let can_delete = layers.layers.len() > 1
-                                    && matches!(layers.selection, LayerSelection::Paint(_));
+                                let can_delete = layers.layers.len() > 1;
                                 let delete_icon = egui::Image::new(egui::include_image!(
                                     "../../assets/icons/trash-2.svg"
                                 ))
@@ -324,7 +295,7 @@ impl GuiLayer {
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             for layer in layers.layers.iter().rev() {
-                                let selected = layers.selection == LayerSelection::Paint(layer.id);
+                                let selected = layers.selection == layer.id;
                                 let thumbnail = self
                                     .layer_thumbnails
                                     .iter()
@@ -339,12 +310,26 @@ impl GuiLayer {
                                 ui.add_space(4.0);
                             }
 
-                            let selected = layers.selection == LayerSelection::Background;
-                            if show_layer_row(ui, "Background", selected, None, Some(background))
-                                .clicked()
-                                && !selected
+                            let mut color = background;
+                            let response =
+                                show_layer_row(ui, "Background", false, None, Some(background));
+                            egui::Popup::from_toggle_button_response(&response)
+                                .width(220.0)
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                                .show(|ui| {
+                                    if color_picker::show(ui, &mut color) {
+                                        self.background_edit_start.get_or_insert(rgb(background));
+                                        self.commands
+                                            .push(AppCommand::SetBackgroundColor(rgb(color)));
+                                    }
+                                });
+                            if !ui.ctx().input(|input| input.pointer.primary_down())
+                                && let Some(before) = self.background_edit_start.take()
                             {
-                                self.commands.push(AppCommand::SelectBackground);
+                                self.commands.push(AppCommand::CommitBackgroundColor {
+                                    before,
+                                    after: rgb(color),
+                                });
                             }
                         });
                 });
@@ -354,6 +339,12 @@ impl GuiLayer {
                 .interactable(false)
                 .show(ui.ctx(), |ui| show_tool_badge(ui, tool));
         })
+    }
+
+    pub(crate) fn close_popups(&self) -> bool {
+        let was_open = egui::Popup::is_any_open(&self.context);
+        egui::Popup::close_all(&self.context);
+        was_open
     }
 
     pub(crate) fn take_commands(&mut self) -> Vec<AppCommand> {
