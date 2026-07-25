@@ -280,41 +280,44 @@ impl GuiLayer {
                     }
 
                     ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let can_delete = layers.layers.len() > 1
-                                && matches!(layers.selection, LayerSelection::Paint(_));
-                            let delete_icon = egui::Image::new(egui::include_image!(
-                                "../../assets/icons/trash-2.svg"
-                            ))
-                            .fit_to_exact_size(egui::Vec2::splat(16.0))
-                            .alt_text("Delete layer");
-                            let delete_button = egui::Button::image(delete_icon)
-                                .image_tint_follows_text_color(true)
-                                .min_size(egui::Vec2::splat(28.0))
-                                .corner_radius(8);
-                            if ui
-                                .add_enabled(can_delete, delete_button)
-                                .on_hover_text("Delete layer")
-                                .clicked()
-                            {
-                                self.commands.push(AppCommand::DeleteSelectedLayer);
-                            }
+                    egui::Panel::bottom("layer controls")
+                        .show_separator_line(false)
+                        .show_inside(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let add_icon = egui::Image::new(egui::include_image!(
+                                    "../../assets/icons/plus.svg"
+                                ))
+                                .fit_to_exact_size(egui::Vec2::splat(16.0))
+                                .alt_text("Add layer");
+                                let add_button = egui::Button::image(add_icon)
+                                    .image_tint_follows_text_color(true)
+                                    .min_size(egui::Vec2::splat(28.0))
+                                    .corner_radius(8);
+                                if ui.add(add_button).on_hover_text("Add layer").clicked() {
+                                    self.commands.push(AppCommand::AddLayer);
+                                }
 
-                            let add_icon = egui::Image::new(egui::include_image!(
-                                "../../assets/icons/plus.svg"
-                            ))
-                            .fit_to_exact_size(egui::Vec2::splat(16.0))
-                            .alt_text("Add layer");
-                            let add_button = egui::Button::image(add_icon)
-                                .image_tint_follows_text_color(true)
-                                .min_size(egui::Vec2::splat(28.0))
-                                .corner_radius(8);
-                            if ui.add(add_button).on_hover_text("Add layer").clicked() {
-                                self.commands.push(AppCommand::AddLayer);
-                            }
+                                let can_delete = layers.layers.len() > 1
+                                    && matches!(layers.selection, LayerSelection::Paint(_));
+                                let delete_icon = egui::Image::new(egui::include_image!(
+                                    "../../assets/icons/trash-2.svg"
+                                ))
+                                .fit_to_exact_size(egui::Vec2::splat(16.0))
+                                .alt_text("Delete layer");
+                                let delete_button = egui::Button::image(delete_icon)
+                                    .image_tint_follows_text_color(true)
+                                    .min_size(egui::Vec2::splat(28.0))
+                                    .corner_radius(8);
+                                if ui
+                                    .add_enabled(can_delete, delete_button)
+                                    .on_hover_text("Delete layer")
+                                    .clicked()
+                                {
+                                    self.commands.push(AppCommand::DeleteSelectedLayer);
+                                }
+                            });
+                            ui.add_space(6.0);
                         });
-                    });
                     ui.add_space(4.0);
                     egui::ScrollArea::vertical()
                         .id_salt("layer list")
