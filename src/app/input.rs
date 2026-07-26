@@ -44,6 +44,10 @@ impl PaintInputController {
             .then_some(self.cursor_pos)
     }
 
+    pub fn is_resizing_brush(&self) -> bool {
+        self.is_resize_down
+    }
+
     pub fn captures_resize_event(&self, event: &WindowEvent) -> bool {
         self.resize_drag.is_some()
             || (self.is_resize_down

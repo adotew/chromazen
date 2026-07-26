@@ -234,12 +234,19 @@ impl App {
 
         let layer_snapshot = paint.layer_snapshot();
         let tool = self.input.tool();
+        let is_resizing_brush = self.input.is_resizing_brush();
         let (full_output, commands) = {
             let Some(gui) = self.gui.as_mut() else {
                 return;
             };
             gui.sync_layer_thumbnails(paint);
-            let output = gui.run(window, &layer_snapshot, tool);
+            let output = gui.run(
+                window,
+                &layer_snapshot,
+                tool,
+                is_resizing_brush,
+                paint.zoom(),
+            );
             (output, gui.take_commands())
         };
         self.pending_commands.extend(commands);

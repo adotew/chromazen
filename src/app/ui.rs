@@ -228,6 +228,8 @@ impl GuiLayer {
         window: &Window,
         layers: &LayerSnapshot,
         tool: PaintTool,
+        is_resizing_brush: bool,
+        canvas_zoom: f32,
     ) -> egui::FullOutput {
         self.load_brush_preview(&self.active_brush.clone());
         let raw_input = self.state.take_egui_input(window);
@@ -333,6 +335,10 @@ impl GuiLayer {
                             }
                         });
                 });
+
+            if is_resizing_brush {
+                show_brush_resize_overlay(ui, self.brush.size, canvas_zoom);
+            }
 
             egui::Area::new(egui::Id::new("tool mode"))
                 .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(8.0, -8.0))
@@ -574,6 +580,38 @@ fn show_layer_row(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+fn show_brush_resize_overlay(ui: &egui::Ui, brush_size: f32, canvas_zoom: f32) {
+    let canvas_rect = ui.available_rect_before_wrap();
+    let center = canvas_rect.center();
+    let diameter = brush_overlay_diameter(brush_size, canvas_zoom, ui.ctx().pixels_per_point());
+    let radius = (diameter * 0.5).max(0.5);
+    let painter = ui.painter().with_clip_rect(canvas_rect);
+
+    painter.circle_stroke(center, radius, egui::Stroke::new(3.0, egui::Color32::BLACK));
+    painter.circle_stroke(center, radius, egui::Stroke::new(1.0, egui::Color32::WHITE));
+
+    let label = format!("{brush_size:.0} px");
+    let font = egui::FontId::proportional(16.0);
+    painter.text(
+        center + egui::vec2(1.0, 1.0),
+        egui::Align2::CENTER_CENTER,
+        &label,
+        font.clone(),
+        egui::Color32::BLACK,
+    );
+    painter.text(
+        center,
+        egui::Align2::CENTER_CENTER,
+        label,
+        font,
+        egui::Color32::WHITE,
+    );
+}
+
+fn brush_overlay_diameter(brush_size: f32, canvas_zoom: f32, pixels_per_point: f32) -> f32 {
+    brush_size * canvas_zoom / pixels_per_point
+}
+
 fn show_tool_badge(ui: &mut egui::Ui, tool: PaintTool) {
     let (label, fill) = match tool {
         PaintTool::Brush => ("BRUSH", egui::Color32::from_rgb(169, 186, 200)),
@@ -652,5 +690,11 @@ mod tests {
     fn background_color_round_trips_through_ui() {
         let color = [0.25, 0.5, 0.75, 1.0];
         assert_eq!(rgb(background_color(color)), [64, 128, 191]);
+    }
+
+    #[test]
+    fn brush_overlay_matches_canvas_scale() {
+        assert_eq!(brush_overlay_diameter(48.0, 2.0, 2.0), 48.0);
+        assert_eq!(brush_overlay_diameter(48.0, 0.5, 1.0), 24.0);
     }
 }
