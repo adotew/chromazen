@@ -25,6 +25,7 @@ pub(crate) struct RenderResources {
     blit_bind_group_layout: wgpu::BindGroupLayout,
     stroke_preview_bind_group_layout: wgpu::BindGroupLayout,
     stroke_preview_bind_group: Option<wgpu::BindGroup>,
+    pub(crate) stroke_commit_bind_group: wgpu::BindGroup,
     pub(crate) mask_pipeline: wgpu::RenderPipeline,
     pub(crate) smudge_pipeline: wgpu::RenderPipeline,
     pub(crate) cursor_pipeline: wgpu::RenderPipeline,
@@ -32,6 +33,7 @@ pub(crate) struct RenderResources {
     pub(crate) layer_pipeline: wgpu::RenderPipeline,
     pub(crate) brush_preview_pipeline: wgpu::RenderPipeline,
     pub(crate) eraser_preview_pipeline: wgpu::RenderPipeline,
+    pub(crate) brush_commit_pipeline: wgpu::RenderPipeline,
 }
 
 impl RenderResources {
@@ -294,6 +296,46 @@ impl RenderResources {
                     },
                 ],
             });
+        let stroke_commit_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("stroke commit bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let stroke_commit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("stroke commit bind group"),
+            layout: &stroke_commit_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&stroke_mask_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: stroke_uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
         let stamp_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("stamp pipeline layout"),
@@ -309,6 +351,12 @@ impl RenderResources {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("stroke preview pipeline layout"),
                 bind_group_layouts: &[Some(&stroke_preview_bind_group_layout)],
+                immediate_size: 0,
+            });
+        let stroke_commit_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("stroke commit pipeline layout"),
+                bind_group_layouts: &[Some(&stroke_commit_bind_group_layout)],
                 immediate_size: 0,
             });
         let stamp_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -508,6 +556,35 @@ impl RenderResources {
             create_preview_pipeline("brush stroke preview pipeline", "fs_preview_brush");
         let eraser_preview_pipeline =
             create_preview_pipeline("eraser stroke preview pipeline", "fs_preview_eraser");
+        let brush_commit_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("brush stroke commit pipeline"),
+                layout: Some(&stroke_commit_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &stroke_composite_shader,
+                    entry_point: Some("vs_commit"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &stroke_composite_shader,
+                    entry_point: Some("fs_commit_brush"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: DOCUMENT_FORMAT,
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            });
 
         Ok(Self {
             stamp_buffer,
@@ -528,6 +605,7 @@ impl RenderResources {
             blit_bind_group_layout,
             stroke_preview_bind_group_layout,
             stroke_preview_bind_group: None,
+            stroke_commit_bind_group,
             mask_pipeline,
             smudge_pipeline,
             cursor_pipeline,
@@ -535,6 +613,7 @@ impl RenderResources {
             layer_pipeline,
             brush_preview_pipeline,
             eraser_preview_pipeline,
+            brush_commit_pipeline,
         })
     }
 

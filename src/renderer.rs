@@ -433,6 +433,28 @@ impl PaintRenderer {
             .iter()
             .position(|layer| layer.id == active_stroke.layer_id)
             .expect("active stroke layer must exist");
+        if active_stroke.tool == PaintTool::Brush {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("brush stroke commit pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.layers[layer_index].view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.resources.brush_commit_pipeline);
+            pass.set_bind_group(0, &self.resources.stroke_commit_bind_group, &[]);
+            pass.set_scissor_rect(rect.x, rect.y, rect.width, rect.height);
+            pass.draw(0..3, 0..1);
+        }
         self.history.commit_stroke(
             self.gpu.device(),
             &mut encoder,

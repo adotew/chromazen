@@ -55,3 +55,19 @@ fn fs_preview_eraser(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let coverage = textureSampleLevel(strokeMask, paintSampler, uv, 0.0).r;
   return layer * (1.0 - coverage);
 }
+
+@vertex
+fn vs_commit(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4f {
+  let x = f32(idx % 2u) * 4.0 - 1.0;
+  let y = f32(idx / 2u) * 4.0 - 1.0;
+  return vec4f(x, y, 0.0, 1.0);
+}
+
+fn committedCoverage(pos: vec4f) -> f32 {
+  return textureLoad(strokeMask, vec2i(pos.xy), 0).r;
+}
+
+@fragment
+fn fs_commit_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  return stroke.color * committedCoverage(pos);
+}
