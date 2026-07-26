@@ -73,7 +73,7 @@ fn paint_stamp(
         let source_alpha = source[3] as f32 / 255.0 * opacity;
         let target = preview.get_pixel_mut(x as u32, y as u32);
         let target_alpha = target[3] as f32 / 255.0;
-        let alpha = source_alpha + target_alpha * (1.0 - source_alpha);
+        let alpha = source_alpha.max(target_alpha);
         *target = Rgba([255, 255, 255, (alpha * 255.0).round() as u8]);
     }
 }
@@ -103,6 +103,19 @@ mod tests {
 
         assert_eq!(preview.size, [WIDTH as usize, HEIGHT as usize]);
         assert!(preview.pixels.iter().any(|pixel| pixel.a() > 0));
+    }
+
+    #[test]
+    fn repeated_stamps_use_maximum_coverage() {
+        let mut preview = RgbaImage::new(1, 1);
+        let stamp = RgbaImage::from_pixel(1, 1, Rgba([255, 255, 255, 255]));
+
+        paint_stamp(&mut preview, &stamp, 1.0, 0.5, 0.5, 0.5, 0.25);
+        let first_alpha = preview.get_pixel(0, 0)[3];
+        paint_stamp(&mut preview, &stamp, 1.0, 0.5, 0.5, 0.5, 0.25);
+
+        assert_eq!(first_alpha, 64);
+        assert_eq!(preview.get_pixel(0, 0)[3], first_alpha);
     }
 
     #[test]
