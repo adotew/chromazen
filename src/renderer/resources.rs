@@ -2,13 +2,16 @@ use wgpu::util::DeviceExt;
 
 use super::layers::{LayerId, PaintLayer};
 use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
-use super::{CursorRaw, DOCUMENT_FORMAT, PaintUniform, STROKE_MASK_FORMAT, ViewUniform};
+use super::{
+    CursorRaw, DOCUMENT_FORMAT, PaintUniform, STROKE_MASK_FORMAT, StrokeUniform, ViewUniform,
+};
 
 pub(crate) struct RenderResources {
     pub(crate) stamp_buffer: wgpu::Buffer,
     pub(crate) cursor_buffer: wgpu::Buffer,
     pub(crate) stamp_uniform_buffer: wgpu::Buffer,
     pub(crate) view_uniform_buffer: wgpu::Buffer,
+    stroke_uniform_buffer: wgpu::Buffer,
     pub(crate) stamp_bind_group: wgpu::BindGroup,
     pub(crate) cursor_bind_group: wgpu::BindGroup,
     pub(crate) smudge_texture: wgpu::Texture,
@@ -20,11 +23,15 @@ pub(crate) struct RenderResources {
     paint_sampler: wgpu::Sampler,
     stamp_bind_group_layout: wgpu::BindGroupLayout,
     blit_bind_group_layout: wgpu::BindGroupLayout,
+    stroke_preview_bind_group_layout: wgpu::BindGroupLayout,
+    stroke_preview_bind_group: Option<wgpu::BindGroup>,
     pub(crate) mask_pipeline: wgpu::RenderPipeline,
     pub(crate) smudge_pipeline: wgpu::RenderPipeline,
     pub(crate) cursor_pipeline: wgpu::RenderPipeline,
     pub(crate) background_pipeline: wgpu::RenderPipeline,
     pub(crate) layer_pipeline: wgpu::RenderPipeline,
+    pub(crate) brush_preview_pipeline: wgpu::RenderPipeline,
+    pub(crate) eraser_preview_pipeline: wgpu::RenderPipeline,
 }
 
 impl RenderResources {
@@ -64,6 +71,11 @@ impl RenderResources {
                 padding: [0.0, 0.0],
                 background_color: [1.0; 4],
             }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let stroke_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("stroke uniform buffer"),
+            contents: bytemuck::bytes_of(&StrokeUniform { color: [0.0; 4] }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -230,6 +242,58 @@ impl RenderResources {
                     },
                 ],
             });
+        let stroke_preview_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("stroke preview bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
         let stamp_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("stamp pipeline layout"),
@@ -241,6 +305,12 @@ impl RenderResources {
             bind_group_layouts: &[Some(&blit_bind_group_layout)],
             immediate_size: 0,
         });
+        let stroke_preview_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("stroke preview pipeline layout"),
+                bind_group_layouts: &[Some(&stroke_preview_bind_group_layout)],
+                immediate_size: 0,
+            });
         let stamp_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("stamp shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/stamp.wgsl").into()),
@@ -256,6 +326,10 @@ impl RenderResources {
         let blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("blit shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blit.wgsl").into()),
+        });
+        let stroke_composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("stroke composite shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/stroke_composite.wgsl").into()),
         });
 
         let create_stamp_pipeline =
@@ -400,12 +474,47 @@ impl RenderResources {
         };
         let background_pipeline = create_blit_pipeline("background pipeline", "fs_background");
         let layer_pipeline = create_blit_pipeline("layer pipeline", "fs_layer");
+        let create_preview_pipeline = |label, entry_point| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&stroke_preview_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &stroke_composite_shader,
+                    entry_point: Some("vs_preview"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &stroke_composite_shader,
+                    entry_point: Some(entry_point),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: surface_format,
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let brush_preview_pipeline =
+            create_preview_pipeline("brush stroke preview pipeline", "fs_preview_brush");
+        let eraser_preview_pipeline =
+            create_preview_pipeline("eraser stroke preview pipeline", "fs_preview_eraser");
 
         Ok(Self {
             stamp_buffer,
             cursor_buffer,
             stamp_uniform_buffer,
             view_uniform_buffer,
+            stroke_uniform_buffer,
             stamp_bind_group,
             cursor_bind_group,
             smudge_texture,
@@ -417,12 +526,63 @@ impl RenderResources {
             paint_sampler,
             stamp_bind_group_layout,
             blit_bind_group_layout,
+            stroke_preview_bind_group_layout,
+            stroke_preview_bind_group: None,
             mask_pipeline,
             smudge_pipeline,
             cursor_pipeline,
             background_pipeline,
             layer_pipeline,
+            brush_preview_pipeline,
+            eraser_preview_pipeline,
         })
+    }
+
+    pub(crate) fn prepare_stroke_preview(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layer_view: &wgpu::TextureView,
+        color: [f32; 4],
+    ) {
+        queue.write_buffer(
+            &self.stroke_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&StrokeUniform { color }),
+        );
+        self.stroke_preview_bind_group =
+            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("stroke preview bind group"),
+                layout: &self.stroke_preview_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Sampler(&self.paint_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(layer_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&self.stroke_mask_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: self.view_uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: self.stroke_uniform_buffer.as_entire_binding(),
+                    },
+                ],
+            }));
+    }
+
+    pub(crate) fn stroke_preview_bind_group(&self) -> &wgpu::BindGroup {
+        self.stroke_preview_bind_group
+            .as_ref()
+            .expect("brush and eraser strokes require a preview bind group")
     }
 
     pub(crate) fn create_paint_layer(

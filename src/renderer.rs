@@ -47,6 +47,12 @@ struct ViewUniform {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
+struct StrokeUniform {
+    color: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 struct CursorRaw {
     center: [f32; 2],
     half_size: [f32; 2],
@@ -332,11 +338,20 @@ impl PaintRenderer {
         if !self.history.begin_stroke(layer_id) {
             return false;
         }
+        let color = premultiply(color);
         self.active_stroke = Some(ActiveStroke {
             layer_id,
             tool,
-            color: premultiply(color),
+            color,
         });
+        if tool != PaintTool::Smudge {
+            self.resources.prepare_stroke_preview(
+                self.gpu.device(),
+                self.gpu.queue(),
+                &self.layers[layer_index].view,
+                color,
+            );
+        }
         let needs_history_sync = self.history.layer_needs_sync(layer_id);
         let mut encoder =
             self.gpu
@@ -633,9 +648,25 @@ impl PaintRenderer {
         pass.set_pipeline(&self.resources.background_pipeline);
         pass.set_bind_group(0, &self.layers[0].blit_bind_group, &[]);
         pass.draw(0..3, 0..1);
-        pass.set_pipeline(&self.resources.layer_pipeline);
         for layer in &self.layers {
-            pass.set_bind_group(0, &layer.blit_bind_group, &[]);
+            let preview_tool = self
+                .active_stroke
+                .filter(|stroke| stroke.layer_id == layer.id)
+                .map(|stroke| stroke.tool);
+            match preview_tool {
+                Some(PaintTool::Brush) => {
+                    pass.set_pipeline(&self.resources.brush_preview_pipeline);
+                    pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
+                }
+                Some(PaintTool::Eraser) => {
+                    pass.set_pipeline(&self.resources.eraser_preview_pipeline);
+                    pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
+                }
+                Some(PaintTool::Smudge) | None => {
+                    pass.set_pipeline(&self.resources.layer_pipeline);
+                    pass.set_bind_group(0, &layer.blit_bind_group, &[]);
+                }
+            }
             pass.draw(0..3, 0..1);
         }
         if brush_cursor.is_some() {
