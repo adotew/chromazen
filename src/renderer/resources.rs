@@ -20,8 +20,7 @@ pub(crate) struct RenderResources {
     paint_sampler: wgpu::Sampler,
     stamp_bind_group_layout: wgpu::BindGroupLayout,
     blit_bind_group_layout: wgpu::BindGroupLayout,
-    pub(crate) stamp_pipeline: wgpu::RenderPipeline,
-    pub(crate) eraser_pipeline: wgpu::RenderPipeline,
+    pub(crate) mask_pipeline: wgpu::RenderPipeline,
     pub(crate) smudge_pipeline: wgpu::RenderPipeline,
     pub(crate) cursor_pipeline: wgpu::RenderPipeline,
     pub(crate) background_pipeline: wgpu::RenderPipeline,
@@ -301,17 +300,46 @@ impl RenderResources {
                     cache: None,
                 })
             };
-        let stamp_pipeline = create_stamp_pipeline(
-            "stamp pipeline",
-            &stamp_shader,
-            Some(wgpu::BlendFactor::One),
-        );
-        let eraser_pipeline = create_stamp_pipeline(
-            "eraser pipeline",
-            &stamp_shader,
-            Some(wgpu::BlendFactor::Zero),
-        );
         let smudge_pipeline = create_stamp_pipeline("smudge pipeline", &smudge_shader, None);
+        let mask_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("stroke mask pipeline"),
+            layout: Some(&stamp_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &stamp_shader,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &stamp_shader,
+                entry_point: Some("fs_mask"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: STROKE_MASK_FORMAT,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            operation: wgpu::BlendOperation::Max,
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            operation: wgpu::BlendOperation::Max,
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::RED,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
         let cursor_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("brush cursor pipeline"),
             layout: Some(&stamp_pipeline_layout),
@@ -389,8 +417,7 @@ impl RenderResources {
             paint_sampler,
             stamp_bind_group_layout,
             blit_bind_group_layout,
-            stamp_pipeline,
-            eraser_pipeline,
+            mask_pipeline,
             smudge_pipeline,
             cursor_pipeline,
             background_pipeline,

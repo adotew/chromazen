@@ -57,9 +57,18 @@ fn vs(
   return out;
 }
 
+fn stampCoverage(in: VertexOut) -> f32 {
+  let mask = textureSample(brushStamp, brushSampler, in.uv).a;
+  return clamp(in.color.a * mask, 0.0, 1.0);
+}
+
 @fragment
 fn fs(in: VertexOut) -> @location(0) vec4f {
-  let mask = textureSample(brushStamp, brushSampler, in.uv).a;
-  let alpha = clamp(in.color.a * mask, 0.0, 1.0);
+  let alpha = stampCoverage(in);
   return vec4f(in.color.rgb * alpha, alpha);
+}
+
+@fragment
+fn fs_mask(in: VertexOut) -> @location(0) vec4f {
+  return vec4f(stampCoverage(in));
 }

@@ -685,9 +685,9 @@ impl PaintRenderer {
         }
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("stamp pass"),
+            label: Some("stroke mask stamp pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.layers[layer_index].view,
+                view: &self.resources.stroke_mask_view,
                 resolve_target: None,
                 depth_slice: None,
                 ops: wgpu::Operations {
@@ -700,11 +700,11 @@ impl PaintRenderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(match active_stroke.tool {
-            PaintTool::Brush => &self.resources.stamp_pipeline,
-            PaintTool::Eraser => &self.resources.eraser_pipeline,
-            PaintTool::Smudge => unreachable!("smudge stamps use their own passes"),
-        });
+        debug_assert!(matches!(
+            active_stroke.tool,
+            PaintTool::Brush | PaintTool::Eraser
+        ));
+        pass.set_pipeline(&self.resources.mask_pipeline);
         pass.set_bind_group(0, &self.resources.stamp_bind_group, &[]);
         pass.draw(0..6, 0..count as u32);
     }
