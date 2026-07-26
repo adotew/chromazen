@@ -188,13 +188,15 @@ impl PaintInputController {
                         *brush,
                         pressure_state,
                     );
+                    if !paint.begin_stroke(self.tool, point, brush.rgba()) {
+                        return false;
+                    }
                     self.is_drawing = true;
                     self.last_point = Some(point);
                     self.smoothing_options = smoothing_options;
                     self.smoother
                         .begin_with_strength(point, smoothing_options.strength);
-                    paint.begin_stroke(self.tool, point);
-                    self.tool != PaintTool::Smudge && paint.queue_stamp(point, brush.rgba())
+                    self.tool != PaintTool::Smudge && paint.queue_stamp(point)
                 }
                 (ElementState::Pressed, MouseButton::Middle | MouseButton::Right) => {
                     self.is_panning = true;
@@ -308,12 +310,11 @@ impl PaintInputController {
         points: Vec<StrokePoint>,
         brush: BrushSettings,
     ) -> usize {
-        let color = brush.rgba();
         let mut queued = 0;
         for point in points {
             if let Some(previous) = self.last_point {
-                queued += paint.stamp_line(previous, point, color, brush.spacing);
-            } else if paint.queue_stamp(point, color) {
+                queued += paint.stamp_line(previous, point, brush.spacing);
+            } else if paint.queue_stamp(point) {
                 queued += 1;
             }
             self.last_point = Some(point);

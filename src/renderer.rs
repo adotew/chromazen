@@ -59,6 +59,13 @@ pub(crate) struct BrushCursor {
     pub(crate) diameter: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ActiveStroke {
+    layer_id: LayerId,
+    tool: PaintTool,
+    color: [f32; 4],
+}
+
 pub struct PaintRenderer {
     gpu: GpuContext,
     document_size: [u32; 2],
@@ -69,7 +76,7 @@ pub struct PaintRenderer {
     next_layer_id: u64,
     next_layer_number: u64,
     stamp_queue: StampQueue,
-    stroke_tool: PaintTool,
+    active_stroke: Option<ActiveStroke>,
     history: PaintHistory,
     view: PaintView,
 }
@@ -110,7 +117,7 @@ impl PaintRenderer {
             next_layer_id: 2,
             next_layer_number: 2,
             stamp_queue: StampQueue::new(stamp_aspect),
-            stroke_tool: PaintTool::default(),
+            active_stroke: None,
             history,
             view: PaintView::default(),
         };
@@ -299,15 +306,22 @@ impl PaintRenderer {
         true
     }
 
-    pub fn begin_stroke(&mut self, tool: PaintTool, origin: StrokePoint) {
+    pub fn begin_stroke(&mut self, tool: PaintTool, origin: StrokePoint, color: [f32; 4]) -> bool {
+        if self.active_stroke.is_some() {
+            return false;
+        }
         let Some(layer_index) = self.selected_layer_index() else {
-            return;
+            return false;
         };
         let layer_id = self.layers[layer_index].id;
         if !self.history.begin_stroke(layer_id) {
-            return;
+            return false;
         }
-        self.stroke_tool = tool;
+        self.active_stroke = Some(ActiveStroke {
+            layer_id,
+            tool,
+            color: premultiply(color),
+        });
         let needs_history_sync = self.history.layer_needs_sync(layer_id);
         if needs_history_sync || tool == PaintTool::Smudge {
             let mut encoder =
@@ -349,12 +363,17 @@ impl PaintRenderer {
             self.gpu.queue().submit(std::iter::once(encoder.finish()));
         }
         self.stamp_queue.begin_stroke(origin);
+        true
     }
 
     pub fn end_stroke(&mut self) {
+        let Some(active_stroke) = self.active_stroke else {
+            return;
+        };
         self.flush_all_stamps();
         let Some(rect) = self.stamp_queue.end_stroke() else {
             self.history.end_empty_stroke();
+            self.active_stroke = None;
             return;
         };
 
@@ -365,17 +384,19 @@ impl PaintRenderer {
                     label: Some("history commit encoder"),
                 });
         let layer_index = self
-            .selected_layer_index()
-            .expect("stroke requires paint layer");
-        let layer_id = self.layers[layer_index].id;
+            .layers
+            .iter()
+            .position(|layer| layer.id == active_stroke.layer_id)
+            .expect("active stroke layer must exist");
         self.history.commit_stroke(
             self.gpu.device(),
             &mut encoder,
-            layer_id,
+            active_stroke.layer_id,
             &self.layers[layer_index].texture,
             rect,
         );
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.active_stroke = None;
     }
 
     pub fn can_undo(&self) -> bool {
@@ -454,30 +475,31 @@ impl PaintRenderer {
         }
     }
 
-    pub fn queue_stamp(&mut self, point: StrokePoint, color: [f32; 4]) -> bool {
-        self.can_paint()
-            && self.stamp_queue.queue_point(
-                point,
-                color,
-                self.document_size[0],
-                self.document_size[1],
-            )
+    pub fn queue_stamp(&mut self, point: StrokePoint) -> bool {
+        let Some(active_stroke) = self.active_stroke else {
+            return false;
+        };
+        self.stamp_queue.queue_point(
+            point,
+            active_stroke.color,
+            self.document_size[0],
+            self.document_size[1],
+        )
     }
 
     pub fn stamp_line(
         &mut self,
         from: StrokePoint,
         to: StrokePoint,
-        color: [f32; 4],
         spacing: BrushSpacing,
     ) -> usize {
-        if !self.can_paint() {
+        let Some(active_stroke) = self.active_stroke else {
             return 0;
-        }
+        };
         self.stamp_queue.stamp_line(
             from,
             to,
-            color,
+            active_stroke.color,
             spacing,
             self.document_size[0],
             self.document_size[1],
@@ -612,10 +634,13 @@ impl PaintRenderer {
             .queue()
             .write_buffer(&self.resources.stamp_buffer, 0, bytemuck::cast_slice(&raw));
 
+        let active_stroke = self.active_stroke.expect("stamp requires active stroke");
         let layer_index = self
-            .selected_layer_index()
-            .expect("stamp requires paint layer");
-        if self.stroke_tool == PaintTool::Smudge {
+            .layers
+            .iter()
+            .position(|layer| layer.id == active_stroke.layer_id)
+            .expect("active stroke layer must exist");
+        if active_stroke.tool == PaintTool::Smudge {
             self.flush_smudge_stamps(encoder, layer_index, &raw);
             return;
         }
@@ -636,7 +661,7 @@ impl PaintRenderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(match self.stroke_tool {
+        pass.set_pipeline(match active_stroke.tool {
             PaintTool::Brush => &self.resources.stamp_pipeline,
             PaintTool::Eraser => &self.resources.eraser_pipeline,
             PaintTool::Smudge => unreachable!("smudge stamps use their own passes"),
@@ -744,6 +769,13 @@ impl PaintRenderer {
             }),
         );
     }
+}
+
+fn premultiply(mut color: [f32; 4]) -> [f32; 4] {
+    color[0] *= color[3];
+    color[1] *= color[3];
+    color[2] *= color[3];
+    color
 }
 
 fn opaque_color(color: [u8; 3]) -> [f32; 4] {
