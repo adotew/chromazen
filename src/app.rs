@@ -367,9 +367,7 @@ impl App {
         let brush_resize_pos = self.input.brush_resize_pos();
         let resize_is_anchored = self.input.brush_resize_is_anchored();
         let is_resizing_brush = self.input.is_resizing_brush();
-        let brush_pressure = self
-            .input
-            .brush_cursor_pressure(self.pressure_state.brush_pressure());
+        let brush_pressure = self.pressure_state.brush_pressure();
         let paint = self.paint.as_mut()?;
         let gui = self.gui.as_mut()?;
         let pointer_over_ui = gui.context.is_pointer_over_egui();

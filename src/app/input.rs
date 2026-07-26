@@ -72,14 +72,6 @@ impl PaintInputController {
                     )))
     }
 
-    pub fn brush_cursor_pressure(&self, drawing_pressure: f32) -> f32 {
-        if self.is_drawing {
-            drawing_pressure
-        } else {
-            0.0
-        }
-    }
-
     pub fn observe_event(&mut self, event: &WindowEvent) -> bool {
         match event {
             WindowEvent::CursorMoved { position, .. } => {
@@ -415,14 +407,6 @@ mod tests {
         input.is_drawing = true;
         assert!(!input.select_tool_for_key(KeyCode::KeyB));
         assert_eq!(input.tool(), PaintTool::Eraser);
-    }
-
-    #[test]
-    fn cursor_uses_minimum_pressure_until_drawing() {
-        let mut input = PaintInputController::default();
-        assert_eq!(input.brush_cursor_pressure(0.6), 0.0);
-        input.is_drawing = true;
-        assert_eq!(input.brush_cursor_pressure(0.6), 0.6);
     }
 
     #[test]

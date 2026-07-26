@@ -160,16 +160,12 @@ mod macos_impl {
                     NSEventType::LeftMouseUp | NSEventType::MouseCancelled => {
                         pressure_state.end_pen_contact(is_pen_device)
                     }
-                    NSEventType::TabletPoint | NSEventType::Pressure => {
-                        if should_use_pressure {
-                            pressure_state.note_pen_pressure(
-                                pressure,
-                                has_meaningful_pressure,
-                                is_pen_device,
-                            )
-                        } else {
-                            false
-                        }
+                    NSEventType::TabletPoint | NSEventType::Pressure if should_use_pressure => {
+                        pressure_state.note_pen_pressure(
+                            pressure,
+                            has_meaningful_pressure,
+                            is_pen_device,
+                        )
                     }
                     NSEventType::TabletProximity => {
                         pressure_state.set_pen_proximity(event.isEnteringProximity())
