@@ -685,6 +685,10 @@ impl RenderResources {
             .expect("brush and eraser strokes require a preview bind group")
     }
 
+    pub(crate) fn clear_stroke_preview(&mut self) {
+        self.stroke_preview_bind_group = None;
+    }
+
     pub(crate) fn create_paint_layer(
         &self,
         device: &wgpu::Device,

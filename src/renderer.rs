@@ -66,11 +66,34 @@ pub(crate) struct BrushCursor {
     pub(crate) diameter: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StrokeRenderPath {
+    Mask,
+    DirectSmudge,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ActiveStroke {
     layer_id: LayerId,
     tool: PaintTool,
     color: [f32; 4],
+}
+
+impl ActiveStroke {
+    fn new(layer_id: LayerId, tool: PaintTool, color: [f32; 4]) -> Self {
+        Self {
+            layer_id,
+            tool,
+            color: premultiply(color),
+        }
+    }
+
+    fn render_path(self) -> StrokeRenderPath {
+        match self.tool {
+            PaintTool::Brush | PaintTool::Eraser => StrokeRenderPath::Mask,
+            PaintTool::Smudge => StrokeRenderPath::DirectSmudge,
+        }
+    }
 }
 
 pub struct PaintRenderer {
@@ -338,18 +361,14 @@ impl PaintRenderer {
         if !self.history.begin_stroke(layer_id) {
             return false;
         }
-        let color = premultiply(color);
-        self.active_stroke = Some(ActiveStroke {
-            layer_id,
-            tool,
-            color,
-        });
-        if tool != PaintTool::Smudge {
+        let active_stroke = ActiveStroke::new(layer_id, tool, color);
+        self.active_stroke = Some(active_stroke);
+        if active_stroke.render_path() == StrokeRenderPath::Mask {
             self.resources.prepare_stroke_preview(
                 self.gpu.device(),
                 self.gpu.queue(),
                 &self.layers[layer_index].view,
-                color,
+                active_stroke.color,
             );
         }
         let needs_history_sync = self.history.layer_needs_sync(layer_id);
@@ -418,7 +437,7 @@ impl PaintRenderer {
         self.flush_all_stamps();
         let Some(rect) = self.stamp_queue.end_stroke() else {
             self.history.end_empty_stroke();
-            self.active_stroke = None;
+            self.finish_active_stroke();
             return;
         };
 
@@ -468,7 +487,7 @@ impl PaintRenderer {
             rect,
         );
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
-        self.active_stroke = None;
+        self.finish_active_stroke();
     }
 
     pub fn can_undo(&self) -> bool {
@@ -737,7 +756,7 @@ impl PaintRenderer {
             .iter()
             .position(|layer| layer.id == active_stroke.layer_id)
             .expect("active stroke layer must exist");
-        if active_stroke.tool == PaintTool::Smudge {
+        if active_stroke.render_path() == StrokeRenderPath::DirectSmudge {
             self.flush_smudge_stamps(encoder, layer_index, &raw);
             return;
         }
@@ -828,6 +847,11 @@ impl PaintRenderer {
         }
     }
 
+    fn finish_active_stroke(&mut self) {
+        self.active_stroke = None;
+        self.resources.clear_stroke_preview();
+    }
+
     fn layer_texture_byte_len(&self) -> u64 {
         u64::from(self.document_size[0]) * u64::from(self.document_size[1]) * 4
     }
@@ -882,4 +906,36 @@ fn opaque_color(color: [u8; 3]) -> [f32; 4] {
         f32::from(color[2]) / 255.0,
         1.0,
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_stroke_captures_layer_tool_and_premultiplied_color() {
+        let stroke = ActiveStroke::new(LayerId(7), PaintTool::Brush, [0.8, 0.4, 0.2, 0.5]);
+
+        assert_eq!(stroke.layer_id, LayerId(7));
+        assert_eq!(stroke.tool, PaintTool::Brush);
+        assert_eq!(stroke.color, [0.4, 0.2, 0.1, 0.5]);
+    }
+
+    #[test]
+    fn brush_and_eraser_use_masks_while_smudge_is_direct() {
+        let color = [0.0, 0.0, 0.0, 1.0];
+
+        assert_eq!(
+            ActiveStroke::new(LayerId(1), PaintTool::Brush, color).render_path(),
+            StrokeRenderPath::Mask
+        );
+        assert_eq!(
+            ActiveStroke::new(LayerId(1), PaintTool::Eraser, color).render_path(),
+            StrokeRenderPath::Mask
+        );
+        assert_eq!(
+            ActiveStroke::new(LayerId(1), PaintTool::Smudge, color).render_path(),
+            StrokeRenderPath::DirectSmudge
+        );
+    }
 }
