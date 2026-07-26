@@ -158,7 +158,7 @@ impl PaintRenderer {
     }
 
     pub fn try_set_brush_preset(&mut self, preset: &LoadedBrushPreset) -> Result<bool, String> {
-        if self.stamp_queue.has_pending() {
+        if self.active_stroke.is_some() || self.stamp_queue.has_pending() {
             return Ok(false);
         }
         self.resources.replace_brush_stamp(
@@ -192,7 +192,7 @@ impl PaintRenderer {
     }
 
     pub fn can_paint(&self) -> bool {
-        self.selected_layer_index().is_some()
+        self.active_stroke.is_none() && self.selected_layer_index().is_some()
     }
 
     pub(crate) fn layer_snapshot(&self) -> LayerSnapshot {
@@ -215,6 +215,9 @@ impl PaintRenderer {
     }
 
     pub(crate) fn select_layer(&mut self, id: LayerId) -> bool {
+        if self.active_stroke.is_some() {
+            return false;
+        }
         if self.layers.iter().any(|layer| layer.id == id) {
             self.selection = id;
             true
@@ -224,10 +227,15 @@ impl PaintRenderer {
     }
 
     pub(crate) fn set_background_color(&mut self, color: [u8; 3]) {
-        self.background_color = opaque_color(color);
+        if self.active_stroke.is_none() {
+            self.background_color = opaque_color(color);
+        }
     }
 
     pub(crate) fn commit_background_color(&mut self, before: [u8; 3], after: [u8; 3]) {
+        if self.active_stroke.is_some() {
+            return;
+        }
         let before = opaque_color(before);
         let after = opaque_color(after);
         self.background_color = after;
@@ -235,7 +243,10 @@ impl PaintRenderer {
     }
 
     pub(crate) fn add_layer(&mut self) -> bool {
-        if self.history.stroke_active() || self.stamp_queue.has_pending() {
+        if self.active_stroke.is_some()
+            || self.history.stroke_active()
+            || self.stamp_queue.has_pending()
+        {
             return false;
         }
         let selection_before = self.selection;
@@ -280,7 +291,10 @@ impl PaintRenderer {
     }
 
     pub(crate) fn can_delete_selected_layer(&self) -> bool {
-        self.layers.len() > 1 && !self.history.stroke_active() && !self.stamp_queue.has_pending()
+        self.layers.len() > 1
+            && self.active_stroke.is_none()
+            && !self.history.stroke_active()
+            && !self.stamp_queue.has_pending()
     }
 
     pub(crate) fn delete_selected_layer(&mut self) -> bool {
@@ -400,14 +414,17 @@ impl PaintRenderer {
     }
 
     pub fn can_undo(&self) -> bool {
-        !self.stamp_queue.has_pending() && self.history.can_undo()
+        self.active_stroke.is_none() && !self.stamp_queue.has_pending() && self.history.can_undo()
     }
 
     pub fn can_redo(&self) -> bool {
-        !self.stamp_queue.has_pending() && self.history.can_redo()
+        self.active_stroke.is_none() && !self.stamp_queue.has_pending() && self.history.can_redo()
     }
 
     pub fn undo(&mut self) -> bool {
+        if self.active_stroke.is_some() {
+            return false;
+        }
         match self.history.undo_target() {
             Some(HistoryTarget::Structure) => self.history.undo_structure(
                 &mut self.layers,
@@ -442,6 +459,9 @@ impl PaintRenderer {
     }
 
     pub fn redo(&mut self) -> bool {
+        if self.active_stroke.is_some() {
+            return false;
+        }
         match self.history.redo_target() {
             Some(HistoryTarget::Structure) => self.history.redo_structure(
                 &mut self.layers,
@@ -507,6 +527,9 @@ impl PaintRenderer {
     }
 
     pub fn clear_canvas(&mut self) {
+        if self.active_stroke.is_some() {
+            return;
+        }
         self.stamp_queue.clear();
         self.history.clear();
         let mut encoder =
