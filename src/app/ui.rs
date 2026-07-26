@@ -214,13 +214,7 @@ impl GuiLayer {
         }
 
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.label("Size");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.weak(format!("{:.0} px", self.brush.size));
-            });
-        });
-        ui.add(egui::Slider::new(&mut self.brush.size, self.size_range.clone()).show_value(false));
+        ui.weak(brush_size_hint(self.brush.size));
     }
 
     pub fn run(
@@ -580,6 +574,10 @@ fn show_layer_row(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+fn brush_size_hint(brush_size: f32) -> String {
+    format!("Size: {brush_size:.0} px · Hold R and drag")
+}
+
 fn show_brush_resize_overlay(ui: &egui::Ui, brush_size: f32, canvas_zoom: f32) {
     let canvas_rect = ui.available_rect_before_wrap();
     let center = canvas_rect.center();
@@ -696,5 +694,10 @@ mod tests {
     fn brush_overlay_matches_canvas_scale() {
         assert_eq!(brush_overlay_diameter(48.0, 2.0, 2.0), 48.0);
         assert_eq!(brush_overlay_diameter(48.0, 0.5, 1.0), 24.0);
+    }
+
+    #[test]
+    fn brush_size_hint_explains_resize_gesture() {
+        assert_eq!(brush_size_hint(48.4), "Size: 48 px · Hold R and drag");
     }
 }
