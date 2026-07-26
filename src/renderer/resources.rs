@@ -34,6 +34,7 @@ pub(crate) struct RenderResources {
     pub(crate) brush_preview_pipeline: wgpu::RenderPipeline,
     pub(crate) eraser_preview_pipeline: wgpu::RenderPipeline,
     pub(crate) brush_commit_pipeline: wgpu::RenderPipeline,
+    pub(crate) eraser_commit_pipeline: wgpu::RenderPipeline,
 }
 
 impl RenderResources {
@@ -556,9 +557,9 @@ impl RenderResources {
             create_preview_pipeline("brush stroke preview pipeline", "fs_preview_brush");
         let eraser_preview_pipeline =
             create_preview_pipeline("eraser stroke preview pipeline", "fs_preview_eraser");
-        let brush_commit_pipeline =
+        let create_commit_pipeline = |label, entry_point, blend| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("brush stroke commit pipeline"),
+                label: Some(label),
                 layout: Some(&stroke_commit_pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &stroke_composite_shader,
@@ -568,11 +569,11 @@ impl RenderResources {
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &stroke_composite_shader,
-                    entry_point: Some("fs_commit_brush"),
+                    entry_point: Some(entry_point),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: DOCUMENT_FORMAT,
-                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        blend: Some(blend),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
@@ -584,7 +585,26 @@ impl RenderResources {
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
                 cache: None,
-            });
+            })
+        };
+        let brush_commit_pipeline = create_commit_pipeline(
+            "brush stroke commit pipeline",
+            "fs_commit_brush",
+            wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+        );
+        let erase_blend = wgpu::BlendComponent {
+            operation: wgpu::BlendOperation::Add,
+            src_factor: wgpu::BlendFactor::Zero,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+        };
+        let eraser_commit_pipeline = create_commit_pipeline(
+            "eraser stroke commit pipeline",
+            "fs_commit_eraser",
+            wgpu::BlendState {
+                color: erase_blend,
+                alpha: erase_blend,
+            },
+        );
 
         Ok(Self {
             stamp_buffer,
@@ -614,6 +634,7 @@ impl RenderResources {
             brush_preview_pipeline,
             eraser_preview_pipeline,
             brush_commit_pipeline,
+            eraser_commit_pipeline,
         })
     }
 

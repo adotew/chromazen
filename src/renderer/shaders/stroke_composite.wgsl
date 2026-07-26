@@ -71,3 +71,8 @@ fn committedCoverage(pos: vec4f) -> f32 {
 fn fs_commit_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   return stroke.color * committedCoverage(pos);
 }
+
+@fragment
+fn fs_commit_eraser(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  return vec4f(0.0, 0.0, 0.0, committedCoverage(pos));
+}

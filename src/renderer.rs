@@ -433,9 +433,14 @@ impl PaintRenderer {
             .iter()
             .position(|layer| layer.id == active_stroke.layer_id)
             .expect("active stroke layer must exist");
-        if active_stroke.tool == PaintTool::Brush {
+        let commit_pipeline = match active_stroke.tool {
+            PaintTool::Brush => Some(&self.resources.brush_commit_pipeline),
+            PaintTool::Eraser => Some(&self.resources.eraser_commit_pipeline),
+            PaintTool::Smudge => None,
+        };
+        if let Some(commit_pipeline) = commit_pipeline {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("brush stroke commit pass"),
+                label: Some("stroke commit pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &self.layers[layer_index].view,
                     resolve_target: None,
@@ -450,7 +455,7 @@ impl PaintRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.resources.brush_commit_pipeline);
+            pass.set_pipeline(commit_pipeline);
             pass.set_bind_group(0, &self.resources.stroke_commit_bind_group, &[]);
             pass.set_scissor_rect(rect.x, rect.y, rect.width, rect.height);
             pass.draw(0..3, 0..1);
