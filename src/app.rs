@@ -234,10 +234,7 @@ impl App {
 
         let layer_snapshot = paint.layer_snapshot();
         let tool = self.input.tool();
-        let brush_resize_pos = self
-            .input
-            .brush_resize_pos()
-            .filter(|position| paint.window_point_is_on_canvas(*position));
+        let brush_resize_pos = self.input.brush_resize_pos();
         let (full_output, commands) = {
             let Some(gui) = self.gui.as_mut() else {
                 return;
@@ -377,19 +374,14 @@ impl App {
         let gui = self.gui.as_mut()?;
         let pointer_over_ui = gui.context.is_pointer_over_egui();
         let brush_cursor = brush_resize_pos
-            .filter(|position| {
-                (resize_is_anchored || !pointer_over_ui)
-                    && paint.window_point_is_on_canvas(*position)
-            })
+            .filter(|_| resize_is_anchored || !pointer_over_ui)
             .map(|center| BrushCursor {
                 center,
                 diameter: gui.brush.size,
             })
             .or_else(|| {
                 cursor_pos
-                    .filter(|position| {
-                        !pointer_over_ui && paint.window_point_is_on_canvas(*position)
-                    })
+                    .filter(|_| !pointer_over_ui)
                     .map(|center| BrushCursor {
                         center,
                         diameter: gui.brush.radius(brush_pressure) * 2.0,

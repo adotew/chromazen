@@ -184,10 +184,6 @@ impl PaintRenderer {
         self.view.window_to_document(point)
     }
 
-    pub fn window_point_is_on_canvas(&self, point: [f32; 2]) -> bool {
-        point_in_document(self.window_to_document(point), self.document_size)
-    }
-
     pub fn can_paint(&self) -> bool {
         self.selected_layer_index().is_some()
     }
@@ -750,10 +746,6 @@ impl PaintRenderer {
     }
 }
 
-fn point_in_document(point: [f32; 2], size: [u32; 2]) -> bool {
-    point[0] >= 0.0 && point[1] >= 0.0 && point[0] <= size[0] as f32 && point[1] <= size[1] as f32
-}
-
 fn opaque_color(color: [u8; 3]) -> [f32; 4] {
     [
         f32::from(color[0]) / 255.0,
@@ -761,18 +753,4 @@ fn opaque_color(color: [u8; 3]) -> [f32; 4] {
         f32::from(color[2]) / 255.0,
         1.0,
     ]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn canvas_bounds_include_edges() {
-        let size = [4000, 3000];
-        assert!(point_in_document([0.0, 0.0], size));
-        assert!(point_in_document([4000.0, 3000.0], size));
-        assert!(!point_in_document([-0.1, 10.0], size));
-        assert!(!point_in_document([10.0, 3000.1], size));
-    }
 }
