@@ -26,6 +26,7 @@ use crate::{
 const DEFAULT_CANVAS_WIDTH: u32 = 4000;
 const DEFAULT_CANVAS_HEIGHT: u32 = 4000;
 const DOCUMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+const STROKE_MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -337,45 +338,60 @@ impl PaintRenderer {
             color: premultiply(color),
         });
         let needs_history_sync = self.history.layer_needs_sync(layer_id);
-        if needs_history_sync || tool == PaintTool::Smudge {
-            let mut encoder =
-                self.gpu
-                    .device()
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("stroke setup encoder"),
-                    });
-            if needs_history_sync {
-                self.history.ensure_layer_synced(
-                    &mut encoder,
-                    layer_id,
-                    &self.layers[layer_index].texture,
-                    self.document_size,
-                );
-            }
-            if tool == PaintTool::Smudge {
-                // Smudge samples this snapshot because the layer cannot be sampled while attached.
-                encoder.copy_texture_to_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &self.layers[layer_index].texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &self.resources.smudge_texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::Extent3d {
-                        width: self.document_size[0],
-                        height: self.document_size[1],
-                        depth_or_array_layers: 1,
-                    },
-                );
-            }
-            self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        let mut encoder =
+            self.gpu
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("stroke setup encoder"),
+                });
+        if needs_history_sync {
+            self.history.ensure_layer_synced(
+                &mut encoder,
+                layer_id,
+                &self.layers[layer_index].texture,
+                self.document_size,
+            );
         }
+        if tool == PaintTool::Smudge {
+            // Smudge samples this snapshot because the layer cannot be sampled while attached.
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.layers[layer_index].texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.resources.smudge_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: self.document_size[0],
+                    height: self.document_size[1],
+                    depth_or_array_layers: 1,
+                },
+            );
+        } else {
+            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("stroke mask clear pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.resources.stroke_mask_view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        }
+        self.gpu.queue().submit(std::iter::once(encoder.finish()));
         self.stamp_queue.begin_stroke(origin);
         true
     }

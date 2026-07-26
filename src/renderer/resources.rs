@@ -2,7 +2,7 @@ use wgpu::util::DeviceExt;
 
 use super::layers::{LayerId, PaintLayer};
 use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
-use super::{CursorRaw, DOCUMENT_FORMAT, PaintUniform, ViewUniform};
+use super::{CursorRaw, DOCUMENT_FORMAT, PaintUniform, STROKE_MASK_FORMAT, ViewUniform};
 
 pub(crate) struct RenderResources {
     pub(crate) stamp_buffer: wgpu::Buffer,
@@ -13,6 +13,8 @@ pub(crate) struct RenderResources {
     pub(crate) cursor_bind_group: wgpu::BindGroup,
     pub(crate) smudge_texture: wgpu::Texture,
     smudge_texture_view: wgpu::TextureView,
+    _stroke_mask_texture: wgpu::Texture,
+    pub(crate) stroke_mask_view: wgpu::TextureView,
     brush_texture: wgpu::Texture,
     brush_sampler: wgpu::Sampler,
     paint_sampler: wgpu::Sampler,
@@ -89,6 +91,8 @@ impl RenderResources {
             ..Default::default()
         });
         let (smudge_texture, smudge_texture_view) = create_paint_texture(device, document_size);
+        let (stroke_mask_texture, stroke_mask_view) =
+            create_stroke_mask_texture(device, document_size);
 
         let stamp_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -378,6 +382,8 @@ impl RenderResources {
             cursor_bind_group,
             smudge_texture,
             smudge_texture_view,
+            _stroke_mask_texture: stroke_mask_texture,
+            stroke_mask_view,
             brush_texture,
             brush_sampler,
             paint_sampler,
@@ -541,6 +547,28 @@ fn create_brush_texture(
             depth_or_array_layers: 1,
         },
     );
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
+}
+
+fn create_stroke_mask_texture(
+    device: &wgpu::Device,
+    size: [u32; 2],
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("stroke mask texture"),
+        size: wgpu::Extent3d {
+            width: size[0],
+            height: size[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: STROKE_MASK_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
 }
