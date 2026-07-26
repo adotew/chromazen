@@ -99,7 +99,7 @@ pub(crate) struct SpacingConfig {
 impl Default for SpacingConfig {
     fn default() -> Self {
         Self {
-            ratio: 0.25,
+            ratio: 0.03,
             minimum: 1.0,
         }
     }

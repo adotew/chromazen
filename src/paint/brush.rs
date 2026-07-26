@@ -72,7 +72,7 @@ pub(crate) struct BrushSpacing {
 impl Default for BrushSpacing {
     fn default() -> Self {
         Self {
-            ratio: 0.25,
+            ratio: 0.03,
             minimum: 1.0,
         }
     }

@@ -316,7 +316,8 @@ mod tests {
     fn stamp_spacing_has_a_one_pixel_floor() {
         let spacing = BrushSpacing::default();
         assert_eq!(get_stamp_spacing(0.5, spacing), 1.0);
-        assert_eq!(get_stamp_spacing(20.0, spacing), 5.0);
+        assert_eq!(get_stamp_spacing(20.0, spacing), 1.0);
+        assert_eq!(get_stamp_spacing(100.0, spacing), 3.0);
     }
 
     #[test]

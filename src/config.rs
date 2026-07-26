@@ -366,6 +366,7 @@ mod tests {
         let sketch = store.load_brush("sketch").expect("sketch brush");
 
         assert_eq!(charcoal.id, "charcoal");
+        assert_eq!(charcoal.preset.spacing.ratio, 0.03);
         assert_eq!(sketch.id, "sketch");
         assert_eq!(sketch.preset.size.default, 18.0);
         assert_eq!(sketch.preset.spacing.ratio, 0.08);
