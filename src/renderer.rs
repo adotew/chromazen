@@ -134,6 +134,14 @@ impl PaintRenderer {
     pub fn zoom(&self) -> f32 {
         self.view.zoom()
     }
+    pub fn brush_outline_half_size(&self, diameter: f32) -> [f32; 2] {
+        let half_size = self.stamp_queue.half_size(diameter * 0.5);
+        let zoom = self.view.zoom();
+        [
+            (half_size[0] * zoom).max(0.5),
+            (half_size[1] * zoom).max(0.5),
+        ]
+    }
     pub fn has_pending_stamps(&self) -> bool {
         self.stamp_queue.has_pending()
     }
@@ -727,18 +735,14 @@ impl PaintRenderer {
     }
 
     fn write_brush_cursor(&self, cursor: BrushCursor) {
-        let half_size = self.stamp_queue.half_size(cursor.diameter * 0.5);
-        let zoom = self.view.zoom();
+        let half_size = self.brush_outline_half_size(cursor.diameter);
         let surface_size = self.surface_size();
         self.gpu.queue().write_buffer(
             &self.resources.cursor_buffer,
             0,
             bytemuck::bytes_of(&CursorRaw {
                 center: cursor.center,
-                half_size: [
-                    (half_size[0] * zoom).max(0.5),
-                    (half_size[1] * zoom).max(0.5),
-                ],
+                half_size,
                 surface_size: [surface_size[0] as f32, surface_size[1] as f32],
                 padding: [0.0; 2],
             }),

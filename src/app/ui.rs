@@ -16,6 +16,12 @@ use crate::{
 
 use super::command::AppCommand;
 
+#[derive(Clone, Copy)]
+pub(crate) struct BrushResizeLabel {
+    pub(crate) center: [f32; 2],
+    pub(crate) outline_half_width: f32,
+}
+
 pub struct GuiLayer {
     pub context: egui::Context,
     pub state: EguiWinitState,
@@ -212,9 +218,6 @@ impl GuiLayer {
         if egui::Popup::is_id_open(ui.ctx(), brush_popup_id) {
             self.load_next_brush_preview();
         }
-
-        ui.add_space(8.0);
-        ui.weak(brush_size_hint(self.brush.size));
     }
 
     pub fn run(
@@ -222,8 +225,7 @@ impl GuiLayer {
         window: &Window,
         layers: &LayerSnapshot,
         tool: PaintTool,
-        is_resizing_brush: bool,
-        canvas_zoom: f32,
+        brush_resize_label: Option<BrushResizeLabel>,
     ) -> egui::FullOutput {
         self.load_brush_preview(&self.active_brush.clone());
         let raw_input = self.state.take_egui_input(window);
@@ -330,8 +332,8 @@ impl GuiLayer {
                         });
                 });
 
-            if is_resizing_brush {
-                show_brush_resize_overlay(ui, self.brush.size, canvas_zoom);
+            if let Some(label) = brush_resize_label {
+                show_brush_resize_label(ui, label, self.brush.size);
             }
 
             egui::Area::new(egui::Id::new("tool mode"))
@@ -574,40 +576,44 @@ fn show_layer_row(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-fn brush_size_hint(brush_size: f32) -> String {
-    format!("Size: {brush_size:.0} px · Hold R and drag")
-}
-
-fn show_brush_resize_overlay(ui: &egui::Ui, brush_size: f32, canvas_zoom: f32) {
+fn show_brush_resize_label(ui: &egui::Ui, overlay: BrushResizeLabel, brush_size: f32) {
+    let pixels_per_point = ui.ctx().pixels_per_point();
+    let center = egui::pos2(
+        overlay.center[0] / pixels_per_point,
+        overlay.center[1] / pixels_per_point,
+    );
     let canvas_rect = ui.available_rect_before_wrap();
-    let center = canvas_rect.center();
-    let diameter = brush_overlay_diameter(brush_size, canvas_zoom, ui.ctx().pixels_per_point());
-    let radius = (diameter * 0.5).max(0.5);
+    if !canvas_rect.contains(center) {
+        return;
+    }
+
     let painter = ui.painter().with_clip_rect(canvas_rect);
-
-    painter.circle_stroke(center, radius, egui::Stroke::new(3.0, egui::Color32::BLACK));
-    painter.circle_stroke(center, radius, egui::Stroke::new(1.0, egui::Color32::WHITE));
-
-    let label = format!("{brush_size:.0} px");
+    let text = format!("{brush_size:.0} px");
     let font = egui::FontId::proportional(16.0);
+    let text_width = painter
+        .layout_no_wrap(text.clone(), font.clone(), egui::Color32::WHITE)
+        .size()
+        .x;
+    let half_width = overlay.outline_half_width / pixels_per_point;
+    let gap = 10.0;
+    let right_x = center.x + half_width + gap;
+    let (position, align) = if right_x + text_width <= canvas_rect.right() {
+        (egui::pos2(right_x, center.y), egui::Align2::LEFT_CENTER)
+    } else {
+        (
+            egui::pos2(center.x - half_width - gap, center.y),
+            egui::Align2::RIGHT_CENTER,
+        )
+    };
+
     painter.text(
-        center + egui::vec2(1.0, 1.0),
-        egui::Align2::CENTER_CENTER,
-        &label,
+        position + egui::vec2(1.0, 1.0),
+        align,
+        &text,
         font.clone(),
         egui::Color32::BLACK,
     );
-    painter.text(
-        center,
-        egui::Align2::CENTER_CENTER,
-        label,
-        font,
-        egui::Color32::WHITE,
-    );
-}
-
-fn brush_overlay_diameter(brush_size: f32, canvas_zoom: f32, pixels_per_point: f32) -> f32 {
-    brush_size * canvas_zoom / pixels_per_point
+    painter.text(position, align, text, font, egui::Color32::WHITE);
 }
 
 fn show_tool_badge(ui: &mut egui::Ui, tool: PaintTool) {
@@ -688,16 +694,5 @@ mod tests {
     fn background_color_round_trips_through_ui() {
         let color = [0.25, 0.5, 0.75, 1.0];
         assert_eq!(rgb(background_color(color)), [64, 128, 191]);
-    }
-
-    #[test]
-    fn brush_overlay_matches_canvas_scale() {
-        assert_eq!(brush_overlay_diameter(48.0, 2.0, 2.0), 48.0);
-        assert_eq!(brush_overlay_diameter(48.0, 0.5, 1.0), 24.0);
-    }
-
-    #[test]
-    fn brush_size_hint_explains_resize_gesture() {
-        assert_eq!(brush_size_hint(48.4), "Size: 48 px · Hold R and drag");
     }
 }

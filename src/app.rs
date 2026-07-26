@@ -22,7 +22,7 @@ use self::{
     input::PaintInputController,
     menu::NativeMenu,
     settings::{SettingsCommand, SettingsController, SettingsEffect},
-    ui::GuiLayer,
+    ui::{BrushResizeLabel, GuiLayer},
 };
 use crate::{
     platform::{MacosPressureMonitor, PressureStateHandle},
@@ -234,19 +234,20 @@ impl App {
 
         let layer_snapshot = paint.layer_snapshot();
         let tool = self.input.tool();
-        let is_resizing_brush = self.input.is_resizing_brush();
+        let brush_resize_pos = self
+            .input
+            .brush_resize_pos()
+            .filter(|position| paint.window_point_is_on_canvas(*position));
         let (full_output, commands) = {
             let Some(gui) = self.gui.as_mut() else {
                 return;
             };
             gui.sync_layer_thumbnails(paint);
-            let output = gui.run(
-                window,
-                &layer_snapshot,
-                tool,
-                is_resizing_brush,
-                paint.zoom(),
-            );
+            let brush_resize_label = brush_resize_pos.map(|center| BrushResizeLabel {
+                center,
+                outline_half_width: paint.brush_outline_half_size(gui.brush.size)[0],
+            });
+            let output = gui.run(window, &layer_snapshot, tool, brush_resize_label);
             (output, gui.take_commands())
         };
         self.pending_commands.extend(commands);
@@ -366,23 +367,38 @@ impl App {
         full_output: egui::FullOutput,
     ) -> Option<RenderOutcome> {
         let cursor_pos = self.input.brush_cursor_pos();
+        let brush_resize_pos = self.input.brush_resize_pos();
+        let resize_is_anchored = self.input.brush_resize_is_anchored();
+        let is_resizing_brush = self.input.is_resizing_brush();
         let brush_pressure = self
             .input
             .brush_cursor_pressure(self.pressure_state.brush_pressure());
         let paint = self.paint.as_mut()?;
         let gui = self.gui.as_mut()?;
-        let brush_cursor = cursor_pos
+        let pointer_over_ui = gui.context.is_pointer_over_egui();
+        let brush_cursor = brush_resize_pos
             .filter(|position| {
-                !gui.context.is_pointer_over_egui() && paint.window_point_is_on_canvas(*position)
+                (resize_is_anchored || !pointer_over_ui)
+                    && paint.window_point_is_on_canvas(*position)
             })
             .map(|center| BrushCursor {
                 center,
-                diameter: gui.brush.radius(brush_pressure) * 2.0,
+                diameter: gui.brush.size,
+            })
+            .or_else(|| {
+                cursor_pos
+                    .filter(|position| {
+                        !pointer_over_ui && paint.window_point_is_on_canvas(*position)
+                    })
+                    .map(|center| BrushCursor {
+                        center,
+                        diameter: gui.brush.radius(brush_pressure) * 2.0,
+                    })
             });
         let repaint_delay = ui::repaint_delay(&full_output);
         gui.state
             .handle_platform_output(window, full_output.platform_output);
-        window.set_cursor_visible(brush_cursor.is_none());
+        window.set_cursor_visible(is_resizing_brush || brush_cursor.is_none());
 
         for (id, image_delta) in &full_output.textures_delta.set {
             gui.renderer

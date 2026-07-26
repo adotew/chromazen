@@ -25,6 +25,7 @@ pub struct PaintInputController {
     is_panning: bool,
     is_space_down: bool,
     is_resize_down: bool,
+    resize_origin: Option<[f32; 2]>,
     resize_drag: Option<BrushResizeDrag>,
     last_point: Option<StrokePoint>,
     last_pan_pos: [f32; 2],
@@ -46,6 +47,18 @@ impl PaintInputController {
 
     pub fn is_resizing_brush(&self) -> bool {
         self.is_resize_down
+    }
+
+    pub fn brush_resize_pos(&self) -> Option<[f32; 2]> {
+        if !self.is_resize_down {
+            return None;
+        }
+        self.resize_origin
+            .or(self.cursor_inside.then_some(self.cursor_pos))
+    }
+
+    pub fn brush_resize_is_anchored(&self) -> bool {
+        self.resize_origin.is_some()
     }
 
     pub fn captures_resize_event(&self, event: &WindowEvent) -> bool {
@@ -158,10 +171,7 @@ impl PaintInputController {
             WindowEvent::MouseInput { state, button, .. } if self.is_resize_down => {
                 match (state, button) {
                     (ElementState::Pressed, MouseButton::Left) => {
-                        self.resize_drag = Some(BrushResizeDrag {
-                            start_y: self.cursor_pos[1],
-                            start_size: brush.size,
-                        });
+                        self.begin_brush_resize_drag(brush.size);
                         true
                     }
                     (ElementState::Released, MouseButton::Left) => {
@@ -232,6 +242,7 @@ impl PaintInputController {
                     };
                     self.is_resize_down = resize_down;
                     if !resize_down {
+                        self.resize_origin = None;
                         self.resize_drag = None;
                     }
                     return changed || ended_stroke;
@@ -260,11 +271,20 @@ impl PaintInputController {
             }
             WindowEvent::Focused(false) => {
                 self.is_resize_down = false;
+                self.resize_origin = None;
                 self.resize_drag = None;
                 self.end_stroke(paint, *brush)
             }
             _ => false,
         }
+    }
+
+    fn begin_brush_resize_drag(&mut self, brush_size: f32) {
+        self.resize_origin.get_or_insert(self.cursor_pos);
+        self.resize_drag = Some(BrushResizeDrag {
+            start_y: self.cursor_pos[1],
+            start_size: brush_size,
+        });
     }
 
     fn select_tool_for_key(&mut self, key: KeyCode) -> bool {
@@ -422,9 +442,30 @@ mod tests {
             ..PaintInputController::default()
         };
         assert_eq!(input.brush_cursor_pos(), None);
+        assert_eq!(input.brush_resize_pos(), Some([0.0, 0.0]));
         assert!(input.captures_resize_event(&WindowEvent::Focused(false)));
+        input.resize_origin = Some([20.0, 30.0]);
+        input.cursor_pos = [40.0, 50.0];
+        assert_eq!(input.brush_resize_pos(), Some([20.0, 30.0]));
+        assert!(input.brush_resize_is_anchored());
         input.is_resize_down = false;
-        assert_eq!(input.brush_cursor_pos(), Some([0.0, 0.0]));
+        assert_eq!(input.brush_cursor_pos(), Some([40.0, 50.0]));
+    }
+
+    #[test]
+    fn repeated_resize_drags_keep_the_first_origin() {
+        let mut input = PaintInputController {
+            cursor_pos: [20.0, 30.0],
+            ..PaintInputController::default()
+        };
+        input.begin_brush_resize_drag(48.0);
+        input.cursor_pos = [40.0, 80.0];
+        input.begin_brush_resize_drag(64.0);
+
+        assert_eq!(input.resize_origin, Some([20.0, 30.0]));
+        let drag = input.resize_drag.unwrap();
+        assert_eq!(drag.start_y, 80.0);
+        assert_eq!(drag.start_size, 64.0);
     }
 
     #[test]
