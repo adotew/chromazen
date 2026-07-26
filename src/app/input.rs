@@ -51,11 +51,12 @@ impl PaintInputController {
     pub fn captures_resize_event(&self, event: &WindowEvent) -> bool {
         self.resize_drag.is_some()
             || (self.is_resize_down
-                && matches!(
-                    event,
-                    WindowEvent::KeyboardInput { event, .. }
-                        if event.physical_key == PhysicalKey::Code(KeyCode::KeyR)
-                ))
+                && (matches!(event, WindowEvent::Focused(false))
+                    || matches!(
+                        event,
+                        WindowEvent::KeyboardInput { event, .. }
+                            if event.physical_key == PhysicalKey::Code(KeyCode::KeyR)
+                    )))
     }
 
     pub fn brush_cursor_pressure(&self, drawing_pressure: f32) -> f32 {
@@ -421,6 +422,7 @@ mod tests {
             ..PaintInputController::default()
         };
         assert_eq!(input.brush_cursor_pos(), None);
+        assert!(input.captures_resize_event(&WindowEvent::Focused(false)));
         input.is_resize_down = false;
         assert_eq!(input.brush_cursor_pos(), Some([0.0, 0.0]));
     }
