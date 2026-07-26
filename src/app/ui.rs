@@ -351,6 +351,10 @@ impl GuiLayer {
         std::mem::take(&mut self.commands)
     }
 
+    pub(crate) fn brush_size_range(&self) -> std::ops::RangeInclusive<f32> {
+        self.size_range.clone()
+    }
+
     pub(crate) fn settings_snapshot(&self) -> (CurrentBrushConfig, String) {
         (self.current_brush_config(), self.active_brush.clone())
     }

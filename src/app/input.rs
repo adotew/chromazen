@@ -11,6 +11,12 @@ use crate::{
 
 use super::command::AppCommand;
 
+#[derive(Debug, Clone, Copy)]
+struct BrushResizeDrag {
+    start_y: f32,
+    start_size: f32,
+}
+
 #[derive(Debug, Default)]
 pub struct PaintInputController {
     cursor_pos: [f32; 2],
@@ -18,6 +24,8 @@ pub struct PaintInputController {
     is_drawing: bool,
     is_panning: bool,
     is_space_down: bool,
+    is_resize_down: bool,
+    resize_drag: Option<BrushResizeDrag>,
     last_point: Option<StrokePoint>,
     last_pan_pos: [f32; 2],
     smoother: StrokeSmoother,
@@ -32,7 +40,18 @@ impl PaintInputController {
     }
 
     pub fn brush_cursor_pos(&self) -> Option<[f32; 2]> {
-        (self.cursor_inside && !self.is_panning && !self.is_space_down).then_some(self.cursor_pos)
+        (self.cursor_inside && !self.is_panning && !self.is_space_down && !self.is_resize_down)
+            .then_some(self.cursor_pos)
+    }
+
+    pub fn captures_resize_event(&self, event: &WindowEvent) -> bool {
+        self.resize_drag.is_some()
+            || (self.is_resize_down
+                && matches!(
+                    event,
+                    WindowEvent::KeyboardInput { event, .. }
+                        if event.physical_key == PhysicalKey::Code(KeyCode::KeyR)
+                ))
     }
 
     pub fn brush_cursor_pressure(&self, drawing_pressure: f32) -> f32 {
@@ -85,13 +104,29 @@ impl PaintInputController {
         &mut self,
         event: &WindowEvent,
         paint: &mut PaintRenderer,
-        brush: BrushSettings,
+        brush: &mut BrushSettings,
+        brush_size_range: std::ops::RangeInclusive<f32>,
         smoothing_options: StrokeSmoothingOptions,
         pressure_state: &PressureStateHandle,
     ) -> bool {
         match event {
             WindowEvent::CursorMoved { position, .. } => {
                 let next = [position.x as f32, position.y as f32];
+
+                if let Some(drag) = self.resize_drag {
+                    let next_size = resized_brush_size(
+                        drag.start_size,
+                        drag.start_y,
+                        next[1],
+                        brush_size_range,
+                    );
+                    let changed = (brush.size - next_size).abs() > f32::EPSILON;
+                    brush.size = next_size;
+                    return changed;
+                }
+                if self.is_resize_down {
+                    return false;
+                }
 
                 if self.is_panning {
                     let delta = [
@@ -107,13 +142,28 @@ impl PaintInputController {
                 }
 
                 if self.is_drawing {
-                    let point = self.stroke_point_from_window(paint, next, brush, pressure_state);
+                    let point = self.stroke_point_from_window(paint, next, *brush, pressure_state);
                     let smoothed_points = self.smoother.push(point);
-                    let queued = self.queue_smoothed_points(paint, smoothed_points, brush);
+                    let queued = self.queue_smoothed_points(paint, smoothed_points, *brush);
                     return queued > 0;
                 }
 
                 true
+            }
+            WindowEvent::MouseInput { state, button, .. } if self.is_resize_down => {
+                match (state, button) {
+                    (ElementState::Pressed, MouseButton::Left) => {
+                        self.resize_drag = Some(BrushResizeDrag {
+                            start_y: self.cursor_pos[1],
+                            start_size: brush.size,
+                        });
+                        true
+                    }
+                    (ElementState::Released, MouseButton::Left) => {
+                        self.resize_drag.take().is_some()
+                    }
+                    _ => false,
+                }
             }
             WindowEvent::MouseInput { state, button, .. } => match (state, button) {
                 (ElementState::Pressed, MouseButton::Left) if self.is_space_down => {
@@ -128,7 +178,7 @@ impl PaintInputController {
                     let point = self.stroke_point_from_window(
                         paint,
                         self.cursor_pos,
-                        brush,
+                        *brush,
                         pressure_state,
                     );
                     self.is_drawing = true;
@@ -144,7 +194,7 @@ impl PaintInputController {
                     self.last_pan_pos = self.cursor_pos;
                     true
                 }
-                (ElementState::Released, _) => self.end_stroke(paint, brush),
+                (ElementState::Released, _) => self.end_stroke(paint, *brush),
                 _ => false,
             },
             WindowEvent::MouseWheel { delta, .. } => {
@@ -161,6 +211,26 @@ impl PaintInputController {
                 false
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                if event.physical_key == PhysicalKey::Code(KeyCode::KeyR) {
+                    if event.repeat {
+                        return false;
+                    }
+                    let resize_down = event.state == ElementState::Pressed
+                        && !self.modifiers.control_key()
+                        && !self.modifiers.alt_key()
+                        && !self.modifiers.super_key();
+                    let changed = self.is_resize_down != resize_down;
+                    let ended_stroke = if resize_down && changed {
+                        self.end_stroke(paint, *brush)
+                    } else {
+                        false
+                    };
+                    self.is_resize_down = resize_down;
+                    if !resize_down {
+                        self.resize_drag = None;
+                    }
+                    return changed || ended_stroke;
+                }
                 if event.state == ElementState::Pressed
                     && !event.repeat
                     && let PhysicalKey::Code(key) = event.physical_key
@@ -179,8 +249,14 @@ impl PaintInputController {
                 }
                 false
             }
-            WindowEvent::CursorLeft { .. } | WindowEvent::Focused(false) => {
-                self.end_stroke(paint, brush)
+            WindowEvent::CursorLeft { .. } => {
+                self.resize_drag = None;
+                self.end_stroke(paint, *brush)
+            }
+            WindowEvent::Focused(false) => {
+                self.is_resize_down = false;
+                self.resize_drag = None;
+                self.end_stroke(paint, *brush)
             }
             _ => false,
         }
@@ -244,6 +320,15 @@ impl PaintInputController {
         self.last_point = None;
         queued > 0 || was_active
     }
+}
+
+fn resized_brush_size(
+    start_size: f32,
+    start_y: f32,
+    current_y: f32,
+    range: std::ops::RangeInclusive<f32>,
+) -> f32 {
+    (start_size + start_y - current_y).clamp(*range.start(), *range.end())
 }
 
 fn paint_tool_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<PaintTool> {
@@ -313,6 +398,27 @@ mod tests {
         assert_eq!(input.brush_cursor_pressure(0.6), 0.0);
         input.is_drawing = true;
         assert_eq!(input.brush_cursor_pressure(0.6), 0.6);
+    }
+
+    #[test]
+    fn vertical_drag_resizes_and_clamps_brush() {
+        let range = 10.0..=100.0;
+        assert_eq!(resized_brush_size(50.0, 200.0, 180.0, range.clone()), 70.0);
+        assert_eq!(resized_brush_size(50.0, 200.0, 230.0, range.clone()), 20.0);
+        assert_eq!(resized_brush_size(50.0, 200.0, 100.0, range.clone()), 100.0);
+        assert_eq!(resized_brush_size(50.0, 200.0, 300.0, range), 10.0);
+    }
+
+    #[test]
+    fn resizing_hides_brush_cursor() {
+        let mut input = PaintInputController {
+            cursor_inside: true,
+            is_resize_down: true,
+            ..PaintInputController::default()
+        };
+        assert_eq!(input.brush_cursor_pos(), None);
+        input.is_resize_down = false;
+        assert_eq!(input.brush_cursor_pos(), Some([0.0, 0.0]));
     }
 
     #[test]

@@ -140,21 +140,24 @@ impl ApplicationHandler<AppEvent> for App {
                     needs_redraw |= gui.close_popups();
                 }
 
-                if !egui_consumed {
-                    if let Some(command) = self.input.history_command(&event) {
-                        self.pending_commands.push(command);
-                        needs_redraw = true;
-                    } else if let (Some(paint), Some(gui)) =
-                        (self.paint.as_mut(), self.gui.as_ref())
-                    {
-                        needs_redraw |= self.input.handle_event(
-                            &event,
-                            paint,
-                            gui.brush,
-                            gui.stroke_smoothing,
-                            &self.pressure_state,
-                        );
-                    }
+                let history_command = (!egui_consumed)
+                    .then(|| self.input.history_command(&event))
+                    .flatten();
+                if let Some(command) = history_command {
+                    self.pending_commands.push(command);
+                    needs_redraw = true;
+                } else if (!egui_consumed || self.input.captures_resize_event(&event))
+                    && let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_mut())
+                {
+                    let brush_size_range = gui.brush_size_range();
+                    needs_redraw |= self.input.handle_event(
+                        &event,
+                        paint,
+                        &mut gui.brush,
+                        brush_size_range,
+                        gui.stroke_smoothing,
+                        &self.pressure_state,
+                    );
                 }
 
                 match event {
