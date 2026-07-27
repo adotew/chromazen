@@ -63,13 +63,11 @@ impl PaintInputController {
 
     pub fn captures_resize_event(&self, event: &WindowEvent) -> bool {
         self.resize_drag.is_some()
-            || (self.is_resize_down
-                && (matches!(event, WindowEvent::Focused(false))
-                    || matches!(
-                        event,
-                        WindowEvent::KeyboardInput { event, .. }
-                            if event.physical_key == PhysicalKey::Code(KeyCode::KeyR)
-                    )))
+            || ((self.is_resize_down || resize_modifier_is_active(self.modifiers))
+                && matches!(
+                    event,
+                    WindowEvent::Focused(false) | WindowEvent::ModifiersChanged(_)
+                ))
     }
 
     pub fn observe_event(&mut self, event: &WindowEvent) -> bool {
@@ -251,28 +249,22 @@ impl PaintInputController {
                 }
                 false
             }
-            WindowEvent::KeyboardInput { event, .. } => {
-                if event.physical_key == PhysicalKey::Code(KeyCode::KeyR) {
-                    if event.repeat {
-                        return false;
-                    }
-                    let resize_down = event.state == ElementState::Pressed
-                        && !self.modifiers.control_key()
-                        && !self.modifiers.alt_key()
-                        && !self.modifiers.super_key();
-                    let changed = self.is_resize_down != resize_down;
-                    let ended_stroke = if resize_down && changed {
-                        self.end_stroke(paint, *brush)
-                    } else {
-                        false
-                    };
-                    self.is_resize_down = resize_down;
-                    if !resize_down {
-                        self.resize_origin = None;
-                        self.resize_drag = None;
-                    }
-                    return changed || ended_stroke;
+            WindowEvent::ModifiersChanged(_) => {
+                let resize_down = resize_modifier_is_active(self.modifiers);
+                let changed = self.is_resize_down != resize_down;
+                let ended_stroke = if resize_down && changed {
+                    self.end_stroke(paint, *brush)
+                } else {
+                    false
+                };
+                self.is_resize_down = resize_down;
+                if !resize_down {
+                    self.resize_origin = None;
+                    self.resize_drag = None;
                 }
+                changed || ended_stroke
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed
                     && !event.repeat
                     && let PhysicalKey::Code(key) = event.physical_key
@@ -370,6 +362,13 @@ impl PaintInputController {
         self.last_point = None;
         queued > 0 || was_active
     }
+}
+
+fn resize_modifier_is_active(modifiers: ModifiersState) -> bool {
+    modifiers.shift_key()
+        && !modifiers.control_key()
+        && !modifiers.alt_key()
+        && !modifiers.super_key()
 }
 
 fn resized_brush_size(
