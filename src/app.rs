@@ -14,7 +14,7 @@ use winit::{
     application::ApplicationHandler,
     event::{ElementState, MouseButton, StartCause, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    window::{Window, WindowAttributes},
+    window::{CursorIcon, Window, WindowAttributes},
 };
 
 use self::{
@@ -392,6 +392,8 @@ impl App {
         let brush_resize_pos = self.input.brush_resize_pos();
         let resize_is_anchored = self.input.brush_resize_is_anchored();
         let is_resizing_brush = self.input.is_resizing_brush();
+        let is_panning = self.input.is_panning();
+        let is_pan_modifier_active = self.input.is_pan_modifier_active();
         let is_eyedropper_active = self.input.is_eyedropper_active();
         let brush_pressure = self.pressure_state.brush_pressure();
         let paint = self.paint.as_mut()?;
@@ -414,6 +416,11 @@ impl App {
         let repaint_delay = ui::repaint_delay(&full_output);
         gui.state
             .handle_platform_output(window, full_output.platform_output);
+        if is_panning {
+            window.set_cursor(CursorIcon::Grabbing);
+        } else if is_pan_modifier_active && !pointer_over_ui {
+            window.set_cursor(CursorIcon::Grab);
+        }
         let eyedropper_over_canvas = is_eyedropper_active && !pointer_over_ui;
         window.set_cursor_visible(
             is_resizing_brush || (brush_cursor.is_none() && !eyedropper_over_canvas),

@@ -76,6 +76,14 @@ impl PaintInputController {
         self.resize_origin.is_some()
     }
 
+    pub fn is_panning(&self) -> bool {
+        self.is_panning
+    }
+
+    pub fn is_pan_modifier_active(&self) -> bool {
+        self.is_space_down
+    }
+
     pub fn brush_resize_pos(&self) -> Option<[f32; 2]> {
         self.resize_origin
     }
