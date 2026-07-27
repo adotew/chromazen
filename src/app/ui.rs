@@ -13,7 +13,7 @@ use crate::{
     artwork::ArtworkSummary,
     config::{AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset},
     paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings, StrokeSmoothingOptions},
-    renderer::{LayerId, LayerSnapshot, PaintRenderer},
+    renderer::{LayerId, LayerResourceId, LayerSnapshot, PaintRenderer},
 };
 
 use super::{autosave::SaveStatus, command::AppCommand};
@@ -52,7 +52,7 @@ pub struct GuiLayer {
     commands: Vec<AppCommand>,
     settings_message: Option<SettingsMessage>,
     background_edit_start: Option<[u8; 3]>,
-    layer_thumbnails: Vec<(LayerId, egui::TextureId)>,
+    layer_thumbnails: Vec<LayerThumbnail>,
     brush_previews: Vec<(String, egui::TextureHandle)>,
     failed_brush_previews: Vec<String>,
     sidebar_visible: bool,
@@ -62,6 +62,17 @@ pub struct GuiLayer {
 struct SettingsMessage {
     text: String,
     is_error: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LayerPreviewKey {
+    layer_id: LayerId,
+    resource_id: LayerResourceId,
+}
+
+struct LayerThumbnail {
+    key: LayerPreviewKey,
+    texture_id: egui::TextureId,
 }
 
 impl GuiLayer {
@@ -118,31 +129,41 @@ impl GuiLayer {
     }
 
     pub(crate) fn sync_layer_thumbnails(&mut self, paint: &PaintRenderer) {
+        let current_keys: Vec<_> = paint
+            .layer_preview_views()
+            .map(|(layer_id, resource_id, _)| LayerPreviewKey {
+                layer_id,
+                resource_id,
+            })
+            .collect();
+
         let mut index = 0;
         while index < self.layer_thumbnails.len() {
-            if paint
-                .layer_views()
-                .any(|(id, _)| id == self.layer_thumbnails[index].0)
-            {
+            if layer_preview_is_current(&current_keys, self.layer_thumbnails[index].key) {
                 index += 1;
             } else {
-                let (_, texture_id) = self.layer_thumbnails.remove(index);
-                self.renderer.free_texture(&texture_id);
+                let thumbnail = self.layer_thumbnails.remove(index);
+                self.renderer.free_texture(&thumbnail.texture_id);
             }
         }
 
-        for (id, view) in paint.layer_views() {
+        for (layer_id, resource_id, view) in paint.layer_preview_views() {
+            let key = LayerPreviewKey {
+                layer_id,
+                resource_id,
+            };
             if self
                 .layer_thumbnails
                 .iter()
-                .all(|(existing_id, _)| *existing_id != id)
+                .all(|thumbnail| thumbnail.key != key)
             {
                 let texture_id = self.renderer.register_native_texture(
                     paint.device(),
                     view,
                     wgpu::FilterMode::Linear,
                 );
-                self.layer_thumbnails.push((id, texture_id));
+                self.layer_thumbnails
+                    .push(LayerThumbnail { key, texture_id });
             }
         }
     }
@@ -349,8 +370,8 @@ impl GuiLayer {
                                     let thumbnail = self
                                         .layer_thumbnails
                                         .iter()
-                                        .find(|(id, _)| *id == layer.id)
-                                        .map(|(_, texture_id)| *texture_id);
+                                        .find(|thumbnail| thumbnail.key.layer_id == layer.id)
+                                        .map(|thumbnail| thumbnail.texture_id);
                                     if show_layer_row(ui, &layer.name, selected, thumbnail, None)
                                         .clicked()
                                         && !selected
@@ -527,6 +548,10 @@ impl GuiLayer {
         });
         self.context.request_repaint();
     }
+}
+
+fn layer_preview_is_current(current: &[LayerPreviewKey], cached: LayerPreviewKey) -> bool {
+    current.contains(&cached)
 }
 
 fn show_save_blocker(
@@ -964,5 +989,27 @@ mod tests {
     fn background_color_round_trips_through_ui() {
         let color = [0.25, 0.5, 0.75, 1.0];
         assert_eq!(rgb(background_color(color)), [64, 128, 191]);
+    }
+
+    #[test]
+    fn replaced_layer_resource_invalidates_cached_preview() {
+        let cached = LayerPreviewKey {
+            layer_id: LayerId(1),
+            resource_id: LayerResourceId(4),
+        };
+        let replacement = LayerPreviewKey {
+            layer_id: LayerId(1),
+            resource_id: LayerResourceId(5),
+        };
+        assert!(!layer_preview_is_current(&[replacement], cached));
+    }
+
+    #[test]
+    fn unchanged_layer_resource_keeps_cached_preview() {
+        let cached = LayerPreviewKey {
+            layer_id: LayerId(2),
+            resource_id: LayerResourceId(7),
+        };
+        assert!(layer_preview_is_current(&[cached], cached));
     }
 }

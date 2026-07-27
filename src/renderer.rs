@@ -20,7 +20,7 @@ use self::{
     view::PaintView,
 };
 pub(crate) use self::{
-    layers::{LayerId, LayerInfo, LayerSnapshot},
+    layers::{LayerId, LayerInfo, LayerResourceId, LayerSnapshot},
     persistence::LayerReadback,
 };
 use crate::{
@@ -34,6 +34,7 @@ const DEFAULT_CANVAS_WIDTH: u32 = 4000;
 const DEFAULT_CANVAS_HEIGHT: u32 = 4000;
 const DOCUMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const STROKE_MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+const LAYER_PREVIEW_SIZE: u32 = 128;
 // Eight simulation steps per brush radius retain tip detail without dense-pass overhead.
 const SMUDGE_MIN_STEP_RATIO: f32 = 0.125;
 
@@ -121,6 +122,7 @@ pub struct PaintRenderer {
     background_color: [f32; 4],
     next_layer_id: u64,
     next_layer_number: u64,
+    next_layer_resource_id: u64,
     stamp_queue: StampQueue,
     active_stroke: Option<ActiveStroke>,
     history: PaintHistory,
@@ -149,8 +151,13 @@ impl PaintRenderer {
             brush_preset.stamp_image.as_ref(),
         )?;
 
-        let first_layer =
-            resources.create_paint_layer(device, document_size, LayerId(1), "Layer 1".to_owned());
+        let first_layer = resources.create_paint_layer(
+            device,
+            document_size,
+            LayerId(1),
+            LayerResourceId(1),
+            "Layer 1".to_owned(),
+        );
         let stamp_aspect = brush_preset
             .stamp_image
             .as_ref()
@@ -165,6 +172,7 @@ impl PaintRenderer {
             background_color: [1.0; 4],
             next_layer_id: 2,
             next_layer_number: 2,
+            next_layer_resource_id: 2,
             stamp_queue: StampQueue::new(stamp_aspect),
             active_stroke: None,
             history,
@@ -326,10 +334,12 @@ impl PaintRenderer {
             return false;
         }
         let id = LayerId(1);
+        let resource_id = self.allocate_layer_resource_id();
         let layer = self.resources.create_paint_layer(
             self.gpu.device(),
             self.document_size,
             id,
+            resource_id,
             "Layer 1".to_owned(),
         );
         clear_layer(self.gpu.device(), self.gpu.queue(), &layer.view);
@@ -376,10 +386,12 @@ impl PaintRenderer {
                     document.height
                 ));
             }
+            let resource_id = self.allocate_layer_resource_id();
             let layer = self.resources.create_paint_layer(
                 self.gpu.device(),
                 self.document_size,
                 LayerId(metadata.id),
+                resource_id,
                 metadata.name.clone(),
             );
             self.gpu.queue().write_texture(
@@ -437,8 +449,12 @@ impl PaintRenderer {
         }
     }
 
-    pub(crate) fn layer_views(&self) -> impl Iterator<Item = (LayerId, &wgpu::TextureView)> {
-        self.layers.iter().map(|layer| (layer.id, &layer.view))
+    pub(crate) fn layer_preview_views(
+        &self,
+    ) -> impl Iterator<Item = (LayerId, LayerResourceId, &wgpu::TextureView)> {
+        self.layers
+            .iter()
+            .map(|layer| (layer.id, layer.resource_id, &layer.preview_view))
     }
 
     pub(crate) fn select_layer(&mut self, id: LayerId) -> bool {
@@ -488,9 +504,14 @@ impl PaintRenderer {
         self.next_layer_id += 1;
         let name = layer_name(self.next_layer_number);
         self.next_layer_number += 1;
-        let layer =
-            self.resources
-                .create_paint_layer(self.gpu.device(), self.document_size, id, name);
+        let resource_id = self.allocate_layer_resource_id();
+        let layer = self.resources.create_paint_layer(
+            self.gpu.device(),
+            self.document_size,
+            id,
+            resource_id,
+            name,
+        );
         let mut encoder =
             self.gpu
                 .device()
@@ -518,7 +539,7 @@ impl PaintRenderer {
         self.layers.insert(index, layer);
         self.selection = id;
         self.history
-            .record_add(id, index, selection_before, self.layer_texture_byte_len());
+            .record_add(id, index, selection_before, self.layer_resource_byte_len());
         self.mark_metadata_changed();
         self.layer_versions.insert(id, self.document_generation);
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
@@ -550,7 +571,7 @@ impl PaintRenderer {
             index,
             selection_before,
             self.selection,
-            self.layer_texture_byte_len(),
+            self.layer_resource_byte_len(),
         );
         self.layer_versions.remove(&selection_before);
         self.mark_metadata_changed();
@@ -882,6 +903,8 @@ impl PaintRenderer {
         brush_cursor: Option<BrushCursor>,
     ) {
         self.flush_stamps(encoder);
+        // egui samples these views later in this encoder, so previews include this frame's dabs.
+        self.render_layer_previews(encoder);
         self.write_view_uniform();
         if let Some(cursor) = brush_cursor {
             self.write_brush_cursor(cursor);
@@ -939,6 +962,52 @@ impl PaintRenderer {
         }
     }
 
+    fn render_layer_previews(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        let active_stroke = self.active_stroke;
+        for layer in &mut self.layers {
+            if !layer.preview_dirty {
+                continue;
+            }
+            let pipeline = match active_stroke.filter(|stroke| stroke.layer_id == layer.id) {
+                Some(ActiveStroke {
+                    tool: PaintTool::Brush,
+                    ..
+                }) => &self.resources.brush_thumbnail_pipeline,
+                Some(ActiveStroke {
+                    tool: PaintTool::Eraser,
+                    ..
+                }) => &self.resources.eraser_thumbnail_pipeline,
+                Some(ActiveStroke {
+                    tool: PaintTool::Smudge,
+                    ..
+                })
+                | None => &self.resources.layer_thumbnail_pipeline,
+            };
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("layer preview pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &layer.preview_view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &layer.preview_bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            layer.preview_dirty = false;
+        }
+    }
+
     fn flush_all_stamps(&mut self) {
         while self.stamp_queue.has_pending() {
             let mut encoder =
@@ -973,6 +1042,7 @@ impl PaintRenderer {
             .iter()
             .position(|layer| layer.id == active_stroke.layer_id)
             .expect("active stroke layer must exist");
+        self.layers[layer_index].preview_dirty = true;
         if active_stroke.render_path() == StrokeRenderPath::DirectSmudge {
             self.flush_smudge_stamps(encoder, layer_index, &raw);
             return;
@@ -1069,8 +1139,19 @@ impl PaintRenderer {
         self.resources.clear_stroke_preview();
     }
 
-    fn layer_texture_byte_len(&self) -> u64 {
-        u64::from(self.document_size[0]) * u64::from(self.document_size[1]) * 4
+    fn layer_resource_byte_len(&self) -> u64 {
+        let canvas = u64::from(self.document_size[0]) * u64::from(self.document_size[1]) * 4;
+        let preview = u64::from(LAYER_PREVIEW_SIZE) * u64::from(LAYER_PREVIEW_SIZE) * 4;
+        canvas + preview
+    }
+
+    fn allocate_layer_resource_id(&mut self) -> LayerResourceId {
+        let id = LayerResourceId(self.next_layer_resource_id);
+        self.next_layer_resource_id = self
+            .next_layer_resource_id
+            .checked_add(1)
+            .expect("layer resource ID space exhausted");
+        id
     }
 
     fn selected_layer_index(&self) -> Option<usize> {
@@ -1100,11 +1181,17 @@ impl PaintRenderer {
     }
 
     fn mark_layer_changed(&mut self, id: LayerId) {
+        if let Some(layer) = self.layers.iter_mut().find(|layer| layer.id == id) {
+            layer.preview_dirty = true;
+        }
         let version = self.next_document_generation();
         self.layer_versions.insert(id, version);
     }
 
     fn mark_all_changed(&mut self) {
+        for layer in &mut self.layers {
+            layer.preview_dirty = true;
+        }
         let version = self.next_document_generation();
         self.metadata_version = version;
         self.layer_versions = self
