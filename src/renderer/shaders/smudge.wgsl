@@ -1,3 +1,4 @@
+// Prevent full-pressure input from cloning the previous dab exactly.
 const SMUDGE_MAX_ADVECTION: f32 = 0.35;
 
 @group(0) @binding(0) var brushSampler: sampler;

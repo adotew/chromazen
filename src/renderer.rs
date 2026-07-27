@@ -27,6 +27,7 @@ const DEFAULT_CANVAS_WIDTH: u32 = 4000;
 const DEFAULT_CANVAS_HEIGHT: u32 = 4000;
 const DOCUMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const STROKE_MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+// Eight simulation steps per brush radius retain tip detail without dense-pass overhead.
 const SMUDGE_MIN_STEP_RATIO: f32 = 0.125;
 
 #[repr(C)]
