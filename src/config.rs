@@ -13,7 +13,7 @@ mod brush;
 
 pub(crate) use brush::{BrushCatalog, BrushSummary, LoadedBrushPreset};
 
-const APP_NAME: &str = "chromazen";
+const APP_NAME: &str = "Chromazen";
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 
