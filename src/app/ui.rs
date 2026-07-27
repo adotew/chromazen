@@ -241,6 +241,7 @@ impl GuiLayer {
         eyedropper_indicator: Option<EyedropperIndicator>,
         artwork_title: &str,
         save_status: SaveStatus,
+        pending_navigation: Option<&str>,
     ) -> egui::FullOutput {
         self.load_brush_preview(&self.active_brush.clone());
         let raw_input = self.state.take_egui_input(window);
@@ -423,6 +424,9 @@ impl GuiLayer {
             if let Some(indicator) = eyedropper_indicator {
                 show_eyedropper_indicator(ui, indicator);
             }
+            if let Some(action) = pending_navigation {
+                show_save_blocker(ui.ctx(), action, &save_status, &mut self.commands);
+            }
         })
     }
 
@@ -543,6 +547,38 @@ impl GuiLayer {
         });
         self.context.request_repaint();
     }
+}
+
+fn show_save_blocker(
+    context: &egui::Context,
+    action: &str,
+    status: &SaveStatus,
+    commands: &mut Vec<AppCommand>,
+) {
+    egui::Window::new(action)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(context, |ui| {
+            match status {
+                SaveStatus::Failed(error) => {
+                    ui.colored_label(egui::Color32::LIGHT_RED, "The artwork could not be saved.");
+                    ui.label(error);
+                }
+                _ => {
+                    ui.label("Saving the artwork before continuing…");
+                    ui.spinner();
+                }
+            }
+            ui.horizontal(|ui| {
+                if matches!(status, SaveStatus::Failed(_)) && ui.button("Retry").clicked() {
+                    commands.push(AppCommand::SaveArtwork);
+                }
+                if ui.button("Cancel").clicked() {
+                    commands.push(AppCommand::CancelPendingNavigation);
+                }
+            });
+        });
 }
 
 fn show_brush_row(

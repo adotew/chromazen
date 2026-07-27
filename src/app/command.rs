@@ -21,4 +21,5 @@ pub(super) enum AppCommand {
     ShowGallery,
     RenameArtwork { id: ArtworkId, title: String },
     DeleteArtwork(ArtworkId),
+    CancelPendingNavigation,
 }

@@ -66,6 +66,7 @@ pub struct App {
     autosave: AutosaveController,
     screen: AppScreen,
     pending_gallery: bool,
+    pending_exit: bool,
 }
 
 impl ApplicationHandler<AppEvent> for App {
@@ -132,14 +133,16 @@ impl ApplicationHandler<AppEvent> for App {
         }
 
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::RedrawRequested => self.render(window.as_ref()),
+            WindowEvent::CloseRequested => self.request_exit(event_loop),
+            WindowEvent::RedrawRequested => self.render(window.as_ref(), event_loop),
             event => {
+                let navigation_pending = self.navigation_pending();
                 let Some(gui) = self.gui.as_mut() else {
                     return;
                 };
                 let cursor_changed = self.input.observe_event(&event);
                 if self.screen == AppScreen::Editor
+                    && !navigation_pending
                     && let Some(shortcut) = self.input.keyboard_shortcut(&event)
                 {
                     let changed = match shortcut {
@@ -171,13 +174,15 @@ impl ApplicationHandler<AppEvent> for App {
                     needs_redraw |= gui.close_popups();
                 }
 
-                let history_command = (self.screen == AppScreen::Editor && !egui_consumed)
-                    .then(|| self.input.app_command(&event))
-                    .flatten();
+                let history_command =
+                    (self.screen == AppScreen::Editor && !navigation_pending && !egui_consumed)
+                        .then(|| self.input.app_command(&event))
+                        .flatten();
                 if let Some(command) = history_command {
                     self.pending_commands.push(command);
                     needs_redraw = true;
                 } else if self.screen == AppScreen::Editor
+                    && !navigation_pending
                     && (!egui_consumed || self.input.captures_drag_event(&event))
                     && let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_mut())
                 {
@@ -261,10 +266,39 @@ impl App {
             autosave,
             screen: AppScreen::Gallery,
             pending_gallery: false,
+            pending_exit: false,
         }
     }
 
-    fn render(&mut self, window: &Window) {
+    fn navigation_pending(&self) -> bool {
+        self.pending_gallery || self.pending_exit
+    }
+
+    fn request_exit(&mut self, event_loop: &ActiveEventLoop) {
+        if self.screen == AppScreen::Gallery {
+            event_loop.exit();
+            return;
+        }
+        if let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_ref()) {
+            self.input.finish_document_interaction(paint, gui.brush);
+        }
+        let clean = self
+            .paint
+            .as_ref()
+            .is_some_and(|paint| self.autosave.is_clean(paint));
+        if clean {
+            event_loop.exit();
+            return;
+        }
+        self.pending_exit = true;
+        self.pending_gallery = false;
+        self.autosave.request_save();
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
+    fn render(&mut self, window: &Window, event_loop: &ActiveEventLoop) {
         let mut app_action_processed = self.process_pending_commands();
         let mut brush_switched = self.apply_pending_brush_change();
 
@@ -272,6 +306,10 @@ impl App {
             && let Some(paint) = self.paint.as_ref()
         {
             app_action_processed |= self.autosave.update(paint);
+            if self.pending_exit && self.autosave.is_clean(paint) {
+                event_loop.exit();
+                return;
+            }
             if self.pending_gallery && self.autosave.is_clean(paint) {
                 self.finish_gallery_navigation();
                 app_action_processed = true;
@@ -314,6 +352,13 @@ impl App {
                             });
                     let title = self.autosave.title().unwrap_or("Untitled");
                     let status = self.autosave.status(paint);
+                    let pending_navigation = if self.pending_exit {
+                        Some("Closing Chromazen")
+                    } else if self.pending_gallery {
+                        Some("Returning to Gallery")
+                    } else {
+                        None
+                    };
                     gui.run_editor(
                         window,
                         &layer_snapshot,
@@ -322,6 +367,7 @@ impl App {
                         eyedropper_indicator,
                         title,
                         status,
+                        pending_navigation,
                     )
                 }
             };
@@ -444,6 +490,10 @@ impl App {
                         gui.show_error(error);
                     }
                 }
+                AppCommand::CancelPendingNavigation => {
+                    self.pending_gallery = false;
+                    self.pending_exit = false;
+                }
             }
         }
         self.sync_history_menu();
@@ -466,6 +516,7 @@ impl App {
         self.autosave.begin_new(id, "Untitled".to_owned());
         self.screen = AppScreen::Editor;
         self.pending_gallery = false;
+        self.pending_exit = false;
         if let Some(window) = self.window.as_ref() {
             window.set_title("Untitled — Chromazen");
         }
@@ -495,6 +546,7 @@ impl App {
             .begin_loaded(opened.id, opened.title.clone(), versions);
         self.screen = AppScreen::Editor;
         self.pending_gallery = false;
+        self.pending_exit = false;
         if let Some(window) = self.window.as_ref() {
             window.set_title(&format!("{} — Chromazen", opened.title));
         }
@@ -505,6 +557,7 @@ impl App {
         self.autosave.clear();
         self.screen = AppScreen::Gallery;
         self.pending_gallery = false;
+        self.pending_exit = false;
         if let Some(window) = self.window.as_ref() {
             window.set_title(WINDOW_TITLE);
         }

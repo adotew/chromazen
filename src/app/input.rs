@@ -335,6 +335,17 @@ impl PaintInputController {
         }
     }
 
+    pub fn finish_document_interaction(
+        &mut self,
+        paint: &mut PaintRenderer,
+        brush: BrushSettings,
+    ) -> bool {
+        self.resize_origin = None;
+        self.resize_drag = None;
+        self.eyedropper_drag = None;
+        self.end_stroke(paint, brush)
+    }
+
     fn sample_color_at(
         &mut self,
         paint: &PaintRenderer,
