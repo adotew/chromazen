@@ -1,9 +1,10 @@
-use crate::renderer::LayerId;
+use crate::{paint::PaintTool, renderer::LayerId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum AppCommand {
     Undo,
     Redo,
+    SelectTool(PaintTool),
     SelectLayer(LayerId),
     AddLayer,
     DeleteSelectedLayer,

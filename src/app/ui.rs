@@ -371,17 +371,24 @@ impl GuiLayer {
                     });
             }
 
+            let selected_tool = egui::Area::new(egui::Id::new("tool rail"))
+                .anchor(
+                    egui::Align2::RIGHT_TOP,
+                    egui::vec2(-SIDEBAR_WIDTH * sidebar_progress, 0.0),
+                )
+                .order(egui::Order::Foreground)
+                .show(ui.ctx(), |ui| show_tool_rail(ui, tool))
+                .inner;
+            if let Some(tool) = selected_tool {
+                self.commands.push(AppCommand::SelectTool(tool));
+            }
+
             if let Some(label) = brush_resize_label {
                 show_brush_resize_label(ui, label, self.brush.size);
             }
             if let Some(indicator) = eyedropper_indicator {
                 show_eyedropper_indicator(ui, indicator);
             }
-
-            egui::Area::new(egui::Id::new("tool mode"))
-                .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(8.0, -8.0))
-                .interactable(false)
-                .show(ui.ctx(), |ui| show_tool_badge(ui, tool));
         })
     }
 
@@ -695,26 +702,93 @@ fn show_brush_resize_label(ui: &egui::Ui, overlay: BrushResizeLabel, brush_size:
     painter.text(position, align, text, font, egui::Color32::WHITE);
 }
 
-fn show_tool_badge(ui: &mut egui::Ui, tool: PaintTool) {
-    let (label, fill) = match tool {
-        PaintTool::Brush => ("BRUSH", egui::Color32::from_rgb(169, 186, 200)),
-        PaintTool::Eraser => ("ERASER", egui::Color32::from_rgb(213, 170, 109)),
-        PaintTool::Smudge => ("SMUDGE", egui::Color32::from_rgb(177, 159, 204)),
+fn show_tool_rail(ui: &mut egui::Ui, active_tool: PaintTool) -> Option<PaintTool> {
+    const RAIL_WIDTH: f32 = 42.0;
+    const TOOL_HEIGHT: f32 = 40.0;
+    const VERTICAL_PADDING: f32 = 6.0;
+
+    let tools = [PaintTool::Brush, PaintTool::Eraser, PaintTool::Smudge];
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(
+            RAIL_WIDTH,
+            TOOL_HEIGHT * tools.len() as f32 + 2.0 * VERTICAL_PADDING,
+        ),
+        egui::Sense::hover(),
+    );
+    let separator_width = ui.visuals().widgets.noninteractive.bg_stroke.width;
+    let panel_rect = rect.with_max_x(rect.right() + separator_width);
+    ui.painter().rect_filled(
+        panel_rect,
+        egui::CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: 12,
+            se: 0,
+        },
+        ui.visuals().panel_fill,
+    );
+    let body = egui::Rect::from_min_max(
+        egui::pos2(rect.left(), rect.top() + VERTICAL_PADDING),
+        egui::pos2(rect.right(), rect.bottom() - VERTICAL_PADDING),
+    );
+
+    let mut selected = None;
+    for (index, tool) in tools.into_iter().enumerate() {
+        let tool_rect = egui::Rect::from_min_size(
+            egui::pos2(body.left(), body.top() + index as f32 * TOOL_HEIGHT),
+            egui::vec2(RAIL_WIDTH, TOOL_HEIGHT),
+        );
+        if show_tool_button(ui, tool_rect, tool, tool == active_tool).clicked() {
+            selected = Some(tool);
+        }
+    }
+    selected
+}
+
+fn show_tool_button(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    tool: PaintTool,
+    selected: bool,
+) -> egui::Response {
+    let (icon, label, shortcut, accent) = match tool {
+        PaintTool::Brush => (
+            egui::include_image!("../../assets/icons/paintbrush.svg"),
+            "Brush",
+            "B",
+            egui::Color32::from_rgb(169, 186, 200),
+        ),
+        PaintTool::Eraser => (
+            egui::include_image!("../../assets/icons/eraser.svg"),
+            "Eraser",
+            "E",
+            egui::Color32::from_rgb(213, 170, 109),
+        ),
+        PaintTool::Smudge => (
+            egui::include_image!("../../assets/icons/waves.svg"),
+            "Smudge",
+            "S",
+            egui::Color32::from_rgb(177, 159, 204),
+        ),
     };
-    egui::Frame::new()
-        .fill(fill)
-        .corner_radius(4)
-        .inner_margin(egui::Margin::symmetric(6, 2))
-        .show(ui, |ui| {
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(label)
-                        .color(egui::Color32::from_rgb(35, 35, 40))
-                        .strong(),
-                )
-                .extend(),
-            );
-        });
+    let response = ui.interact(rect, ui.id().with(label), egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
+    });
+    let icon_tint = if selected {
+        accent
+    } else if response.hovered() {
+        ui.visuals().text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let icon_rect = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(20.0));
+    egui::Image::new(icon)
+        .tint(icon_tint)
+        .alt_text(label)
+        .paint_at(ui, icon_rect);
+
+    response.on_hover_text(format!("{label} ({shortcut})"))
 }
 
 fn brush_settings_from_config(

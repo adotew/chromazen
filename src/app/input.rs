@@ -133,16 +133,21 @@ impl PaintInputController {
         keyboard_shortcut_for_key(key, event.state, event.repeat, self.modifiers)
     }
 
-    pub fn cycle_tool(&mut self) -> bool {
-        if self.is_drawing {
+    pub fn select_tool(&mut self, tool: PaintTool) -> bool {
+        if self.is_drawing || self.tool == tool {
             return false;
         }
-        self.tool = match self.tool {
+        self.tool = tool;
+        true
+    }
+
+    pub fn cycle_tool(&mut self) -> bool {
+        let tool = match self.tool {
             PaintTool::Brush => PaintTool::Eraser,
             PaintTool::Eraser => PaintTool::Smudge,
             PaintTool::Smudge => PaintTool::Brush,
         };
-        true
+        self.select_tool(tool)
     }
 
     pub fn history_command(&self, event: &WindowEvent) -> Option<AppCommand> {
@@ -375,9 +380,7 @@ impl PaintInputController {
         let Some(tool) = paint_tool_for_key(key, self.modifiers) else {
             return false;
         };
-        let changed = self.tool != tool;
-        self.tool = tool;
-        changed
+        self.select_tool(tool)
     }
 
     fn stroke_point_from_window(

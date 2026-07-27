@@ -304,6 +304,9 @@ impl App {
                         paint.redo();
                     }
                 }
+                AppCommand::SelectTool(tool) => {
+                    self.input.select_tool(tool);
+                }
                 AppCommand::SelectLayer(id) => {
                     if let Some(paint) = self.paint.as_mut() {
                         paint.select_layer(id);
