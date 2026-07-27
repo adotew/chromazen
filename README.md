@@ -61,8 +61,10 @@ Controls:
 - `E`: select Eraser; erasing makes the selected layer transparent to reveal
   lower layers and the Background
 - `S`: select Smudge; smudging drags colors already on the selected layer
-- Hold `R` and left-drag vertically on the canvas to resize the brush; drag up
-  to increase its size or down to decrease it
+- `Shift-Tab`: cycle through Brush, Eraser, and Smudge
+- `Tab`: show or hide the sidebar
+- Hold `Shift` and left-drag vertically on the canvas to resize the brush; drag
+  up to increase its size or down to decrease it
 - Wheel: zoom around cursor
 - Middle/right drag or Space + left drag: pan
 - Undo: `Command-Z` on macOS; `Control-Z` on Windows and Linux
