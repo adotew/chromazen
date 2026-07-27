@@ -17,6 +17,10 @@ mod imp {
 
     use super::super::command::AppCommand;
 
+    const NEW_ARTWORK_ID: &str = "chromazen.file.new-artwork";
+    const SAVE_ARTWORK_ID: &str = "chromazen.file.save-artwork";
+    const SHOW_GALLERY_ID: &str = "chromazen.file.show-gallery";
+    const QUIT_ID: &str = "chromazen.application.quit";
     const UNDO_ID: &str = "chromazen.edit.undo";
     const REDO_ID: &str = "chromazen.edit.redo";
     const SAVE_SETTINGS_ID: &str = "chromazen.settings.save";
@@ -28,6 +32,8 @@ mod imp {
         menu: Menu,
         undo: MenuItem,
         redo: MenuItem,
+        save_artwork: MenuItem,
+        show_gallery: MenuItem,
         installed: bool,
     }
 
@@ -39,6 +45,9 @@ mod imp {
             menu.append(&application_menu()?)
                 .map_err(|error| format!("failed to add application menu: {error}"))?;
 
+            let (file_menu, save_artwork, show_gallery) = file_menu()?;
+            menu.append(&file_menu)
+                .map_err(|error| format!("failed to add file menu: {error}"))?;
             let (edit_menu, undo, redo) = edit_menu()?;
             menu.append(&edit_menu)
                 .map_err(|error| format!("failed to add edit menu: {error}"))?;
@@ -49,6 +58,8 @@ mod imp {
                 menu,
                 undo,
                 redo,
+                save_artwork,
+                show_gallery,
                 installed: false,
             })
         }
@@ -67,6 +78,11 @@ mod imp {
         pub(crate) fn set_history_enabled(&self, can_undo: bool, can_redo: bool) {
             self.undo.set_enabled(can_undo);
             self.redo.set_enabled(can_redo);
+        }
+
+        pub(crate) fn set_document_enabled(&self, in_editor: bool) {
+            self.save_artwork.set_enabled(in_editor);
+            self.show_gallery.set_enabled(in_editor);
         }
 
         pub(crate) fn install(&mut self, _window: &Window) -> Result<(), String> {
@@ -92,6 +108,25 @@ mod imp {
             self.installed = true;
             Ok(())
         }
+    }
+
+    fn file_menu() -> Result<(Submenu, MenuItem, MenuItem), String> {
+        let new_artwork = MenuItem::with_id(
+            NEW_ARTWORK_ID,
+            "New Artwork",
+            true,
+            Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyN)),
+        );
+        let save_artwork = MenuItem::with_id(
+            SAVE_ARTWORK_ID,
+            "Save",
+            false,
+            Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyS)),
+        );
+        let show_gallery = MenuItem::with_id(SHOW_GALLERY_ID, "Return to Gallery", false, None);
+        let menu = Submenu::with_items("File", true, &[&new_artwork, &save_artwork, &show_gallery])
+            .map_err(|error| format!("failed to build file menu: {error}"))?;
+        Ok((menu, save_artwork, show_gallery))
     }
 
     fn edit_menu() -> Result<(Submenu, MenuItem, MenuItem), String> {
@@ -148,7 +183,12 @@ mod imp {
         let hide_others = PredefinedMenuItem::hide_others(None);
         let show_all = PredefinedMenuItem::show_all(None);
         let separator_3 = PredefinedMenuItem::separator();
-        let quit = PredefinedMenuItem::quit(None);
+        let quit = MenuItem::with_id(
+            QUIT_ID,
+            "Quit Chromazen",
+            true,
+            Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyQ)),
+        );
 
         Submenu::with_items(
             "Chromazen",
@@ -170,6 +210,10 @@ mod imp {
 
     fn command_for_id(id: &MenuId) -> Option<AppCommand> {
         match id.as_ref() {
+            NEW_ARTWORK_ID => Some(AppCommand::NewArtwork),
+            SAVE_ARTWORK_ID => Some(AppCommand::SaveArtwork),
+            SHOW_GALLERY_ID => Some(AppCommand::ShowGallery),
+            QUIT_ID => Some(AppCommand::Quit),
             UNDO_ID => Some(AppCommand::Undo),
             REDO_ID => Some(AppCommand::Redo),
             SAVE_SETTINGS_ID => Some(AppCommand::SaveSettings),
@@ -186,6 +230,22 @@ mod imp {
 
         #[test]
         fn maps_stable_menu_ids_to_commands() {
+            assert_eq!(
+                command_for_id(&MenuId::new(NEW_ARTWORK_ID)),
+                Some(AppCommand::NewArtwork)
+            );
+            assert_eq!(
+                command_for_id(&MenuId::new(SAVE_ARTWORK_ID)),
+                Some(AppCommand::SaveArtwork)
+            );
+            assert_eq!(
+                command_for_id(&MenuId::new(SHOW_GALLERY_ID)),
+                Some(AppCommand::ShowGallery)
+            );
+            assert_eq!(
+                command_for_id(&MenuId::new(QUIT_ID)),
+                Some(AppCommand::Quit)
+            );
             assert_eq!(
                 command_for_id(&MenuId::new(UNDO_ID)),
                 Some(AppCommand::Undo)
@@ -234,6 +294,8 @@ impl NativeMenu {
     }
 
     pub(super) fn set_history_enabled(&self, _can_undo: bool, _can_redo: bool) {}
+
+    pub(super) fn set_document_enabled(&self, _in_editor: bool) {}
 
     pub(super) fn install(&mut self, _window: &winit::window::Window) -> Result<(), String> {
         Ok(())

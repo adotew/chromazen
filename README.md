@@ -6,7 +6,8 @@ Implemented:
 
 - `winit` native window
 - `wgpu` renderer
-- `egui` controls/stats overlay
+- `egui` artwork gallery and editor controls
+- persistent editable artworks with automatic background saving
 - 4000 × 4000 paint texture
 - bundled charcoal brush using the original stamp PNG
 - pressure-sensitive brush size/opacity on macOS via AppKit tablet and
@@ -19,6 +20,19 @@ Implemented:
 - chronological GPU undo/redo for strokes, layer changes, and Background
   color changes with a bounded 256 MiB history
 - wheel zoom, pan, clear, fit, 100% zoom
+
+The app opens to the gallery. Use **New Artwork** to create a 4000 × 4000
+artwork named `Untitled`, or select an existing thumbnail to continue editing
+with its layers intact. Artwork titles do not need to be unique. Gallery cards
+can be renamed or permanently deleted.
+
+Artwork changes save automatically after a short idle period. Use
+`Command-S` on macOS or `Control-S` on Windows and Linux to save immediately.
+Returning to the gallery and closing the app wait for pending changes to save;
+a failed save is shown and must be retried or the navigation cancelled.
+Artworks are stored in the platform application-data directory under
+`chromazen/artworks`. Each artwork uses a private, versioned Chromazen format;
+PNG export is not currently provided.
 
 Run:
 
@@ -69,11 +83,12 @@ Controls:
   left-click or drag on the canvas to sample its visible composited color
 - Wheel: zoom around cursor
 - Middle/right drag or Space + left drag: pan
+- Save artwork immediately: `Command-S` on macOS; `Control-S` on Windows and Linux
 - Undo: `Command-Z` on macOS; `Control-Z` on Windows and Linux
 - Redo: `Command-Shift-Z` on macOS; `Control-Y` on Windows;
   `Control-Shift-Z` or `Control-Y` on Linux
-- On macOS and Windows, Undo and Redo are also available from the native
-  **Edit** menu
+- On macOS and Windows, create, save, and gallery actions are available from
+  the native **File** menu; Undo and Redo are available from **Edit**
 - Use the minimal egui panels for brush controls and adding, selecting, or
   deleting layers
 - Select **Background** in the Layers panel to change its color; it cannot be

@@ -150,7 +150,7 @@ impl PaintInputController {
         self.select_tool(tool)
     }
 
-    pub fn history_command(&self, event: &WindowEvent) -> Option<AppCommand> {
+    pub fn app_command(&self, event: &WindowEvent) -> Option<AppCommand> {
         if cfg!(any(target_os = "macos", target_os = "windows")) {
             return None;
         }
@@ -163,7 +163,8 @@ impl PaintInputController {
         let PhysicalKey::Code(key) = event.physical_key else {
             return None;
         };
-        history_command_for_key(key, self.modifiers)
+        document_command_for_key(key, self.modifiers)
+            .or_else(|| history_command_for_key(key, self.modifiers))
     }
 
     pub fn handle_event(
@@ -334,6 +335,17 @@ impl PaintInputController {
         }
     }
 
+    pub fn finish_document_interaction(
+        &mut self,
+        paint: &mut PaintRenderer,
+        brush: BrushSettings,
+    ) -> bool {
+        self.resize_origin = None;
+        self.resize_drag = None;
+        self.eyedropper_drag = None;
+        self.end_stroke(paint, brush)
+    }
+
     fn sample_color_at(
         &mut self,
         paint: &PaintRenderer,
@@ -481,6 +493,14 @@ fn paint_tool_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<PaintTo
         KeyCode::KeyE => Some(PaintTool::Eraser),
         KeyCode::KeyS => Some(PaintTool::Smudge),
         _ => None,
+    }
+}
+
+fn document_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<AppCommand> {
+    if modifiers == ModifiersState::CONTROL && key == KeyCode::KeyS {
+        Some(AppCommand::SaveArtwork)
+    } else {
+        None
     }
 }
 
@@ -741,6 +761,21 @@ mod tests {
         let drag = input.resize_drag.unwrap();
         assert_eq!(drag.start_y, 80.0);
         assert_eq!(drag.start_size, 64.0);
+    }
+
+    #[test]
+    fn maps_control_s_to_artwork_save() {
+        assert_eq!(
+            document_command_for_key(KeyCode::KeyS, ModifiersState::CONTROL),
+            Some(AppCommand::SaveArtwork)
+        );
+        assert_eq!(
+            document_command_for_key(
+                KeyCode::KeyS,
+                ModifiersState::CONTROL | ModifiersState::SHIFT,
+            ),
+            None
+        );
     }
 
     #[test]

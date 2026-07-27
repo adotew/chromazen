@@ -1,5 +1,6 @@
 mod brush_preview;
 mod color_picker;
+mod gallery;
 
 use std::time::Duration;
 
@@ -9,12 +10,13 @@ use egui_winit::State as EguiWinitState;
 use winit::window::Window;
 
 use crate::{
+    artwork::ArtworkSummary,
     config::{AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset},
     paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings, StrokeSmoothingOptions},
-    renderer::{LayerId, LayerSnapshot, PaintRenderer},
+    renderer::{LayerId, LayerResourceId, LayerSnapshot, PaintRenderer},
 };
 
-use super::command::AppCommand;
+use super::{autosave::SaveStatus, command::AppCommand};
 
 #[derive(Clone, Copy)]
 pub(crate) struct BrushResizeLabel {
@@ -26,6 +28,15 @@ pub(crate) struct BrushResizeLabel {
 pub(crate) struct EyedropperIndicator {
     pub(crate) center: [f32; 2],
     pub(crate) color: egui::Color32,
+}
+
+pub(crate) struct EditorUiState<'a> {
+    pub(crate) layers: &'a LayerSnapshot,
+    pub(crate) tool: PaintTool,
+    pub(crate) brush_resize_label: Option<BrushResizeLabel>,
+    pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
+    pub(crate) save_status: SaveStatus,
+    pub(crate) pending_navigation: Option<&'a str>,
 }
 
 pub struct GuiLayer {
@@ -41,15 +52,27 @@ pub struct GuiLayer {
     commands: Vec<AppCommand>,
     settings_message: Option<SettingsMessage>,
     background_edit_start: Option<[u8; 3]>,
-    layer_thumbnails: Vec<(LayerId, egui::TextureId)>,
+    layer_thumbnails: Vec<LayerThumbnail>,
     brush_previews: Vec<(String, egui::TextureHandle)>,
     failed_brush_previews: Vec<String>,
     sidebar_visible: bool,
+    gallery: gallery::GalleryUi,
 }
 
 struct SettingsMessage {
     text: String,
     is_error: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LayerPreviewKey {
+    layer_id: LayerId,
+    resource_id: LayerResourceId,
+}
+
+struct LayerThumbnail {
+    key: LayerPreviewKey,
+    texture_id: egui::TextureId,
 }
 
 impl GuiLayer {
@@ -62,6 +85,7 @@ impl GuiLayer {
         load_error: Option<String>,
     ) -> Self {
         let context = egui::Context::default();
+        install_fonts(&context);
         egui_extras::install_image_loaders(&context);
         let state = EguiWinitState::new(
             context.clone(),
@@ -100,35 +124,46 @@ impl GuiLayer {
             brush_previews: Vec::new(),
             failed_brush_previews: Vec::new(),
             sidebar_visible: true,
+            gallery: gallery::GalleryUi::default(),
         }
     }
 
     pub(crate) fn sync_layer_thumbnails(&mut self, paint: &PaintRenderer) {
+        let current_keys: Vec<_> = paint
+            .layer_preview_views()
+            .map(|(layer_id, resource_id, _)| LayerPreviewKey {
+                layer_id,
+                resource_id,
+            })
+            .collect();
+
         let mut index = 0;
         while index < self.layer_thumbnails.len() {
-            if paint
-                .layer_views()
-                .any(|(id, _)| id == self.layer_thumbnails[index].0)
-            {
+            if layer_preview_is_current(&current_keys, self.layer_thumbnails[index].key) {
                 index += 1;
             } else {
-                let (_, texture_id) = self.layer_thumbnails.remove(index);
-                self.renderer.free_texture(&texture_id);
+                let thumbnail = self.layer_thumbnails.remove(index);
+                self.renderer.free_texture(&thumbnail.texture_id);
             }
         }
 
-        for (id, view) in paint.layer_views() {
+        for (layer_id, resource_id, view) in paint.layer_preview_views() {
+            let key = LayerPreviewKey {
+                layer_id,
+                resource_id,
+            };
             if self
                 .layer_thumbnails
                 .iter()
-                .all(|(existing_id, _)| *existing_id != id)
+                .all(|thumbnail| thumbnail.key != key)
             {
                 let texture_id = self.renderer.register_native_texture(
                     paint.device(),
                     view,
                     wgpu::FilterMode::Linear,
                 );
-                self.layer_thumbnails.push((id, texture_id));
+                self.layer_thumbnails
+                    .push(LayerThumbnail { key, texture_id });
             }
         }
     }
@@ -228,14 +263,15 @@ impl GuiLayer {
         }
     }
 
-    pub fn run(
-        &mut self,
-        window: &Window,
-        layers: &LayerSnapshot,
-        tool: PaintTool,
-        brush_resize_label: Option<BrushResizeLabel>,
-        eyedropper_indicator: Option<EyedropperIndicator>,
-    ) -> egui::FullOutput {
+    pub fn run_editor(&mut self, window: &Window, state: EditorUiState<'_>) -> egui::FullOutput {
+        let EditorUiState {
+            layers,
+            tool,
+            brush_resize_label,
+            eyedropper_indicator,
+            save_status,
+            pending_navigation,
+        } = state;
         self.load_brush_preview(&self.active_brush.clone());
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
@@ -334,8 +370,8 @@ impl GuiLayer {
                                     let thumbnail = self
                                         .layer_thumbnails
                                         .iter()
-                                        .find(|(id, _)| *id == layer.id)
-                                        .map(|(_, texture_id)| *texture_id);
+                                        .find(|thumbnail| thumbnail.key.layer_id == layer.id)
+                                        .map(|thumbnail| thumbnail.texture_id);
                                     if show_layer_row(ui, &layer.name, selected, thumbnail, None)
                                         .clicked()
                                         && !selected
@@ -389,6 +425,34 @@ impl GuiLayer {
             if let Some(indicator) = eyedropper_indicator {
                 show_eyedropper_indicator(ui, indicator);
             }
+            if let Some(action) = pending_navigation {
+                show_save_blocker(ui.ctx(), action, &save_status, &mut self.commands);
+            }
+        })
+    }
+
+    pub fn run_gallery(
+        &mut self,
+        window: &Window,
+        artworks: &[ArtworkSummary],
+        discovery_warning: Option<&str>,
+    ) -> egui::FullOutput {
+        let raw_input = self.state.take_egui_input(window);
+        let context = self.context.clone();
+        let settings_message = self
+            .settings_message
+            .as_ref()
+            .filter(|message| message.is_error)
+            .map(|message| message.text.as_str());
+        let warning = match (discovery_warning, settings_message) {
+            (Some(discovery), Some(message)) => Some(format!("{discovery}\n{message}")),
+            (Some(discovery), None) => Some(discovery.to_owned()),
+            (None, Some(message)) => Some(message.to_owned()),
+            (None, None) => None,
+        };
+        context.run_ui(raw_input, |ui| {
+            self.gallery
+                .show(ui, artworks, warning.as_deref(), &mut self.commands);
         })
     }
 
@@ -484,6 +548,42 @@ impl GuiLayer {
         });
         self.context.request_repaint();
     }
+}
+
+fn layer_preview_is_current(current: &[LayerPreviewKey], cached: LayerPreviewKey) -> bool {
+    current.contains(&cached)
+}
+
+fn show_save_blocker(
+    context: &egui::Context,
+    action: &str,
+    status: &SaveStatus,
+    commands: &mut Vec<AppCommand>,
+) {
+    egui::Window::new(action)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(context, |ui| {
+            match status {
+                SaveStatus::Failed(error) => {
+                    ui.colored_label(egui::Color32::LIGHT_RED, "The artwork could not be saved.");
+                    ui.label(error);
+                }
+                _ => {
+                    ui.label("Saving the artwork before continuing…");
+                    ui.spinner();
+                }
+            }
+            ui.horizontal(|ui| {
+                if matches!(status, SaveStatus::Failed(_)) && ui.button("Retry").clicked() {
+                    commands.push(AppCommand::SaveArtwork);
+                }
+                if ui.button("Cancel").clicked() {
+                    commands.push(AppCommand::CancelPendingNavigation);
+                }
+            });
+        });
 }
 
 fn show_brush_row(
@@ -791,6 +891,48 @@ fn show_tool_button(
     response.on_hover_text(format!("{label} ({shortcut})"))
 }
 
+fn install_fonts(context: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "inter".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../assets/fonts/Inter-Regular.ttf"
+        ))),
+    );
+    fonts.font_data.insert(
+        "inter_medium".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../assets/fonts/Inter-Medium.ttf"
+        ))),
+    );
+    fonts.font_data.insert(
+        "elms_sans".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../assets/fonts/ElmsSans-Medium.ttf"
+        ))),
+    );
+    fonts
+        .families
+        .get_mut(&egui::FontFamily::Proportional)
+        .expect("default proportional font family")
+        .insert(0, "inter".to_owned());
+    fonts.families.insert(
+        egui::FontFamily::Name("inter_medium".into()),
+        vec!["inter_medium".to_owned(), "inter".to_owned()],
+    );
+    fonts.families.insert(
+        egui::FontFamily::Name("elms_sans".into()),
+        vec!["elms_sans".to_owned(), "inter".to_owned()],
+    );
+    context.set_fonts(fonts);
+    context.all_styles_mut(|style| {
+        style.text_styles.insert(
+            egui::TextStyle::Heading,
+            egui::FontId::new(18.0, egui::FontFamily::Name("inter_medium".into())),
+        );
+    });
+}
+
 fn brush_settings_from_config(
     config: &CurrentBrushConfig,
     loaded: &LoadedBrushPreset,
@@ -847,5 +989,27 @@ mod tests {
     fn background_color_round_trips_through_ui() {
         let color = [0.25, 0.5, 0.75, 1.0];
         assert_eq!(rgb(background_color(color)), [64, 128, 191]);
+    }
+
+    #[test]
+    fn replaced_layer_resource_invalidates_cached_preview() {
+        let cached = LayerPreviewKey {
+            layer_id: LayerId(1),
+            resource_id: LayerResourceId(4),
+        };
+        let replacement = LayerPreviewKey {
+            layer_id: LayerId(1),
+            resource_id: LayerResourceId(5),
+        };
+        assert!(!layer_preview_is_current(&[replacement], cached));
+    }
+
+    #[test]
+    fn unchanged_layer_resource_keeps_cached_preview() {
+        let cached = LayerPreviewKey {
+            layer_id: LayerId(2),
+            resource_id: LayerResourceId(7),
+        };
+        assert!(layer_preview_is_current(&[cached], cached));
     }
 }

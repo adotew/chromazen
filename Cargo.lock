@@ -3,6 +3,35 @@
 version = 4
 
 [[package]]
+name = "Chromazen"
+version = "0.1.0"
+dependencies = [
+ "atomic-write-file",
+ "block2 0.6.2",
+ "bytemuck",
+ "directories",
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
+ "egui_extras",
+ "env_logger",
+ "image",
+ "log",
+ "muda",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "open",
+ "pollster",
+ "raw-window-handle",
+ "serde",
+ "tempfile",
+ "toml",
+ "uuid",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "ab_glyph"
 version = "0.2.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -380,34 +409,6 @@ name = "cfg_aliases"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
-
-[[package]]
-name = "chromazen"
-version = "0.1.0"
-dependencies = [
- "atomic-write-file",
- "block2 0.6.2",
- "bytemuck",
- "directories",
- "egui",
- "egui-wgpu",
- "egui-winit",
- "egui_extras",
- "env_logger",
- "image",
- "log",
- "muda",
- "objc2 0.6.4",
- "objc2-app-kit 0.3.2",
- "open",
- "pollster",
- "raw-window-handle",
- "serde",
- "tempfile",
- "toml",
- "wgpu",
- "winit",
-]
 
 [[package]]
 name = "clipboard-win"
@@ -3153,6 +3154,11 @@ name = "uuid"
 version = "1.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf80a72845275afea99e7f2b434723d3bc7e38470fcd1c7ed39a599c73319a53"
+dependencies = [
+ "getrandom 0.4.3",
+ "js-sys",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "vello_common"

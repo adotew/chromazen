@@ -1,4 +1,6 @@
+mod autosave;
 mod command;
+mod gallery;
 mod input;
 mod menu;
 mod settings;
@@ -18,11 +20,13 @@ use winit::{
 };
 
 use self::{
+    autosave::AutosaveController,
     command::AppCommand,
+    gallery::GalleryController,
     input::{KeyboardShortcut, PaintInputController},
     menu::NativeMenu,
     settings::{SettingsCommand, SettingsController, SettingsEffect},
-    ui::{BrushResizeLabel, EyedropperIndicator, GuiLayer},
+    ui::{BrushResizeLabel, EditorUiState, EyedropperIndicator, GuiLayer},
 };
 use crate::{
     platform::{MacosPressureMonitor, PressureStateHandle},
@@ -33,6 +37,13 @@ const WINDOW_TITLE: &str = "Chromazen";
 
 enum AppEvent {
     Command(AppCommand),
+    AutosaveWake,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AppScreen {
+    Gallery,
+    Editor,
 }
 
 struct RenderOutcome {
@@ -51,6 +62,12 @@ pub struct App {
     pending_commands: Vec<AppCommand>,
     settings: SettingsController,
     native_menu: NativeMenu,
+    gallery: GalleryController,
+    autosave: AutosaveController,
+    screen: AppScreen,
+    pending_gallery: bool,
+    pending_new_artwork: bool,
+    pending_exit: bool,
 }
 
 impl ApplicationHandler<AppEvent> for App {
@@ -117,14 +134,18 @@ impl ApplicationHandler<AppEvent> for App {
         }
 
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::RedrawRequested => self.render(window.as_ref()),
+            WindowEvent::CloseRequested => self.request_exit(),
+            WindowEvent::RedrawRequested => self.render(window.as_ref(), event_loop),
             event => {
+                let navigation_pending = self.navigation_pending();
                 let Some(gui) = self.gui.as_mut() else {
                     return;
                 };
                 let cursor_changed = self.input.observe_event(&event);
-                if let Some(shortcut) = self.input.keyboard_shortcut(&event) {
+                if self.screen == AppScreen::Editor
+                    && !navigation_pending
+                    && let Some(shortcut) = self.input.keyboard_shortcut(&event)
+                {
                     let changed = match shortcut {
                         KeyboardShortcut::ToggleSidebar => {
                             gui.toggle_sidebar();
@@ -154,13 +175,16 @@ impl ApplicationHandler<AppEvent> for App {
                     needs_redraw |= gui.close_popups();
                 }
 
-                let history_command = (!egui_consumed)
-                    .then(|| self.input.history_command(&event))
-                    .flatten();
+                let history_command =
+                    (self.screen == AppScreen::Editor && !navigation_pending && !egui_consumed)
+                        .then(|| self.input.app_command(&event))
+                        .flatten();
                 if let Some(command) = history_command {
                     self.pending_commands.push(command);
                     needs_redraw = true;
-                } else if (!egui_consumed || self.input.captures_drag_event(&event))
+                } else if self.screen == AppScreen::Editor
+                    && !navigation_pending
+                    && (!egui_consumed || self.input.captures_drag_event(&event))
                     && let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_mut())
                 {
                     let brush_size_range = gui.brush_size_range();
@@ -200,8 +224,10 @@ impl ApplicationHandler<AppEvent> for App {
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
-        let AppEvent::Command(command) = event;
-        self.pending_commands.push(command);
+        match event {
+            AppEvent::Command(command) => self.pending_commands.push(command),
+            AppEvent::AutosaveWake => {}
+        }
         self.next_repaint = None;
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
@@ -209,7 +235,7 @@ impl ApplicationHandler<AppEvent> for App {
     }
 
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
-        if matches!(cause, StartCause::ResumeTimeReached { .. }) && self.next_repaint.is_some() {
+        if matches!(cause, StartCause::ResumeTimeReached { .. }) {
             self.request_scheduled_redraw(event_loop);
         }
     }
@@ -220,7 +246,12 @@ impl ApplicationHandler<AppEvent> for App {
 }
 
 impl App {
-    fn new(settings: SettingsController, native_menu: NativeMenu) -> Self {
+    fn new(
+        settings: SettingsController,
+        native_menu: NativeMenu,
+        gallery: GalleryController,
+        autosave: AutosaveController,
+    ) -> Self {
         Self {
             window: None,
             paint: None,
@@ -232,12 +263,65 @@ impl App {
             pending_commands: Vec::new(),
             settings,
             native_menu,
+            gallery,
+            autosave,
+            screen: AppScreen::Gallery,
+            pending_gallery: false,
+            pending_new_artwork: false,
+            pending_exit: false,
         }
     }
 
-    fn render(&mut self, window: &Window) {
+    fn navigation_pending(&self) -> bool {
+        self.pending_gallery || self.pending_exit
+    }
+
+    fn request_exit(&mut self) {
+        if self.screen == AppScreen::Editor {
+            if let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_ref()) {
+                self.input.finish_document_interaction(paint, gui.brush);
+            }
+            let clean = self
+                .paint
+                .as_ref()
+                .is_some_and(|paint| self.autosave.is_clean(paint));
+            if !clean {
+                self.autosave.request_save();
+            }
+        }
+        self.pending_exit = true;
+        self.pending_gallery = false;
+        self.pending_new_artwork = false;
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
+    fn render(&mut self, window: &Window, event_loop: &ActiveEventLoop) {
         let mut app_action_processed = self.process_pending_commands();
         let mut brush_switched = self.apply_pending_brush_change();
+
+        if self.pending_exit && self.screen == AppScreen::Gallery {
+            event_loop.exit();
+            return;
+        }
+        if self.screen == AppScreen::Editor
+            && let Some(paint) = self.paint.as_ref()
+        {
+            app_action_processed |= self.autosave.update(paint);
+            if self.pending_exit && self.autosave.is_clean(paint) {
+                event_loop.exit();
+                return;
+            }
+            if self.pending_gallery && self.autosave.is_clean(paint) {
+                let create_new = self.pending_new_artwork;
+                self.finish_gallery_navigation();
+                if create_new {
+                    self.new_artwork();
+                }
+                app_action_processed = true;
+            }
+        }
 
         let Some(paint) = self.paint.as_ref() else {
             return;
@@ -246,35 +330,66 @@ impl App {
             return;
         }
 
-        let layer_snapshot = paint.layer_snapshot();
-        let tool = self.input.tool();
-        let brush_resize_pos = self.input.brush_resize_pos();
-        let eyedropper_indicator_pos = self.input.eyedropper_indicator_pos();
         let (full_output, commands) = {
             let Some(gui) = self.gui.as_mut() else {
                 return;
             };
-            gui.sync_layer_thumbnails(paint);
-            let brush_resize_label = brush_resize_pos.map(|center| BrushResizeLabel {
-                center,
-                outline_half_width: paint.brush_outline_half_size(gui.brush.size)[0],
-            });
-            let eyedropper_indicator = eyedropper_indicator_pos.map(|center| EyedropperIndicator {
-                center,
-                color: gui.brush.color,
-            });
-            let output = gui.run(
-                window,
-                &layer_snapshot,
-                tool,
-                brush_resize_label,
-                eyedropper_indicator,
-            );
+            let output = match self.screen {
+                AppScreen::Gallery => {
+                    let warning = self.gallery.warning();
+                    gui.run_gallery(window, self.gallery.artworks(), warning.as_deref())
+                }
+                AppScreen::Editor => {
+                    gui.sync_layer_thumbnails(paint);
+                    let layer_snapshot = paint.layer_snapshot();
+                    let brush_resize_label =
+                        self.input
+                            .brush_resize_pos()
+                            .map(|center| BrushResizeLabel {
+                                center,
+                                outline_half_width: paint.brush_outline_half_size(gui.brush.size)
+                                    [0],
+                            });
+                    let eyedropper_indicator =
+                        self.input
+                            .eyedropper_indicator_pos()
+                            .map(|center| EyedropperIndicator {
+                                center,
+                                color: gui.brush.color,
+                            });
+                    let status = self.autosave.status(paint);
+                    let pending_navigation = if self.pending_exit {
+                        Some("Closing Chromazen")
+                    } else if self.pending_new_artwork {
+                        Some("Creating New Artwork")
+                    } else if self.pending_gallery {
+                        Some("Returning to Gallery")
+                    } else {
+                        None
+                    };
+                    gui.run_editor(
+                        window,
+                        EditorUiState {
+                            layers: &layer_snapshot,
+                            tool: self.input.tool(),
+                            brush_resize_label,
+                            eyedropper_indicator,
+                            save_status: status,
+                            pending_navigation,
+                        },
+                    )
+                }
+            };
             (output, gui.take_commands())
         };
         self.pending_commands.extend(commands);
         app_action_processed |= self.process_pending_commands();
 
+        if self.screen == AppScreen::Editor
+            && let Some(paint) = self.paint.as_ref()
+        {
+            app_action_processed |= self.autosave.update(paint);
+        }
         let Some(outcome) = self.render_frame(window, full_output) else {
             return;
         };
@@ -357,18 +472,122 @@ impl App {
                 AppCommand::OpenConfigDirectory => {
                     self.process_settings_commands(vec![SettingsCommand::OpenConfigDirectory]);
                 }
+                AppCommand::NewArtwork => self.new_artwork(),
+                AppCommand::OpenArtwork(id) => self.open_artwork(&id),
+                AppCommand::SaveArtwork => {
+                    if self.screen == AppScreen::Editor {
+                        self.autosave.request_save();
+                    }
+                }
+                AppCommand::ShowGallery => {
+                    if self.screen == AppScreen::Editor {
+                        self.pending_gallery = true;
+                        self.pending_new_artwork = false;
+                        self.autosave.request_save();
+                    }
+                }
+                AppCommand::RenameArtwork { id, title } => {
+                    if let Err(error) = self.gallery.rename(&id, &title)
+                        && let Some(gui) = self.gui.as_mut()
+                    {
+                        gui.show_error(error);
+                    }
+                }
+                AppCommand::DeleteArtwork(id) => {
+                    if let Err(error) = self.gallery.delete(&id)
+                        && let Some(gui) = self.gui.as_mut()
+                    {
+                        gui.show_error(error);
+                    }
+                }
+                AppCommand::CancelPendingNavigation => {
+                    self.pending_gallery = false;
+                    self.pending_new_artwork = false;
+                    self.pending_exit = false;
+                }
+                AppCommand::Quit => self.request_exit(),
             }
         }
         self.sync_history_menu();
         true
     }
 
+    fn new_artwork(&mut self) {
+        if self.screen == AppScreen::Editor {
+            self.pending_gallery = true;
+            self.pending_new_artwork = true;
+            self.autosave.request_save();
+            return;
+        }
+        let Some(paint) = self.paint.as_mut() else {
+            return;
+        };
+        if !paint.reset_document() {
+            return;
+        }
+        let id = crate::artwork::ArtworkId::new();
+        self.autosave.begin_new(id, "Untitled".to_owned());
+        self.screen = AppScreen::Editor;
+        self.pending_gallery = false;
+        self.pending_new_artwork = false;
+        self.pending_exit = false;
+        if let Some(window) = self.window.as_ref() {
+            window.set_title("Untitled • Chromazen");
+        }
+    }
+
+    fn open_artwork(&mut self, id: &crate::artwork::ArtworkId) {
+        let opened = match self.gallery.open(id) {
+            Ok(opened) => opened,
+            Err(error) => {
+                if let Some(gui) = self.gui.as_mut() {
+                    gui.show_error(error);
+                }
+                return;
+            }
+        };
+        let Some(paint) = self.paint.as_mut() else {
+            return;
+        };
+        if let Err(error) = paint.load_document(&opened.document, opened.layers) {
+            if let Some(gui) = self.gui.as_mut() {
+                gui.show_error(error);
+            }
+            return;
+        }
+        let versions = paint.document_versions();
+        self.autosave
+            .begin_loaded(opened.id, opened.title.clone(), versions);
+        self.screen = AppScreen::Editor;
+        self.pending_gallery = false;
+        self.pending_new_artwork = false;
+        self.pending_exit = false;
+        if let Some(window) = self.window.as_ref() {
+            window.set_title(&format!("{} • Chromazen", opened.title));
+        }
+    }
+
+    fn finish_gallery_navigation(&mut self) {
+        self.gallery.refresh();
+        self.autosave.clear();
+        self.screen = AppScreen::Gallery;
+        self.pending_gallery = false;
+        self.pending_new_artwork = false;
+        self.pending_exit = false;
+        if let Some(window) = self.window.as_ref() {
+            window.set_title(WINDOW_TITLE);
+        }
+        self.sync_history_menu();
+    }
+
     fn sync_history_menu(&self) {
-        let (can_undo, can_redo) = self
-            .paint
-            .as_ref()
+        let (can_undo, can_redo) = (self.screen == AppScreen::Editor)
+            .then_some(self.paint.as_ref())
+            .flatten()
             .map_or((false, false), |paint| (paint.can_undo(), paint.can_redo()));
         self.native_menu.set_history_enabled(can_undo, can_redo);
+        self.native_menu
+            .set_document_enabled(self.screen == AppScreen::Editor);
     }
 
     fn process_settings_commands(&mut self, commands: Vec<SettingsCommand>) {
@@ -576,7 +795,16 @@ impl App {
     }
 
     fn update_control_flow(&mut self, event_loop: &ActiveEventLoop) {
-        let Some(next_repaint) = self.next_repaint else {
+        let next_repaint = match (
+            self.next_repaint,
+            (self.screen == AppScreen::Editor)
+                .then(|| self.autosave.next_deadline())
+                .flatten(),
+        ) {
+            (Some(left), Some(right)) => Some(left.min(right)),
+            (left, right) => left.or(right),
+        };
+        let Some(next_repaint) = next_repaint else {
             event_loop.set_control_flow(ControlFlow::Wait);
             return;
         };
@@ -596,12 +824,19 @@ pub fn run() {
     let native_menu =
         NativeMenu::new().unwrap_or_else(|error| panic!("failed to create native menu: {error}"));
     let proxy = event_loop.create_proxy();
+    let menu_proxy = proxy.clone();
     native_menu.set_event_handler(move |command| {
-        if proxy.send_event(AppEvent::Command(command)).is_err() {
+        if menu_proxy.send_event(AppEvent::Command(command)).is_err() {
             log::debug!("native menu event ignored after event loop shutdown");
         }
     });
+    let gallery = GalleryController::discover();
+    let autosave_store = gallery.store();
+    let wake = Arc::new(move || {
+        let _ = proxy.send_event(AppEvent::AutosaveWake);
+    });
+    let autosave = AutosaveController::new(autosave_store, wake);
 
-    let mut app = App::new(SettingsController::load(), native_menu);
+    let mut app = App::new(SettingsController::load(), native_menu, gallery, autosave);
     event_loop.run_app(&mut app).expect("event loop error");
 }

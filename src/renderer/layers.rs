@@ -1,12 +1,23 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct LayerId(pub(crate) u64);
+
+/// Identifies one allocation of a layer's GPU resources. Unlike `LayerId`, this
+/// value is never reused when a document is reset or replaced.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct LayerResourceId(pub(crate) u64);
 
 pub(crate) struct PaintLayer {
     pub(crate) id: LayerId,
+    pub(crate) resource_id: LayerResourceId,
     pub(crate) name: String,
     pub(crate) texture: wgpu::Texture,
     pub(crate) view: wgpu::TextureView,
     pub(crate) blit_bind_group: wgpu::BindGroup,
+    // Keep the allocation alongside its view so history owns the complete preview resource.
+    pub(crate) _preview_texture: wgpu::Texture,
+    pub(crate) preview_view: wgpu::TextureView,
+    pub(crate) preview_bind_group: wgpu::BindGroup,
+    pub(crate) preview_dirty: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
