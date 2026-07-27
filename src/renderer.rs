@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use bytemuck::{Pod, Zeroable};
 use winit::{dpi::PhysicalSize, window::Window};
@@ -72,6 +72,13 @@ pub(crate) struct BrushCursor {
     pub(crate) diameter: f32,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DocumentVersions {
+    pub(crate) generation: u64,
+    pub(crate) metadata: u64,
+    pub(crate) layers: Vec<(LayerId, u64)>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StrokeRenderPath {
     Mask,
@@ -115,6 +122,9 @@ pub struct PaintRenderer {
     active_stroke: Option<ActiveStroke>,
     history: PaintHistory,
     view: PaintView,
+    document_generation: u64,
+    metadata_version: u64,
+    layer_versions: HashMap<LayerId, u64>,
 }
 
 impl PaintRenderer {
@@ -156,9 +166,13 @@ impl PaintRenderer {
             active_stroke: None,
             history,
             view: PaintView::default(),
+            document_generation: 0,
+            metadata_version: 0,
+            layer_versions: HashMap::from([(LayerId(1), 0)]),
         };
         renderer.fit_to_screen();
         renderer.clear_canvas();
+        renderer.reset_change_tracking(false);
         Ok(renderer)
     }
 
@@ -248,6 +262,25 @@ impl PaintRenderer {
         self.active_stroke.is_none() && self.selected_layer_index().is_some()
     }
 
+    pub(crate) fn document_versions(&self) -> DocumentVersions {
+        let mut layers: Vec<_> = self
+            .layers
+            .iter()
+            .map(|layer| {
+                (
+                    layer.id,
+                    self.layer_versions.get(&layer.id).copied().unwrap_or(0),
+                )
+            })
+            .collect();
+        layers.sort_by_key(|(id, _)| id.0);
+        DocumentVersions {
+            generation: self.document_generation,
+            metadata: self.metadata_version,
+            layers,
+        }
+    }
+
     pub(crate) fn can_replace_document(&self) -> bool {
         self.active_stroke.is_none()
             && !self.history.stroke_active()
@@ -305,6 +338,7 @@ impl PaintRenderer {
         self.stamp_queue.clear();
         self.history.clear();
         self.fit_to_screen();
+        self.reset_change_tracking(true);
         true
     }
 
@@ -381,6 +415,7 @@ impl PaintRenderer {
         self.stamp_queue.clear();
         self.history.clear();
         self.fit_to_screen();
+        self.reset_change_tracking(false);
         Ok(())
     }
 
@@ -404,11 +439,12 @@ impl PaintRenderer {
     }
 
     pub(crate) fn select_layer(&mut self, id: LayerId) -> bool {
-        if self.active_stroke.is_some() {
+        if self.active_stroke.is_some() || self.selection == id {
             return false;
         }
         if self.layers.iter().any(|layer| layer.id == id) {
             self.selection = id;
+            self.mark_metadata_changed();
             true
         } else {
             false
@@ -416,8 +452,10 @@ impl PaintRenderer {
     }
 
     pub(crate) fn set_background_color(&mut self, color: [u8; 3]) {
-        if self.active_stroke.is_none() {
-            self.background_color = opaque_color(color);
+        let color = opaque_color(color);
+        if self.active_stroke.is_none() && self.background_color != color {
+            self.background_color = color;
+            self.mark_metadata_changed();
         }
     }
 
@@ -427,7 +465,10 @@ impl PaintRenderer {
         }
         let before = opaque_color(before);
         let after = opaque_color(after);
-        self.background_color = after;
+        if self.background_color != after {
+            self.background_color = after;
+            self.mark_metadata_changed();
+        }
         self.history.record_background_color(before, after);
     }
 
@@ -475,6 +516,8 @@ impl PaintRenderer {
         self.selection = id;
         self.history
             .record_add(id, index, selection_before, self.layer_texture_byte_len());
+        self.mark_metadata_changed();
+        self.layer_versions.insert(id, self.document_generation);
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
         true
     }
@@ -506,6 +549,8 @@ impl PaintRenderer {
             self.selection,
             self.layer_texture_byte_len(),
         );
+        self.layer_versions.remove(&selection_before);
+        self.mark_metadata_changed();
         true
     }
 
@@ -646,6 +691,7 @@ impl PaintRenderer {
             rect,
         );
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.mark_layer_changed(active_stroke.layer_id);
         self.finish_active_stroke();
     }
 
@@ -661,7 +707,7 @@ impl PaintRenderer {
         if self.active_stroke.is_some() {
             return false;
         }
-        match self.history.undo_target() {
+        let changed = match self.history.undo_target() {
             Some(HistoryTarget::Structure) => self.history.undo_structure(
                 &mut self.layers,
                 &mut self.selection,
@@ -691,14 +737,18 @@ impl PaintRenderer {
                 true
             }
             None => false,
+        };
+        if changed {
+            self.mark_all_changed();
         }
+        changed
     }
 
     pub fn redo(&mut self) -> bool {
         if self.active_stroke.is_some() {
             return false;
         }
-        match self.history.redo_target() {
+        let changed = match self.history.redo_target() {
             Some(HistoryTarget::Structure) => self.history.redo_structure(
                 &mut self.layers,
                 &mut self.selection,
@@ -728,7 +778,11 @@ impl PaintRenderer {
                 true
             }
             None => false,
+        };
+        if changed {
+            self.mark_all_changed();
         }
+        changed
     }
 
     pub fn queue_stamp(&mut self, point: StrokePoint) -> bool {
@@ -807,6 +861,7 @@ impl PaintRenderer {
             },
         );
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.mark_layer_changed(self.layers[layer_index].id);
     }
 
     pub fn acquire_frame(&self) -> wgpu::CurrentSurfaceTexture {
@@ -1019,6 +1074,41 @@ impl PaintRenderer {
         self.layers
             .iter()
             .position(|layer| layer.id == self.selection)
+    }
+
+    fn reset_change_tracking(&mut self, dirty: bool) {
+        let version = u64::from(dirty);
+        self.document_generation = version;
+        self.metadata_version = version;
+        self.layer_versions = self
+            .layers
+            .iter()
+            .map(|layer| (layer.id, version))
+            .collect();
+    }
+
+    fn next_document_generation(&mut self) -> u64 {
+        self.document_generation = self.document_generation.saturating_add(1);
+        self.document_generation
+    }
+
+    fn mark_metadata_changed(&mut self) {
+        self.metadata_version = self.next_document_generation();
+    }
+
+    fn mark_layer_changed(&mut self, id: LayerId) {
+        let version = self.next_document_generation();
+        self.layer_versions.insert(id, version);
+    }
+
+    fn mark_all_changed(&mut self) {
+        let version = self.next_document_generation();
+        self.metadata_version = version;
+        self.layer_versions = self
+            .layers
+            .iter()
+            .map(|layer| (layer.id, version))
+            .collect();
     }
 
     fn write_view_uniform(&self) {
