@@ -1,5 +1,6 @@
 mod autosave;
 mod command;
+mod gallery;
 mod input;
 mod menu;
 mod settings;
@@ -19,7 +20,9 @@ use winit::{
 };
 
 use self::{
+    autosave::AutosaveController,
     command::AppCommand,
+    gallery::GalleryController,
     input::{KeyboardShortcut, PaintInputController},
     menu::NativeMenu,
     settings::{SettingsCommand, SettingsController, SettingsEffect},
@@ -34,6 +37,13 @@ const WINDOW_TITLE: &str = "Chromazen";
 
 enum AppEvent {
     Command(AppCommand),
+    AutosaveWake,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AppScreen {
+    Gallery,
+    Editor,
 }
 
 struct RenderOutcome {
@@ -52,6 +62,9 @@ pub struct App {
     pending_commands: Vec<AppCommand>,
     settings: SettingsController,
     native_menu: NativeMenu,
+    gallery: GalleryController,
+    autosave: AutosaveController,
+    screen: AppScreen,
 }
 
 impl ApplicationHandler<AppEvent> for App {
@@ -201,8 +214,10 @@ impl ApplicationHandler<AppEvent> for App {
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
-        let AppEvent::Command(command) = event;
-        self.pending_commands.push(command);
+        match event {
+            AppEvent::Command(command) => self.pending_commands.push(command),
+            AppEvent::AutosaveWake => {}
+        }
         self.next_repaint = None;
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
@@ -210,7 +225,7 @@ impl ApplicationHandler<AppEvent> for App {
     }
 
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
-        if matches!(cause, StartCause::ResumeTimeReached { .. }) && self.next_repaint.is_some() {
+        if matches!(cause, StartCause::ResumeTimeReached { .. }) {
             self.request_scheduled_redraw(event_loop);
         }
     }
@@ -221,7 +236,12 @@ impl ApplicationHandler<AppEvent> for App {
 }
 
 impl App {
-    fn new(settings: SettingsController, native_menu: NativeMenu) -> Self {
+    fn new(
+        settings: SettingsController,
+        native_menu: NativeMenu,
+        gallery: GalleryController,
+        autosave: AutosaveController,
+    ) -> Self {
         Self {
             window: None,
             paint: None,
@@ -233,6 +253,9 @@ impl App {
             pending_commands: Vec::new(),
             settings,
             native_menu,
+            gallery,
+            autosave,
+            screen: AppScreen::Gallery,
         }
     }
 
@@ -577,7 +600,16 @@ impl App {
     }
 
     fn update_control_flow(&mut self, event_loop: &ActiveEventLoop) {
-        let Some(next_repaint) = self.next_repaint else {
+        let next_repaint = match (
+            self.next_repaint,
+            (self.screen == AppScreen::Editor)
+                .then(|| self.autosave.next_deadline())
+                .flatten(),
+        ) {
+            (Some(left), Some(right)) => Some(left.min(right)),
+            (left, right) => left.or(right),
+        };
+        let Some(next_repaint) = next_repaint else {
             event_loop.set_control_flow(ControlFlow::Wait);
             return;
         };
@@ -597,12 +629,19 @@ pub fn run() {
     let native_menu =
         NativeMenu::new().unwrap_or_else(|error| panic!("failed to create native menu: {error}"));
     let proxy = event_loop.create_proxy();
+    let menu_proxy = proxy.clone();
     native_menu.set_event_handler(move |command| {
-        if proxy.send_event(AppEvent::Command(command)).is_err() {
+        if menu_proxy.send_event(AppEvent::Command(command)).is_err() {
             log::debug!("native menu event ignored after event loop shutdown");
         }
     });
+    let gallery = GalleryController::discover();
+    let autosave_store = gallery.store();
+    let wake = Arc::new(move || {
+        let _ = proxy.send_event(AppEvent::AutosaveWake);
+    });
+    let autosave = AutosaveController::new(autosave_store, wake);
 
-    let mut app = App::new(SettingsController::load(), native_menu);
+    let mut app = App::new(SettingsController::load(), native_menu, gallery, autosave);
     event_loop.run_app(&mut app).expect("event loop error");
 }
