@@ -309,6 +309,55 @@ mod tests {
         }
     }
 
+    fn transported_impulse_displacement(step: usize, strength: f32) -> f32 {
+        const SAMPLE_COUNT: usize = 256;
+        const START: usize = 64;
+        const TRAVEL: usize = 24;
+
+        assert_eq!(TRAVEL % step, 0);
+        let mut samples = vec![0.0_f32; SAMPLE_COUNT];
+        samples[START] = 1.0;
+        for _ in 0..TRAVEL / step {
+            let previous = samples.clone();
+            for (index, sample) in samples.iter_mut().enumerate() {
+                let source = index
+                    .checked_sub(step)
+                    .map_or(0.0, |source_index| previous[source_index]);
+                *sample = previous[index] * (1.0 - strength) + source * strength;
+            }
+        }
+
+        let mass: f32 = samples.iter().sum();
+        let centroid = samples
+            .iter()
+            .enumerate()
+            .map(|(index, sample)| index as f32 * sample)
+            .sum::<f32>()
+            / mass;
+        centroid - START as f32
+    }
+
+    #[test]
+    fn shifted_source_transport_is_stable_across_step_sizes() {
+        let expected = 0.35 * 24.0;
+
+        for step in [1, 2, 4] {
+            let displacement = transported_impulse_displacement(step, 0.35);
+            assert!((displacement - expected).abs() < 1.0e-4);
+        }
+    }
+
+    #[test]
+    fn travel_scaled_strength_collapses_with_finer_steps() {
+        const RADIUS: f32 = 8.0;
+        const MAX_ADVECTION: f32 = 0.35;
+
+        let fine = transported_impulse_displacement(1, MAX_ADVECTION / RADIUS);
+        let coarse = transported_impulse_displacement(4, MAX_ADVECTION * 4.0 / RADIUS);
+
+        assert!(fine < coarse * 0.3);
+    }
+
     #[test]
     fn stamp_raw_matches_shader_layout() {
         assert_eq!(std::mem::size_of::<StampRaw>(), 64);
