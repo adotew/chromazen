@@ -42,7 +42,7 @@ struct Stamp {
 pub(crate) struct StampQueue {
     pending: VecDeque<Stamp>,
     distance_since_last_stamp: f32,
-    last_stamp_center: Option<[f32; 2]>,
+    last_generated_center: Option<[f32; 2]>,
     stamp_aspect: f32,
     dirty_rect: Option<TextureRect>,
 }
@@ -58,7 +58,7 @@ impl StampQueue {
         Self {
             pending: VecDeque::new(),
             distance_since_last_stamp: 0.0,
-            last_stamp_center: None,
+            last_generated_center: None,
             stamp_aspect,
             dirty_rect: None,
         }
@@ -76,7 +76,7 @@ impl StampQueue {
     pub(crate) fn clear(&mut self) {
         self.pending.clear();
         self.distance_since_last_stamp = 0.0;
-        self.last_stamp_center = None;
+        self.last_generated_center = None;
         self.dirty_rect = None;
     }
 
@@ -86,13 +86,13 @@ impl StampQueue {
 
     pub(crate) fn begin_stroke(&mut self, origin: StrokePoint) {
         self.distance_since_last_stamp = 0.0;
-        self.last_stamp_center = Some([origin.x, origin.y]);
+        self.last_generated_center = Some([origin.x, origin.y]);
         self.dirty_rect = None;
     }
 
     pub(crate) fn end_stroke(&mut self) -> Option<TextureRect> {
         self.distance_since_last_stamp = 0.0;
-        self.last_stamp_center = None;
+        self.last_generated_center = None;
         self.dirty_rect.take()
     }
 
@@ -118,7 +118,10 @@ impl StampQueue {
     }
 
     fn queue_stamp(&mut self, mut stamp: Stamp, width: u32, height: u32) -> bool {
-        stamp.source_center = self.last_stamp_center.unwrap_or([stamp.x, stamp.y]);
+        stamp.source_center = self.last_generated_center.unwrap_or([stamp.x, stamp.y]);
+        // Source continuity follows generated simulation dabs, including dabs that
+        // do not intersect the document and therefore produce no GPU work.
+        self.last_generated_center = Some([stamp.x, stamp.y]);
         let bounds = get_stamp_bounds(
             stamp.x,
             stamp.y,
@@ -144,7 +147,6 @@ impl StampQueue {
             bounds.max_y as u32,
         );
         self.dirty_rect = Some(self.dirty_rect.map_or(rect, |dirty| dirty.union(rect)));
-        self.last_stamp_center = Some([stamp.x, stamp.y]);
         self.pending.push_back(stamp);
         true
     }
@@ -378,12 +380,25 @@ mod tests {
     }
 
     #[test]
-    fn rejected_stamps_do_not_advance_smudge_source() {
+    fn rejected_stamps_advance_smudge_source_without_dirtying() {
         let mut queue = StampQueue::default();
         queue.begin_stroke(point(5.0, 5.0));
         assert!(!queue.queue_point(point(-20.0, -20.0), [0.0; 4], 100, 100));
-        assert!(queue.queue_point(point(30.0, 30.0), [0.0; 4], 100, 100));
-        assert_eq!(queue.pending[0].source_center, [5.0, 5.0]);
+        assert!(queue.pending.is_empty());
+        assert_eq!(queue.dirty_rect, None);
+
+        assert!(queue.queue_point(point(5.0, 5.0), [0.0; 4], 100, 100));
+        assert_eq!(queue.pending[0].source_center, [-20.0, -20.0]);
+    }
+
+    #[test]
+    fn reentry_uses_the_previous_generated_center() {
+        let mut queue = StampQueue::default();
+        queue.begin_stroke(point(5.0, 5.0));
+        assert!(!queue.queue_point(point(-20.0, 5.0), [0.0; 4], 100, 100));
+        assert!(queue.queue_point(point(-9.0, 5.0), [0.0; 4], 100, 100));
+
+        assert_eq!(queue.pending[0].source_center, [-20.0, 5.0]);
     }
 
     #[test]
