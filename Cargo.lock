@@ -405,6 +405,7 @@ dependencies = [
  "serde",
  "tempfile",
  "toml",
+ "uuid",
  "wgpu",
  "winit",
 ]
@@ -3153,6 +3154,11 @@ name = "uuid"
 version = "1.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf80a72845275afea99e7f2b434723d3bc7e38470fcd1c7ed39a599c73319a53"
+dependencies = [
+ "getrandom 0.4.3",
+ "js-sys",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "vello_common"
