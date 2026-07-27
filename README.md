@@ -65,6 +65,8 @@ Controls:
 - `Tab`: show or hide the sidebar
 - Hold `Shift` and left-drag vertically on the canvas to resize the brush; drag
   up to increase its size or down to decrease it
+- Hold `Option` (`Alt` outside macOS) to activate the eyedropper, then
+  left-click or drag on the canvas to sample its visible composited color
 - Wheel: zoom around cursor
 - Middle/right drag or Space + left drag: pan
 - Undo: `Command-Z` on macOS; `Control-Z` on Windows and Linux

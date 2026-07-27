@@ -22,7 +22,7 @@ use self::{
     input::{KeyboardShortcut, PaintInputController},
     menu::NativeMenu,
     settings::{SettingsCommand, SettingsController, SettingsEffect},
-    ui::{BrushResizeLabel, GuiLayer},
+    ui::{BrushResizeLabel, EyedropperIndicator, GuiLayer},
 };
 use crate::{
     platform::{MacosPressureMonitor, PressureStateHandle},
@@ -160,7 +160,7 @@ impl ApplicationHandler<AppEvent> for App {
                 if let Some(command) = history_command {
                     self.pending_commands.push(command);
                     needs_redraw = true;
-                } else if (!egui_consumed || self.input.captures_resize_event(&event))
+                } else if (!egui_consumed || self.input.captures_drag_event(&event))
                     && let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_mut())
                 {
                     let brush_size_range = gui.brush_size_range();
@@ -249,6 +249,7 @@ impl App {
         let layer_snapshot = paint.layer_snapshot();
         let tool = self.input.tool();
         let brush_resize_pos = self.input.brush_resize_pos();
+        let eyedropper_indicator_pos = self.input.eyedropper_indicator_pos();
         let (full_output, commands) = {
             let Some(gui) = self.gui.as_mut() else {
                 return;
@@ -258,7 +259,17 @@ impl App {
                 center,
                 outline_half_width: paint.brush_outline_half_size(gui.brush.size)[0],
             });
-            let output = gui.run(window, &layer_snapshot, tool, brush_resize_label);
+            let eyedropper_indicator = eyedropper_indicator_pos.map(|center| EyedropperIndicator {
+                center,
+                color: gui.brush.color,
+            });
+            let output = gui.run(
+                window,
+                &layer_snapshot,
+                tool,
+                brush_resize_label,
+                eyedropper_indicator,
+            );
             (output, gui.take_commands())
         };
         self.pending_commands.extend(commands);
@@ -381,6 +392,7 @@ impl App {
         let brush_resize_pos = self.input.brush_resize_pos();
         let resize_is_anchored = self.input.brush_resize_is_anchored();
         let is_resizing_brush = self.input.is_resizing_brush();
+        let is_eyedropper_active = self.input.is_eyedropper_active();
         let brush_pressure = self.pressure_state.brush_pressure();
         let paint = self.paint.as_mut()?;
         let gui = self.gui.as_mut()?;
@@ -402,7 +414,10 @@ impl App {
         let repaint_delay = ui::repaint_delay(&full_output);
         gui.state
             .handle_platform_output(window, full_output.platform_output);
-        window.set_cursor_visible(is_resizing_brush || brush_cursor.is_none());
+        let eyedropper_over_canvas = is_eyedropper_active && !pointer_over_ui;
+        window.set_cursor_visible(
+            is_resizing_brush || (brush_cursor.is_none() && !eyedropper_over_canvas),
+        );
 
         for (id, image_delta) in &full_output.textures_delta.set {
             gui.renderer

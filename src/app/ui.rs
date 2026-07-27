@@ -22,6 +22,12 @@ pub(crate) struct BrushResizeLabel {
     pub(crate) outline_half_width: f32,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct EyedropperIndicator {
+    pub(crate) center: [f32; 2],
+    pub(crate) color: egui::Color32,
+}
+
 pub struct GuiLayer {
     pub context: egui::Context,
     pub state: EguiWinitState,
@@ -228,6 +234,7 @@ impl GuiLayer {
         layers: &LayerSnapshot,
         tool: PaintTool,
         brush_resize_label: Option<BrushResizeLabel>,
+        eyedropper_indicator: Option<EyedropperIndicator>,
     ) -> egui::FullOutput {
         self.load_brush_preview(&self.active_brush.clone());
         let raw_input = self.state.take_egui_input(window);
@@ -339,6 +346,9 @@ impl GuiLayer {
 
             if let Some(label) = brush_resize_label {
                 show_brush_resize_label(ui, label, self.brush.size);
+            }
+            if let Some(indicator) = eyedropper_indicator {
+                show_eyedropper_indicator(ui, indicator);
             }
 
             egui::Area::new(egui::Id::new("tool mode"))
@@ -583,6 +593,39 @@ fn show_layer_row(
     );
 
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn show_eyedropper_indicator(ui: &egui::Ui, indicator: EyedropperIndicator) {
+    let pixels_per_point = ui.ctx().pixels_per_point();
+    let center = egui::pos2(
+        indicator.center[0] / pixels_per_point,
+        indicator.center[1] / pixels_per_point,
+    );
+    let canvas_rect = ui.available_rect_before_wrap();
+    if !canvas_rect.contains(center) {
+        return;
+    }
+
+    let painter = ui
+        .ctx()
+        .layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("eyedropper indicator"),
+        ))
+        .with_clip_rect(canvas_rect);
+    for direction in [
+        egui::vec2(1.0, 0.0),
+        egui::vec2(-1.0, 0.0),
+        egui::vec2(0.0, 1.0),
+        egui::vec2(0.0, -1.0),
+    ] {
+        let segment = [center + direction * 10.0, center + direction * 15.0];
+        painter.line_segment(segment, egui::Stroke::new(3.0, egui::Color32::BLACK));
+        painter.line_segment(segment, egui::Stroke::new(1.0, egui::Color32::WHITE));
+    }
+    painter.circle_filled(center, 8.0, indicator.color);
+    painter.circle_stroke(center, 9.0, egui::Stroke::new(2.0, egui::Color32::WHITE));
+    painter.circle_stroke(center, 10.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
 }
 
 fn show_brush_resize_label(ui: &egui::Ui, overlay: BrushResizeLabel, brush_size: f32) {

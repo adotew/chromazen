@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use winit::{
     event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
     keyboard::{KeyCode, ModifiersState, PhysicalKey},
@@ -11,10 +13,17 @@ use crate::{
 
 use super::command::AppCommand;
 
+const EYEDROPPER_DRAG_SAMPLE_INTERVAL: Duration = Duration::from_millis(33);
+
 #[derive(Debug, Clone, Copy)]
 struct BrushResizeDrag {
     start_y: f32,
     start_size: f32,
+}
+
+#[derive(Debug, Default)]
+struct EyedropperDrag {
+    last_sample: Option<(Instant, [f32; 2])>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +41,7 @@ pub struct PaintInputController {
     is_space_down: bool,
     resize_origin: Option<[f32; 2]>,
     resize_drag: Option<BrushResizeDrag>,
+    eyedropper_drag: Option<EyedropperDrag>,
     last_point: Option<StrokePoint>,
     last_pan_pos: [f32; 2],
     smoother: StrokeSmoother,
@@ -49,8 +59,17 @@ impl PaintInputController {
         (self.cursor_inside
             && !self.is_panning
             && !self.is_space_down
-            && self.resize_origin.is_none())
+            && self.resize_origin.is_none()
+            && !self.is_eyedropper_active())
         .then_some(self.cursor_pos)
+    }
+
+    pub fn eyedropper_indicator_pos(&self) -> Option<[f32; 2]> {
+        (self.cursor_inside && self.is_eyedropper_active()).then_some(self.cursor_pos)
+    }
+
+    pub fn is_eyedropper_active(&self) -> bool {
+        eyedropper_modifier_is_active(self.modifiers)
     }
 
     pub fn is_resizing_brush(&self) -> bool {
@@ -65,8 +84,8 @@ impl PaintInputController {
         self.resize_origin.is_some()
     }
 
-    pub fn captures_resize_event(&self, _event: &WindowEvent) -> bool {
-        self.resize_origin.is_some()
+    pub fn captures_drag_event(&self, _event: &WindowEvent) -> bool {
+        self.resize_origin.is_some() || self.eyedropper_drag.is_some()
     }
 
     pub fn observe_event(&mut self, event: &WindowEvent) -> bool {
@@ -80,12 +99,17 @@ impl PaintInputController {
             }
             WindowEvent::CursorLeft { .. } => std::mem::replace(&mut self.cursor_inside, false),
             WindowEvent::ModifiersChanged(modifiers) => {
+                let was_active = self.is_eyedropper_active();
                 self.modifiers = modifiers.state();
-                false
+                was_active != self.is_eyedropper_active()
             }
             WindowEvent::Focused(false) => {
+                let changed = self.cursor_inside
+                    || self.is_eyedropper_active()
+                    || self.eyedropper_drag.is_some();
                 self.modifiers = ModifiersState::empty();
-                std::mem::replace(&mut self.cursor_inside, false)
+                self.cursor_inside = false;
+                changed
             }
             _ => false,
         }
@@ -142,6 +166,12 @@ impl PaintInputController {
             WindowEvent::CursorMoved { position, .. } => {
                 let next = [position.x as f32, position.y as f32];
 
+                if let Some(drag) = &self.eyedropper_drag {
+                    let now = Instant::now();
+                    let last_sample = drag.last_sample.map(|sample| sample.0);
+                    return color_sample_is_due(last_sample, now)
+                        && self.sample_color_at(paint, brush, next, now);
+                }
                 if let Some(drag) = self.resize_drag {
                     let next_size = resized_brush_size(
                         drag.start_size,
@@ -179,11 +209,24 @@ impl PaintInputController {
                 state: ElementState::Released,
                 button: MouseButton::Left,
                 ..
+            } if self.eyedropper_drag.is_some() => {
+                self.finish_color_sampling(paint, brush);
+                true
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
             } if self.resize_drag.is_some() => {
                 self.resize_drag = None;
                 true
             }
             WindowEvent::MouseInput { state, button, .. } => match (state, button) {
+                (ElementState::Pressed, MouseButton::Left) if self.is_eyedropper_active() => {
+                    let started = self.eyedropper_drag.is_none();
+                    self.eyedropper_drag.get_or_insert_default();
+                    self.sample_color_at(paint, brush, self.cursor_pos, Instant::now()) || started
+                }
                 (ElementState::Pressed, MouseButton::Left)
                     if resize_modifier_is_active(self.modifiers) =>
                 {
@@ -237,6 +280,12 @@ impl PaintInputController {
                 false
             }
             WindowEvent::ModifiersChanged(_)
+                if self.eyedropper_drag.is_some() && !self.is_eyedropper_active() =>
+            {
+                self.finish_color_sampling(paint, brush);
+                true
+            }
+            WindowEvent::ModifiersChanged(_)
                 if self.resize_origin.is_some() && !resize_modifier_is_active(self.modifiers) =>
             {
                 self.resize_origin = None;
@@ -262,18 +311,45 @@ impl PaintInputController {
                 }
                 false
             }
-            WindowEvent::CursorLeft { .. } => {
+            WindowEvent::CursorLeft { .. } | WindowEvent::Focused(false) => {
                 self.resize_origin = None;
                 self.resize_drag = None;
-                self.end_stroke(paint, *brush)
-            }
-            WindowEvent::Focused(false) => {
-                self.resize_origin = None;
-                self.resize_drag = None;
-                self.end_stroke(paint, *brush)
+                let was_sampling = self.eyedropper_drag.take().is_some();
+                self.end_stroke(paint, *brush) || was_sampling
             }
             _ => false,
         }
+    }
+
+    fn sample_color_at(
+        &mut self,
+        paint: &PaintRenderer,
+        brush: &mut BrushSettings,
+        window_point: [f32; 2],
+        sampled_at: Instant,
+    ) -> bool {
+        self.eyedropper_drag
+            .as_mut()
+            .expect("sampling requires an eyedropper drag")
+            .last_sample = Some((sampled_at, window_point));
+        let Some([red, green, blue]) = paint.sample_composited_color(window_point) else {
+            return false;
+        };
+        let color = egui::Color32::from_rgb(red, green, blue);
+        let changed = brush.color != color;
+        brush.color = color;
+        changed
+    }
+
+    fn finish_color_sampling(&mut self, paint: &PaintRenderer, brush: &mut BrushSettings) -> bool {
+        let last_point = self
+            .eyedropper_drag
+            .as_ref()
+            .and_then(|drag| drag.last_sample.map(|sample| sample.1));
+        let changed = last_point != Some(self.cursor_pos)
+            && self.sample_color_at(paint, brush, self.cursor_pos, Instant::now());
+        self.eyedropper_drag = None;
+        changed
     }
 
     fn begin_brush_resize_drag(&mut self, brush_size: f32) {
@@ -357,6 +433,16 @@ fn keyboard_shortcut_for_key(
         ModifiersState::SHIFT => Some(KeyboardShortcut::CycleTool),
         _ => None,
     }
+}
+
+fn eyedropper_modifier_is_active(modifiers: ModifiersState) -> bool {
+    modifiers == ModifiersState::ALT
+}
+
+fn color_sample_is_due(last_sample: Option<Instant>, now: Instant) -> bool {
+    last_sample.is_none_or(|last_sample| {
+        now.saturating_duration_since(last_sample) >= EYEDROPPER_DRAG_SAMPLE_INTERVAL
+    })
 }
 
 fn resize_modifier_is_active(modifiers: ModifiersState) -> bool {
@@ -488,6 +574,37 @@ mod tests {
     }
 
     #[test]
+    fn only_unmodified_option_enables_eyedropper() {
+        assert!(eyedropper_modifier_is_active(ModifiersState::ALT));
+        for modifiers in [
+            ModifiersState::empty(),
+            ModifiersState::SHIFT,
+            ModifiersState::CONTROL,
+            ModifiersState::SUPER,
+            ModifiersState::ALT | ModifiersState::SHIFT,
+            ModifiersState::ALT | ModifiersState::CONTROL,
+            ModifiersState::ALT | ModifiersState::SUPER,
+        ] {
+            assert!(!eyedropper_modifier_is_active(modifiers));
+        }
+    }
+
+    #[test]
+    fn drag_sampling_is_throttled() {
+        let now = Instant::now();
+        assert!(color_sample_is_due(None, now));
+        assert!(!color_sample_is_due(Some(now), now));
+        assert!(!color_sample_is_due(
+            Some(now),
+            now + EYEDROPPER_DRAG_SAMPLE_INTERVAL - Duration::from_millis(1),
+        ));
+        assert!(color_sample_is_due(
+            Some(now),
+            now + EYEDROPPER_DRAG_SAMPLE_INTERVAL,
+        ));
+    }
+
+    #[test]
     fn only_unmodified_shift_enables_resize() {
         assert!(resize_modifier_is_active(ModifiersState::SHIFT));
         for modifiers in [
@@ -547,6 +664,21 @@ mod tests {
     }
 
     #[test]
+    fn option_activates_eyedropper_before_dragging() {
+        let input = PaintInputController {
+            cursor_inside: true,
+            cursor_pos: [40.0, 50.0],
+            modifiers: ModifiersState::ALT,
+            ..PaintInputController::default()
+        };
+
+        assert_eq!(input.brush_cursor_pos(), None);
+        assert_eq!(input.eyedropper_indicator_pos(), Some([40.0, 50.0]));
+        assert!(input.is_eyedropper_active());
+        assert!(!input.captures_drag_event(&WindowEvent::Focused(false)));
+    }
+
+    #[test]
     fn shift_alone_keeps_the_brush_cursor_visible() {
         let input = PaintInputController {
             cursor_inside: true,
@@ -571,7 +703,7 @@ mod tests {
         assert_eq!(input.brush_cursor_pos(), None);
         assert_eq!(input.brush_resize_pos(), Some([20.0, 30.0]));
         assert!(input.is_resizing_brush());
-        assert!(input.captures_resize_event(&WindowEvent::Focused(false)));
+        assert!(input.captures_drag_event(&WindowEvent::Focused(false)));
         assert!(input.brush_resize_is_anchored());
 
         input.resize_drag = None;

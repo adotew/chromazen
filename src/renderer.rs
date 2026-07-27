@@ -6,6 +6,7 @@ use winit::{dpi::PhysicalSize, window::Window};
 mod history;
 mod layers;
 mod resources;
+mod sampling;
 mod stamps;
 mod view;
 
@@ -14,6 +15,7 @@ use self::{
     history::{HistoryTarget, PaintHistory, TextureRect},
     layers::{PaintLayer, insertion_index, layer_name, replacement_index_after_delete},
     resources::RenderResources,
+    sampling::{document_pixel, read_composited_color},
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue, StampRaw},
     view::PaintView,
 };
@@ -221,6 +223,23 @@ impl PaintRenderer {
 
     pub fn window_to_document(&self, point: [f32; 2]) -> [f32; 2] {
         self.view.window_to_document(point)
+    }
+
+    pub fn sample_composited_color(&self, window_point: [f32; 2]) -> Option<[u8; 3]> {
+        if self.active_stroke.is_some() || self.stamp_queue.has_pending() {
+            return None;
+        }
+        let pixel = document_pixel(
+            self.view.window_to_document(window_point),
+            self.document_size,
+        )?;
+        read_composited_color(
+            self.gpu.device(),
+            self.gpu.queue(),
+            &self.layers,
+            pixel,
+            self.background_color,
+        )
     }
 
     pub fn can_paint(&self) -> bool {
