@@ -102,17 +102,10 @@ impl PaintInputController {
         let WindowEvent::KeyboardInput { event, .. } = event else {
             return None;
         };
-        if event.physical_key != PhysicalKey::Code(KeyCode::Tab)
-            || event.state != ElementState::Pressed
-            || event.repeat
-        {
+        let PhysicalKey::Code(key) = event.physical_key else {
             return None;
-        }
-        match self.modifiers {
-            modifiers if modifiers.is_empty() => Some(KeyboardShortcut::ToggleSidebar),
-            ModifiersState::SHIFT => Some(KeyboardShortcut::CycleTool),
-            _ => None,
-        }
+        };
+        keyboard_shortcut_for_key(key, event.state, event.repeat, self.modifiers)
     }
 
     pub fn cycle_tool(&mut self) -> bool {
@@ -367,6 +360,22 @@ impl PaintInputController {
     }
 }
 
+fn keyboard_shortcut_for_key(
+    key: KeyCode,
+    state: ElementState,
+    repeat: bool,
+    modifiers: ModifiersState,
+) -> Option<KeyboardShortcut> {
+    if key != KeyCode::Tab || state != ElementState::Pressed || repeat {
+        return None;
+    }
+    match modifiers {
+        modifiers if modifiers.is_empty() => Some(KeyboardShortcut::ToggleSidebar),
+        ModifiersState::SHIFT => Some(KeyboardShortcut::CycleTool),
+        _ => None,
+    }
+}
+
 fn resize_modifier_is_active(modifiers: ModifiersState) -> bool {
     modifiers.shift_key()
         && !modifiers.control_key()
@@ -409,6 +418,107 @@ fn history_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<Ap
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maps_tab_shortcuts() {
+        assert_eq!(
+            keyboard_shortcut_for_key(
+                KeyCode::Tab,
+                ElementState::Pressed,
+                false,
+                ModifiersState::empty(),
+            ),
+            Some(KeyboardShortcut::ToggleSidebar)
+        );
+        assert_eq!(
+            keyboard_shortcut_for_key(
+                KeyCode::Tab,
+                ElementState::Pressed,
+                false,
+                ModifiersState::SHIFT,
+            ),
+            Some(KeyboardShortcut::CycleTool)
+        );
+    }
+
+    #[test]
+    fn ignores_unhandled_tab_variants() {
+        for modifiers in [
+            ModifiersState::CONTROL,
+            ModifiersState::ALT,
+            ModifiersState::SUPER,
+            ModifiersState::SHIFT | ModifiersState::CONTROL,
+        ] {
+            assert_eq!(
+                keyboard_shortcut_for_key(KeyCode::Tab, ElementState::Pressed, false, modifiers,),
+                None
+            );
+        }
+        assert_eq!(
+            keyboard_shortcut_for_key(
+                KeyCode::Tab,
+                ElementState::Released,
+                false,
+                ModifiersState::empty(),
+            ),
+            None
+        );
+        assert_eq!(
+            keyboard_shortcut_for_key(
+                KeyCode::Tab,
+                ElementState::Pressed,
+                true,
+                ModifiersState::empty(),
+            ),
+            None
+        );
+        assert_eq!(
+            keyboard_shortcut_for_key(
+                KeyCode::KeyR,
+                ElementState::Pressed,
+                false,
+                ModifiersState::empty(),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn cycles_tools_and_wraps() {
+        let mut input = PaintInputController::default();
+        assert!(input.cycle_tool());
+        assert_eq!(input.tool(), PaintTool::Eraser);
+        assert!(input.cycle_tool());
+        assert_eq!(input.tool(), PaintTool::Smudge);
+        assert!(input.cycle_tool());
+        assert_eq!(input.tool(), PaintTool::Brush);
+    }
+
+    #[test]
+    fn cycling_is_blocked_during_a_stroke() {
+        let mut input = PaintInputController {
+            is_drawing: true,
+            ..Default::default()
+        };
+        assert!(!input.cycle_tool());
+        assert_eq!(input.tool(), PaintTool::Brush);
+    }
+
+    #[test]
+    fn only_unmodified_shift_enables_resize() {
+        assert!(resize_modifier_is_active(ModifiersState::SHIFT));
+        for modifiers in [
+            ModifiersState::empty(),
+            ModifiersState::CONTROL,
+            ModifiersState::ALT,
+            ModifiersState::SUPER,
+            ModifiersState::SHIFT | ModifiersState::CONTROL,
+            ModifiersState::SHIFT | ModifiersState::ALT,
+            ModifiersState::SHIFT | ModifiersState::SUPER,
+        ] {
+            assert!(!resize_modifier_is_active(modifiers));
+        }
+    }
 
     #[test]
     fn maps_tool_shortcuts() {
