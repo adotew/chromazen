@@ -1,7 +1,4 @@
-use std::{
-    path::PathBuf,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::path::PathBuf;
 
 use crate::artwork::{ArtworkId, ArtworkSummary};
 
@@ -30,15 +27,41 @@ impl GalleryUi {
         commands: &mut Vec<AppCommand>,
     ) {
         self.sync_thumbnails(ui.ctx(), artworks);
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        let panel_frame =
+            egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin::symmetric(24, 8));
+        egui::CentralPanel::default()
+            .frame(panel_frame)
+            .show_inside(ui, |ui| {
             ui.add_space(20.0);
-            ui.horizontal(|ui| {
-                ui.heading("Your artwork");
-                ui.add_space(12.0);
-                if ui.button("New Artwork").clicked() {
-                    commands.push(AppCommand::NewArtwork);
-                }
-            });
+            let (header_rect, _) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), 32.0),
+                egui::Sense::hover(),
+            );
+            ui.painter().text(
+                header_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "Chromazen",
+                egui::TextStyle::Heading.resolve(ui.style()),
+                ui.visuals().text_color(),
+            );
+            let add_icon =
+                egui::Image::new(egui::include_image!("../../../assets/icons/plus.svg"))
+                    .fit_to_exact_size(egui::Vec2::splat(18.0))
+                    .alt_text("New artwork");
+            let add_button = egui::Button::image(add_icon)
+                .image_tint_follows_text_color(true)
+                .corner_radius(8);
+            let add_rect = egui::Rect::from_min_size(
+                egui::pos2(header_rect.right() - 32.0, header_rect.top()),
+                egui::Vec2::splat(32.0),
+            );
+            if ui
+                .put(add_rect, add_button)
+                .on_hover_text("New artwork")
+                .clicked()
+            {
+                commands.push(AppCommand::NewArtwork);
+            }
             if let Some(warning) = warning {
                 ui.add_space(8.0);
                 ui.colored_label(egui::Color32::LIGHT_RED, warning);
@@ -49,11 +72,7 @@ impl GalleryUi {
                 ui.vertical_centered(|ui| {
                     ui.add_space(100.0);
                     ui.heading("No artwork yet");
-                    ui.label("Create an artwork to begin painting.");
-                    ui.add_space(12.0);
-                    if ui.button("Create Artwork").clicked() {
-                        commands.push(AppCommand::NewArtwork);
-                    }
+                    ui.label("Use the + button to begin painting.");
                 });
                 return;
             }
@@ -62,11 +81,11 @@ impl GalleryUi {
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(18.0, 18.0);
                     for artwork in artworks {
-                        ui.allocate_ui(egui::vec2(220.0, 278.0), |ui| {
-                            egui::Frame::group(ui.style())
-                                .corner_radius(12)
-                                .inner_margin(10)
-                                .show(ui, |ui| {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(220.0, 250.0),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                egui::Frame::NONE.inner_margin(0).show(ui, |ui| {
                                     ui.set_width(198.0);
                                     let texture = self.texture(&artwork.id);
                                     let image = texture.map_or_else(
@@ -82,7 +101,9 @@ impl GalleryUi {
                                     );
                                     let open = ui.add(
                                         egui::Button::image(
-                                            image.fit_to_exact_size(egui::vec2(198.0, 198.0)),
+                                            image
+                                                .corner_radius(12)
+                                                .fit_to_exact_size(egui::vec2(198.0, 198.0)),
                                         )
                                         .frame(false),
                                     );
@@ -90,20 +111,48 @@ impl GalleryUi {
                                         commands.push(AppCommand::OpenArtwork(artwork.id.clone()));
                                     }
                                     ui.add_space(6.0);
-                                    ui.strong(&artwork.title);
-                                    ui.small(modified_label(artwork.modified_unix_ms));
                                     ui.horizontal(|ui| {
-                                        if ui.small_button("Rename").clicked() {
-                                            self.rename =
-                                                Some((artwork.id.clone(), artwork.title.clone()));
-                                        }
-                                        if ui.small_button("Delete").clicked() {
-                                            self.delete =
-                                                Some((artwork.id.clone(), artwork.title.clone()));
-                                        }
+                                        ui.strong(&artwork.title);
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                let menu_icon = egui::Image::new(
+                                                    egui::include_image!(
+                                                        "../../../assets/icons/ellipsis-vertical.svg"
+                                                    ),
+                                                )
+                                                .fit_to_exact_size(egui::Vec2::splat(18.0))
+                                                .alt_text("Artwork actions");
+                                                let menu_button = ui
+                                                    .add(
+                                                        egui::Button::image(menu_icon)
+                                                            .image_tint_follows_text_color(true)
+                                                            .frame(false)
+                                                            .min_size(egui::vec2(28.0, 24.0)),
+                                                    )
+                                                    .on_hover_text("Artwork actions");
+                                                egui::Popup::menu(&menu_button).show(|ui| {
+                                                    if ui.button("Rename").clicked() {
+                                                        self.rename = Some((
+                                                            artwork.id.clone(),
+                                                            artwork.title.clone(),
+                                                        ));
+                                                        ui.close();
+                                                    }
+                                                    if ui.button("Delete").clicked() {
+                                                        self.delete = Some((
+                                                            artwork.id.clone(),
+                                                            artwork.title.clone(),
+                                                        ));
+                                                        ui.close();
+                                                    }
+                                                });
+                                            },
+                                        );
                                     });
                                 });
-                        });
+                            },
+                        );
                     }
                 });
             });
@@ -227,36 +276,5 @@ impl GalleryUi {
         if close {
             self.delete = None;
         }
-    }
-}
-
-fn modified_label(modified_unix_ms: u64) -> String {
-    let modified = UNIX_EPOCH + Duration::from_millis(modified_unix_ms);
-    let elapsed = SystemTime::now()
-        .duration_since(modified)
-        .unwrap_or_default();
-    let seconds = elapsed.as_secs();
-    if seconds < 60 {
-        "Modified just now".to_owned()
-    } else if seconds < 3600 {
-        format!("Modified {}m ago", seconds / 60)
-    } else if seconds < 86_400 {
-        format!("Modified {}h ago", seconds / 3600)
-    } else {
-        format!("Modified {}d ago", seconds / 86_400)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn recent_modified_times_are_human_readable() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-        assert_eq!(modified_label(now), "Modified just now");
     }
 }

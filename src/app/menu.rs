@@ -122,7 +122,7 @@ mod imp {
             false,
             Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyS)),
         );
-        let show_gallery = MenuItem::with_id(SHOW_GALLERY_ID, "Gallery", false, None);
+        let show_gallery = MenuItem::with_id(SHOW_GALLERY_ID, "Return to Gallery", false, None);
         let menu = Submenu::with_items("File", true, &[&new_artwork, &save_artwork, &show_gallery])
             .map_err(|error| format!("failed to build file menu: {error}"))?;
         Ok((menu, save_artwork, show_gallery))

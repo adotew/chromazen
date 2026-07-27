@@ -35,7 +35,6 @@ pub(crate) struct EditorUiState<'a> {
     pub(crate) tool: PaintTool,
     pub(crate) brush_resize_label: Option<BrushResizeLabel>,
     pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
-    pub(crate) artwork_title: &'a str,
     pub(crate) save_status: SaveStatus,
     pub(crate) pending_navigation: Option<&'a str>,
 }
@@ -248,7 +247,6 @@ impl GuiLayer {
             tool,
             brush_resize_label,
             eyedropper_indicator,
-            artwork_title,
             save_status,
             pending_navigation,
         } = state;
@@ -257,34 +255,6 @@ impl GuiLayer {
         let context = self.context.clone();
 
         context.run_ui(raw_input, |ui| {
-            egui::Panel::top("artwork header").show_inside(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("Gallery").clicked() {
-                        self.commands.push(AppCommand::ShowGallery);
-                    }
-                    ui.separator();
-                    ui.strong(artwork_title);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let (label, color) = match &save_status {
-                            SaveStatus::Clean => ("Saved", ui.visuals().weak_text_color()),
-                            SaveStatus::Waiting => {
-                                ("Unsaved changes", ui.visuals().weak_text_color())
-                            }
-                            SaveStatus::Saving => ("Saving…", ui.visuals().text_color()),
-                            SaveStatus::Failed(_) => ("Save failed", egui::Color32::LIGHT_RED),
-                        };
-                        ui.colored_label(color, label);
-                    });
-                });
-                if let SaveStatus::Failed(error) = &save_status {
-                    ui.horizontal(|ui| {
-                        ui.colored_label(egui::Color32::LIGHT_RED, error);
-                        if ui.small_button("Retry").clicked() {
-                            self.commands.push(AppCommand::SaveArtwork);
-                        }
-                    });
-                }
-            });
             let background = background_color(layers.background_color);
 
             // egui's built-in animated panel deliberately hides its contents while resizing,

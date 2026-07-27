@@ -357,7 +357,6 @@ impl App {
                                 center,
                                 color: gui.brush.color,
                             });
-                    let title = self.autosave.title().unwrap_or("Untitled");
                     let status = self.autosave.status(paint);
                     let pending_navigation = if self.pending_exit {
                         Some("Closing Chromazen")
@@ -375,7 +374,6 @@ impl App {
                             tool: self.input.tool(),
                             brush_resize_label,
                             eyedropper_indicator,
-                            artwork_title: title,
                             save_status: status,
                             pending_navigation,
                         },
