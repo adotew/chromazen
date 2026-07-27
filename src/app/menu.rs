@@ -20,6 +20,7 @@ mod imp {
     const NEW_ARTWORK_ID: &str = "chromazen.file.new-artwork";
     const SAVE_ARTWORK_ID: &str = "chromazen.file.save-artwork";
     const SHOW_GALLERY_ID: &str = "chromazen.file.show-gallery";
+    const QUIT_ID: &str = "chromazen.application.quit";
     const UNDO_ID: &str = "chromazen.edit.undo";
     const REDO_ID: &str = "chromazen.edit.redo";
     const SAVE_SETTINGS_ID: &str = "chromazen.settings.save";
@@ -182,7 +183,12 @@ mod imp {
         let hide_others = PredefinedMenuItem::hide_others(None);
         let show_all = PredefinedMenuItem::show_all(None);
         let separator_3 = PredefinedMenuItem::separator();
-        let quit = PredefinedMenuItem::quit(None);
+        let quit = MenuItem::with_id(
+            QUIT_ID,
+            "Quit Chromazen",
+            true,
+            Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyQ)),
+        );
 
         Submenu::with_items(
             "Chromazen",
@@ -207,6 +213,7 @@ mod imp {
             NEW_ARTWORK_ID => Some(AppCommand::NewArtwork),
             SAVE_ARTWORK_ID => Some(AppCommand::SaveArtwork),
             SHOW_GALLERY_ID => Some(AppCommand::ShowGallery),
+            QUIT_ID => Some(AppCommand::Quit),
             UNDO_ID => Some(AppCommand::Undo),
             REDO_ID => Some(AppCommand::Redo),
             SAVE_SETTINGS_ID => Some(AppCommand::SaveSettings),
@@ -234,6 +241,10 @@ mod imp {
             assert_eq!(
                 command_for_id(&MenuId::new(SHOW_GALLERY_ID)),
                 Some(AppCommand::ShowGallery)
+            );
+            assert_eq!(
+                command_for_id(&MenuId::new(QUIT_ID)),
+                Some(AppCommand::Quit)
             );
             assert_eq!(
                 command_for_id(&MenuId::new(UNDO_ID)),

@@ -134,7 +134,7 @@ impl ApplicationHandler<AppEvent> for App {
         }
 
         match event {
-            WindowEvent::CloseRequested => self.request_exit(event_loop),
+            WindowEvent::CloseRequested => self.request_exit(),
             WindowEvent::RedrawRequested => self.render(window.as_ref(), event_loop),
             event => {
                 let navigation_pending = self.navigation_pending();
@@ -276,26 +276,22 @@ impl App {
         self.pending_gallery || self.pending_exit
     }
 
-    fn request_exit(&mut self, event_loop: &ActiveEventLoop) {
-        if self.screen == AppScreen::Gallery {
-            event_loop.exit();
-            return;
-        }
-        if let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_ref()) {
-            self.input.finish_document_interaction(paint, gui.brush);
-        }
-        let clean = self
-            .paint
-            .as_ref()
-            .is_some_and(|paint| self.autosave.is_clean(paint));
-        if clean {
-            event_loop.exit();
-            return;
+    fn request_exit(&mut self) {
+        if self.screen == AppScreen::Editor {
+            if let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_ref()) {
+                self.input.finish_document_interaction(paint, gui.brush);
+            }
+            let clean = self
+                .paint
+                .as_ref()
+                .is_some_and(|paint| self.autosave.is_clean(paint));
+            if !clean {
+                self.autosave.request_save();
+            }
         }
         self.pending_exit = true;
         self.pending_gallery = false;
         self.pending_new_artwork = false;
-        self.autosave.request_save();
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }
@@ -305,6 +301,10 @@ impl App {
         let mut app_action_processed = self.process_pending_commands();
         let mut brush_switched = self.apply_pending_brush_change();
 
+        if self.pending_exit && self.screen == AppScreen::Gallery {
+            event_loop.exit();
+            return;
+        }
         if self.screen == AppScreen::Editor
             && let Some(paint) = self.paint.as_ref()
         {
@@ -505,6 +505,7 @@ impl App {
                     self.pending_new_artwork = false;
                     self.pending_exit = false;
                 }
+                AppCommand::Quit => self.request_exit(),
             }
         }
         self.sync_history_menu();
