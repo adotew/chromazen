@@ -20,6 +20,7 @@ use self::{
     view::PaintView,
 };
 use crate::{
+    artwork::{DOCUMENT_SCHEMA_VERSION, DocumentManifest, LayerManifest},
     config::LoadedBrushPreset,
     gpu::GpuContext,
     paint::{BrushSpacing, PaintTool, StrokePoint},
@@ -244,6 +245,130 @@ impl PaintRenderer {
 
     pub fn can_paint(&self) -> bool {
         self.active_stroke.is_none() && self.selected_layer_index().is_some()
+    }
+
+    pub(crate) fn can_replace_document(&self) -> bool {
+        self.active_stroke.is_none()
+            && !self.history.stroke_active()
+            && !self.stamp_queue.has_pending()
+    }
+
+    pub(crate) fn document_manifest(&self) -> DocumentManifest {
+        DocumentManifest {
+            schema_version: DOCUMENT_SCHEMA_VERSION,
+            width: self.document_size[0],
+            height: self.document_size[1],
+            background: rgb8(self.background_color),
+            selected_layer: self.selection.0,
+            layers: self
+                .layers
+                .iter()
+                .map(|layer| LayerManifest {
+                    id: layer.id.0,
+                    name: layer.name.clone(),
+                    file: format!("layers/{}.png", layer.id.0),
+                })
+                .collect(),
+        }
+    }
+
+    pub(crate) fn reset_document(&mut self) -> bool {
+        if !self.can_replace_document() {
+            return false;
+        }
+        let id = LayerId(1);
+        let layer = self.resources.create_paint_layer(
+            self.gpu.device(),
+            self.document_size,
+            id,
+            "Layer 1".to_owned(),
+        );
+        clear_layer(self.gpu.device(), self.gpu.queue(), &layer.view);
+        self.layers = vec![layer];
+        self.selection = id;
+        self.background_color = [1.0; 4];
+        self.next_layer_id = 2;
+        self.next_layer_number = 2;
+        self.stamp_queue.clear();
+        self.history.clear();
+        self.fit_to_screen();
+        true
+    }
+
+    pub(crate) fn load_document(
+        &mut self,
+        document: &DocumentManifest,
+        pixels: Vec<image::RgbaImage>,
+    ) -> Result<(), String> {
+        if !self.can_replace_document() {
+            return Err("the current document is busy".to_owned());
+        }
+        document.validate()?;
+        if [document.width, document.height] != self.document_size {
+            return Err(format!(
+                "unsupported document dimensions {}x{}; expected {}x{}",
+                document.width, document.height, self.document_size[0], self.document_size[1]
+            ));
+        }
+        if pixels.len() != document.layers.len() {
+            return Err("loaded layer count does not match document metadata".to_owned());
+        }
+
+        let mut layers = Vec::with_capacity(document.layers.len());
+        for (metadata, image) in document.layers.iter().zip(pixels) {
+            if image.dimensions() != (document.width, document.height) {
+                return Err(format!(
+                    "layer {} has dimensions {}x{}; expected {}x{}",
+                    metadata.id,
+                    image.width(),
+                    image.height(),
+                    document.width,
+                    document.height
+                ));
+            }
+            let layer = self.resources.create_paint_layer(
+                self.gpu.device(),
+                self.document_size,
+                LayerId(metadata.id),
+                metadata.name.clone(),
+            );
+            self.gpu.queue().write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &layer.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                image.as_raw(),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(document.width * 4),
+                    rows_per_image: Some(document.height),
+                },
+                wgpu::Extent3d {
+                    width: document.width,
+                    height: document.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            layers.push(layer);
+        }
+
+        self.layers = layers;
+        self.selection = LayerId(document.selected_layer);
+        self.background_color = opaque_color(document.background);
+        self.next_layer_id = document
+            .layers
+            .iter()
+            .map(|layer| layer.id)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        self.next_layer_number = next_layer_number(&document.layers);
+        self.stamp_queue.clear();
+        self.history.clear();
+        self.fit_to_screen();
+        Ok(())
     }
 
     pub(crate) fn layer_snapshot(&self) -> LayerSnapshot {
@@ -940,9 +1065,70 @@ fn opaque_color(color: [u8; 3]) -> [f32; 4] {
     ]
 }
 
+fn rgb8(color: [f32; 4]) -> [u8; 3] {
+    [color[0], color[1], color[2]].map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8)
+}
+
+fn next_layer_number(layers: &[LayerManifest]) -> u64 {
+    layers
+        .iter()
+        .filter_map(|layer| layer.name.strip_prefix("Layer ")?.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1)
+        .max(1)
+}
+
+fn clear_layer(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView) {
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("document layer clear encoder"),
+    });
+    {
+        let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("document layer clear pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+    }
+    queue.submit(std::iter::once(encoder.finish()));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn persisted_layer_names_advance_the_default_number() {
+        let layers = vec![
+            LayerManifest {
+                id: 1,
+                name: "Layer 4".to_owned(),
+                file: "layers/1.png".to_owned(),
+            },
+            LayerManifest {
+                id: 2,
+                name: "Reference".to_owned(),
+                file: "layers/2.png".to_owned(),
+            },
+        ];
+        assert_eq!(next_layer_number(&layers), 5);
+    }
+
+    #[test]
+    fn document_background_round_trips_as_rgb8() {
+        assert_eq!(rgb8(opaque_color([12, 34, 56])), [12, 34, 56]);
+    }
 
     #[test]
     fn brush_and_eraser_keep_preset_spacing() {
