@@ -250,7 +250,8 @@ impl ArtworkStore {
                 current_revision: next_revision,
                 modified_unix_ms: now_unix_ms(),
             };
-            atomic_toml(&artwork_dir.join(PROJECT_FILE), &project)?;
+            let metadata_result = atomic_toml(&artwork_dir.join(PROJECT_FILE), &project);
+            self.finish_project_commit(id, &project, &final_revision, metadata_result)?;
             Ok(project)
         })();
         if result.is_err() {
@@ -281,6 +282,31 @@ impl ArtworkStore {
         fs::rename(&source, &trash)
             .map_err(|error| ArtworkError::io("move for deletion", &source, error))?;
         fs::remove_dir_all(&trash).map_err(|error| ArtworkError::io("delete", &trash, error))
+    }
+
+    fn finish_project_commit(
+        &self,
+        id: &ArtworkId,
+        project: &ProjectManifest,
+        revision: &Path,
+        result: Result<(), ArtworkError>,
+    ) -> Result<(), ArtworkError> {
+        let Err(commit_error) = result else {
+            return Ok(());
+        };
+        if self
+            .read_project(id)
+            .is_ok_and(|committed| committed == *project)
+        {
+            return Ok(());
+        }
+        fs::remove_dir_all(revision).map_err(|cleanup_error| {
+            ArtworkError::new(format!(
+                "{commit_error}; also failed to remove uncommitted revision {}: {cleanup_error}",
+                revision.display()
+            ))
+        })?;
+        Err(commit_error)
     }
 
     fn read_project(&self, id: &ArtworkId) -> Result<ProjectManifest, ArtworkError> {
@@ -517,5 +543,64 @@ mod tests {
         assert_eq!(project.current_revision, 2);
         assert_eq!(store.load(&id).unwrap().summary.title, "Two");
         assert!(!store.revision_path(&id, 1).exists());
+    }
+
+    #[test]
+    fn failed_project_commit_removes_revision_before_retry() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ArtworkStore::from_root(temp.path());
+        let id = ArtworkId::new();
+        store.commit_revision(&id, "One", revision(1)).unwrap();
+        let mut next_project = store.read_project(&id).unwrap();
+        next_project.current_revision = 2;
+        next_project.title = "Two".to_owned();
+        let uncommitted = store.revision_path(&id, 2);
+        fs::create_dir_all(&uncommitted).unwrap();
+
+        assert!(
+            store
+                .finish_project_commit(
+                    &id,
+                    &next_project,
+                    &uncommitted,
+                    Err(ArtworkError::new("injected metadata failure")),
+                )
+                .is_err()
+        );
+        assert!(!uncommitted.exists());
+
+        store.commit_revision(&id, "Two", revision(2)).unwrap();
+        assert_eq!(store.load(&id).unwrap().summary.title, "Two");
+    }
+
+    #[test]
+    fn failed_first_project_commit_removes_revision_before_retry() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ArtworkStore::from_root(temp.path());
+        let id = ArtworkId::new();
+        let uncommitted = store.revision_path(&id, 1);
+        fs::create_dir_all(&uncommitted).unwrap();
+        let project = ProjectManifest {
+            schema_version: PROJECT_SCHEMA_VERSION,
+            id: id.as_str().to_owned(),
+            title: "Untitled".to_owned(),
+            current_revision: 1,
+            modified_unix_ms: 1,
+        };
+
+        assert!(
+            store
+                .finish_project_commit(
+                    &id,
+                    &project,
+                    &uncommitted,
+                    Err(ArtworkError::new("injected metadata failure")),
+                )
+                .is_err()
+        );
+        assert!(!uncommitted.exists());
+
+        store.commit_revision(&id, "Untitled", revision(1)).unwrap();
+        assert_eq!(store.load(&id).unwrap().summary.title, "Untitled");
     }
 }
