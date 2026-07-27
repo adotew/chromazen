@@ -17,6 +17,12 @@ struct BrushResizeDrag {
     start_size: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum KeyboardShortcut {
+    ToggleSidebar,
+    CycleTool,
+}
+
 #[derive(Debug, Default)]
 pub struct PaintInputController {
     cursor_pos: [f32; 2],
@@ -92,24 +98,21 @@ impl PaintInputController {
         }
     }
 
-    pub fn toggles_sidebar(&self, event: &WindowEvent) -> bool {
+    pub fn keyboard_shortcut(&self, event: &WindowEvent) -> Option<KeyboardShortcut> {
         let WindowEvent::KeyboardInput { event, .. } = event else {
-            return false;
+            return None;
         };
-        event.physical_key == PhysicalKey::Code(KeyCode::Tab)
-            && event.state == ElementState::Pressed
-            && !event.repeat
-            && self.modifiers.is_empty()
-    }
-
-    pub fn cycles_tool(&self, event: &WindowEvent) -> bool {
-        let WindowEvent::KeyboardInput { event, .. } = event else {
-            return false;
-        };
-        event.physical_key == PhysicalKey::Code(KeyCode::Tab)
-            && event.state == ElementState::Pressed
-            && !event.repeat
-            && self.modifiers == ModifiersState::SHIFT
+        if event.physical_key != PhysicalKey::Code(KeyCode::Tab)
+            || event.state != ElementState::Pressed
+            || event.repeat
+        {
+            return None;
+        }
+        match self.modifiers {
+            modifiers if modifiers.is_empty() => Some(KeyboardShortcut::ToggleSidebar),
+            ModifiersState::SHIFT => Some(KeyboardShortcut::CycleTool),
+            _ => None,
+        }
     }
 
     pub fn cycle_tool(&mut self) -> bool {

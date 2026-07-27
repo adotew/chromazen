@@ -19,7 +19,7 @@ use winit::{
 
 use self::{
     command::AppCommand,
-    input::PaintInputController,
+    input::{KeyboardShortcut, PaintInputController},
     menu::NativeMenu,
     settings::{SettingsCommand, SettingsController, SettingsEffect},
     ui::{BrushResizeLabel, GuiLayer},
@@ -124,14 +124,15 @@ impl ApplicationHandler<AppEvent> for App {
                     return;
                 };
                 let cursor_changed = self.input.observe_event(&event);
-                if self.input.toggles_sidebar(&event) {
-                    gui.toggle_sidebar();
-                    self.next_repaint = None;
-                    window.request_redraw();
-                    return;
-                }
-                if self.input.cycles_tool(&event) {
-                    if self.input.cycle_tool() {
+                if let Some(shortcut) = self.input.keyboard_shortcut(&event) {
+                    let changed = match shortcut {
+                        KeyboardShortcut::ToggleSidebar => {
+                            gui.toggle_sidebar();
+                            true
+                        }
+                        KeyboardShortcut::CycleTool => self.input.cycle_tool(),
+                    };
+                    if changed {
                         self.next_repaint = None;
                         window.request_redraw();
                     }
