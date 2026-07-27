@@ -11,7 +11,6 @@ mod sampling;
 mod stamps;
 mod view;
 
-pub(crate) use self::layers::{LayerId, LayerInfo, LayerSnapshot};
 use self::{
     history::{HistoryTarget, PaintHistory, TextureRect},
     layers::{PaintLayer, insertion_index, layer_name, replacement_index_after_delete},
@@ -19,6 +18,10 @@ use self::{
     sampling::{document_pixel, read_composited_color},
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue, StampRaw},
     view::PaintView,
+};
+pub(crate) use self::{
+    layers::{LayerId, LayerInfo, LayerSnapshot},
+    persistence::LayerReadback,
 };
 use crate::{
     artwork::{DOCUMENT_SCHEMA_VERSION, DocumentManifest, LayerManifest},
@@ -306,16 +309,16 @@ impl PaintRenderer {
         }
     }
 
-    pub(crate) fn read_document_layers(&self) -> Result<Vec<(LayerId, image::RgbaImage)>, String> {
+    pub(crate) fn begin_document_layer_readback(&self) -> Result<LayerReadback, String> {
         if !self.can_replace_document() {
             return Err("the current document is busy".to_owned());
         }
-        persistence::read_layers(
+        Ok(persistence::begin_read_layers(
             self.gpu.device(),
             self.gpu.queue(),
             &self.layers,
             self.document_size,
-        )
+        ))
     }
 
     pub(crate) fn reset_document(&mut self) -> bool {

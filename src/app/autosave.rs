@@ -184,14 +184,9 @@ impl AutosaveController {
             .ok_or_else(|| "The artwork data directory is unavailable".to_owned())?;
         let session = self.session.as_mut().expect("save requires a session");
         let document = paint.document_manifest();
-        let images = paint.read_document_layers()?;
+        let readback = paint.begin_document_layer_readback()?;
         let dirty_ids = changed_layer_ids(&session.saved_versions, &versions);
-        let write = build_revision_write(
-            document,
-            images,
-            &dirty_ids,
-            session.saved_versions.layers.is_empty(),
-        )?;
+        let first_revision = session.saved_versions.layers.is_empty();
         let artwork_id = session.id.clone();
         let title = session.title.clone();
         session.in_flight = Some(versions.clone());
@@ -200,10 +195,14 @@ impl AutosaveController {
         let sender = self.completion_sender.clone();
         let wake = self.wake.clone();
         std::thread::spawn(move || {
-            let result = store
-                .commit_revision(&artwork_id, &title, write)
-                .map(|_| ())
-                .map_err(|error| error.to_string());
+            let result = (|| {
+                let images = readback.finish()?;
+                let write = build_revision_write(document, images, &dirty_ids, first_revision)?;
+                store
+                    .commit_revision(&artwork_id, &title, write)
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })();
             let _ = sender.send(SaveCompletion {
                 artwork_id,
                 versions,
