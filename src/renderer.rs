@@ -5,6 +5,7 @@ use winit::{dpi::PhysicalSize, window::Window};
 
 mod history;
 mod layers;
+mod persistence;
 mod resources;
 mod sampling;
 mod stamps;
@@ -270,6 +271,18 @@ impl PaintRenderer {
                 })
                 .collect(),
         }
+    }
+
+    pub(crate) fn read_document_layers(&self) -> Result<Vec<(LayerId, image::RgbaImage)>, String> {
+        if !self.can_replace_document() {
+            return Err("the current document is busy".to_owned());
+        }
+        persistence::read_layers(
+            self.gpu.device(),
+            self.gpu.queue(),
+            &self.layers,
+            self.document_size,
+        )
     }
 
     pub(crate) fn reset_document(&mut self) -> bool {
