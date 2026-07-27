@@ -291,14 +291,33 @@ fn encode_thumbnail(
     layers: &[(LayerId, image::RgbaImage)],
     background: [u8; 3],
 ) -> Result<Vec<u8>, String> {
+    let Some((_, first_layer)) = layers.first() else {
+        return Err("cannot create a thumbnail without layers".to_owned());
+    };
+    let source_size = first_layer.dimensions();
+    if source_size.0 == 0 || source_size.1 == 0 {
+        return Err("cannot create a thumbnail for an empty canvas".to_owned());
+    }
+    if layers
+        .iter()
+        .any(|(_, layer)| layer.dimensions() != source_size)
+    {
+        return Err("thumbnail layers must have matching dimensions".to_owned());
+    }
+
+    let (thumbnail_width, thumbnail_height) = fit_dimensions(source_size, THUMBNAIL_SIZE);
     let mut composite = image::RgbaImage::from_pixel(
-        THUMBNAIL_SIZE,
-        THUMBNAIL_SIZE,
+        thumbnail_width,
+        thumbnail_height,
         image::Rgba([background[0], background[1], background[2], 255]),
     );
     for (_, layer) in layers {
-        let resized =
-            image::imageops::resize(layer, THUMBNAIL_SIZE, THUMBNAIL_SIZE, FilterType::Triangle);
+        let resized = image::imageops::resize(
+            layer,
+            thumbnail_width,
+            thumbnail_height,
+            FilterType::Triangle,
+        );
         for (destination, source) in composite.pixels_mut().zip(resized.pixels()) {
             let alpha = u32::from(source[3]);
             let inverse = 255 - alpha;
@@ -309,7 +328,26 @@ fn encode_thumbnail(
             }
         }
     }
-    encode_png(&composite)
+
+    let mut thumbnail = image::RgbaImage::new(THUMBNAIL_SIZE, THUMBNAIL_SIZE);
+    let x = (THUMBNAIL_SIZE - thumbnail_width) / 2;
+    let y = (THUMBNAIL_SIZE - thumbnail_height) / 2;
+    image::imageops::replace(&mut thumbnail, &composite, i64::from(x), i64::from(y));
+    encode_png(&thumbnail)
+}
+
+fn fit_dimensions(source: (u32, u32), target: u32) -> (u32, u32) {
+    if source.0 >= source.1 {
+        (
+            target,
+            (u64::from(source.1) * u64::from(target) / u64::from(source.0)).max(1) as u32,
+        )
+    } else {
+        (
+            (u64::from(source.0) * u64::from(target) / u64::from(source.1)).max(1) as u32,
+            target,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -345,5 +383,17 @@ mod tests {
         assert_eq!(pixel[1], 0);
         assert!((126..=127).contains(&pixel[2]));
         assert_eq!(pixel[3], 255);
+    }
+
+    #[test]
+    fn rectangular_thumbnail_is_centered_without_stretching() {
+        let layer = image::RgbaImage::new(4, 2);
+        let png = encode_thumbnail(&[(LayerId(1), layer)], [10, 20, 30]).unwrap();
+        let decoded = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert_eq!(decoded.get_pixel(0, 0), &image::Rgba([0, 0, 0, 0]));
+        assert_eq!(
+            decoded.get_pixel(0, THUMBNAIL_SIZE / 2),
+            &image::Rgba([10, 20, 30, 255])
+        );
     }
 }

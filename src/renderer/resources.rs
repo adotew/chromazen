@@ -3,8 +3,8 @@ use wgpu::util::DeviceExt;
 use super::layers::{LayerId, LayerResourceId, PaintLayer};
 use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
 use super::{
-    CursorRaw, DOCUMENT_FORMAT, LAYER_PREVIEW_SIZE, PaintUniform, STROKE_MASK_FORMAT,
-    StrokeUniform, ViewUniform,
+    CursorRaw, DOCUMENT_FORMAT, LAYER_PREVIEW_SIZE, LayerPreviewUniform, PaintUniform,
+    STROKE_MASK_FORMAT, StrokeUniform, ViewUniform,
 };
 
 pub(crate) struct RenderResources {
@@ -21,6 +21,7 @@ pub(crate) struct RenderResources {
     _stroke_mask_texture: wgpu::Texture,
     pub(crate) stroke_mask_view: wgpu::TextureView,
     brush_texture: wgpu::Texture,
+    brush_texture_view: wgpu::TextureView,
     brush_sampler: wgpu::Sampler,
     paint_sampler: wgpu::Sampler,
     preview_sampler: wgpu::Sampler,
@@ -29,6 +30,7 @@ pub(crate) struct RenderResources {
     stroke_preview_bind_group_layout: wgpu::BindGroupLayout,
     stroke_preview_bind_group: Option<wgpu::BindGroup>,
     layer_preview_bind_group_layout: wgpu::BindGroupLayout,
+    stroke_commit_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) stroke_commit_bind_group: wgpu::BindGroup,
     pub(crate) mask_pipeline: wgpu::RenderPipeline,
     pub(crate) smudge_pipeline: wgpu::RenderPipeline,
@@ -91,11 +93,11 @@ impl RenderResources {
         let layer_preview_uniform_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("layer preview uniform buffer"),
-                contents: bytemuck::bytes_of(&PaintUniform {
-                    dims: [LAYER_PREVIEW_SIZE as f32; 2],
-                    padding: [0.0; 2],
+                contents: bytemuck::bytes_of(&LayerPreviewUniform {
+                    preview_dims: [LAYER_PREVIEW_SIZE as f32; 2],
+                    document_dims: [document_size[0] as f32, document_size[1] as f32],
                 }),
-                usage: wgpu::BufferUsages::UNIFORM,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
 
         let bundled_brush;
@@ -740,6 +742,7 @@ impl RenderResources {
             _stroke_mask_texture: stroke_mask_texture,
             stroke_mask_view,
             brush_texture,
+            brush_texture_view,
             brush_sampler,
             paint_sampler,
             preview_sampler,
@@ -748,6 +751,7 @@ impl RenderResources {
             stroke_preview_bind_group_layout,
             stroke_preview_bind_group: None,
             layer_preview_bind_group_layout,
+            stroke_commit_bind_group_layout,
             stroke_commit_bind_group,
             mask_pipeline,
             smudge_pipeline,
@@ -812,6 +816,109 @@ impl RenderResources {
     }
 
     pub(crate) fn clear_stroke_preview(&mut self) {
+        self.stroke_preview_bind_group = None;
+    }
+
+    pub(crate) fn resize_document(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        document_size: [u32; 2],
+    ) {
+        queue.write_buffer(
+            &self.stamp_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&PaintUniform {
+                dims: [document_size[0] as f32, document_size[1] as f32],
+                padding: [0.0; 2],
+            }),
+        );
+        queue.write_buffer(
+            &self.layer_preview_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&LayerPreviewUniform {
+                preview_dims: [LAYER_PREVIEW_SIZE as f32; 2],
+                document_dims: [document_size[0] as f32, document_size[1] as f32],
+            }),
+        );
+
+        let (smudge_texture, smudge_texture_view) = create_paint_texture(device, document_size);
+        let (stroke_mask_texture, stroke_mask_view) =
+            create_stroke_mask_texture(device, document_size);
+        let stamp_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("stamp bind group"),
+            layout: &self.stamp_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&self.brush_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.brush_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.stamp_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.stamp_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&smudge_texture_view),
+                },
+            ],
+        });
+        let cursor_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("brush cursor bind group"),
+            layout: &self.stamp_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&self.brush_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.brush_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.cursor_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.stamp_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&smudge_texture_view),
+                },
+            ],
+        });
+        let stroke_commit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("stroke commit bind group"),
+            layout: &self.stroke_commit_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&stroke_mask_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.stroke_uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        self.smudge_texture = smudge_texture;
+        self.smudge_texture_view = smudge_texture_view;
+        self._stroke_mask_texture = stroke_mask_texture;
+        self.stroke_mask_view = stroke_mask_view;
+        self.stamp_bind_group = stamp_bind_group;
+        self.cursor_bind_group = cursor_bind_group;
+        self.stroke_commit_bind_group = stroke_commit_bind_group;
         self.stroke_preview_bind_group = None;
     }
 
@@ -952,6 +1059,7 @@ impl RenderResources {
             ],
         });
         self.brush_texture = brush_texture;
+        self.brush_texture_view = brush_texture_view;
         self.stamp_bind_group = stamp_bind_group;
         self.cursor_bind_group = cursor_bind_group;
         Ok(())

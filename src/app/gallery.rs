@@ -1,4 +1,7 @@
-use crate::artwork::{ArtworkId, ArtworkStore, ArtworkSummary, DocumentManifest};
+use crate::{
+    artwork::{ArtworkId, ArtworkStore, ArtworkSummary, DocumentManifest},
+    renderer::CanvasSizeConstraints,
+};
 
 pub(super) struct OpenedArtwork {
     pub(super) id: ArtworkId,
@@ -53,12 +56,18 @@ impl GalleryController {
         self.warnings = catalog.warnings;
     }
 
-    pub(super) fn open(&self, id: &ArtworkId) -> Result<OpenedArtwork, String> {
+    pub(super) fn open(
+        &self,
+        id: &ArtworkId,
+        constraints: CanvasSizeConstraints,
+    ) -> Result<OpenedArtwork, String> {
         let store = self
             .store
             .as_ref()
             .ok_or_else(|| "The artwork data directory is unavailable".to_owned())?;
         let loaded = store.load(id).map_err(|error| error.to_string())?;
+        loaded.document.validate()?;
+        constraints.validate([loaded.document.width, loaded.document.height])?;
         let mut layers = Vec::with_capacity(loaded.layer_paths.len());
         for (metadata, path) in loaded.document.layers.iter().zip(&loaded.layer_paths) {
             let image = image::open(path)

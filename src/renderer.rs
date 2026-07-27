@@ -30,19 +30,56 @@ use crate::{
     paint::{BrushSpacing, PaintTool, StrokePoint},
 };
 
-const DEFAULT_CANVAS_WIDTH: u32 = 4000;
-const DEFAULT_CANVAS_HEIGHT: u32 = 4000;
+pub(crate) const DEFAULT_CANVAS_SIZE: [u32; 2] = [4000, 4000];
+const MAX_CANVAS_DIMENSION: u32 = 8192;
+// Caps the baseline layer, history, smudge, and mask allocations to a safe working set.
+const MAX_CANVAS_PIXELS: u64 = 32 * 1024 * 1024;
 const DOCUMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const STROKE_MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const LAYER_PREVIEW_SIZE: u32 = 128;
 // Eight simulation steps per brush radius retain tip detail without dense-pass overhead.
 const SMUDGE_MIN_STEP_RATIO: f32 = 0.125;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CanvasSizeConstraints {
+    pub(crate) max_dimension: u32,
+    pub(crate) max_pixels: u64,
+}
+
+impl CanvasSizeConstraints {
+    pub(crate) fn validate(self, size: [u32; 2]) -> Result<(), String> {
+        let [width, height] = size;
+        if width == 0 || height == 0 {
+            return Err("canvas width and height must be at least 1 pixel".to_owned());
+        }
+        if width > self.max_dimension || height > self.max_dimension {
+            return Err(format!(
+                "canvas width and height cannot exceed {} pixels",
+                self.max_dimension
+            ));
+        }
+        if u64::from(width) * u64::from(height) > self.max_pixels {
+            return Err(format!(
+                "canvas area cannot exceed {} megapixels",
+                self.max_pixels / 1_000_000
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct PaintUniform {
     dims: [f32; 2],
     padding: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct LayerPreviewUniform {
+    preview_dims: [f32; 2],
+    document_dims: [f32; 2],
 }
 
 #[repr(C)]
@@ -142,7 +179,7 @@ impl PaintRenderer {
         let queue = gpu.queue();
         let surface_format = gpu.surface_format();
 
-        let document_size = [DEFAULT_CANVAS_WIDTH, DEFAULT_CANVAS_HEIGHT];
+        let document_size = DEFAULT_CANVAS_SIZE;
         let resources = RenderResources::new(
             device,
             queue,
@@ -212,6 +249,18 @@ impl PaintRenderer {
     }
     pub fn has_pending_stamps(&self) -> bool {
         self.stamp_queue.has_pending()
+    }
+
+    pub(crate) fn canvas_size_constraints(&self) -> CanvasSizeConstraints {
+        CanvasSizeConstraints {
+            max_dimension: self
+                .gpu
+                .device()
+                .limits()
+                .max_texture_dimension_2d
+                .min(MAX_CANVAS_DIMENSION),
+            max_pixels: MAX_CANVAS_PIXELS,
+        }
     }
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
@@ -329,10 +378,13 @@ impl PaintRenderer {
         ))
     }
 
-    pub(crate) fn reset_document(&mut self) -> bool {
+    pub(crate) fn reset_document(&mut self, size: [u32; 2]) -> Result<(), String> {
         if !self.can_replace_document() {
-            return false;
+            return Err("the current document is busy".to_owned());
         }
+        self.canvas_size_constraints().validate(size)?;
+        self.resize_document_resources(size);
+
         let id = LayerId(1);
         let resource_id = self.allocate_layer_resource_id();
         let layer = self.resources.create_paint_layer(
@@ -352,7 +404,7 @@ impl PaintRenderer {
         self.history.clear();
         self.fit_to_screen();
         self.reset_change_tracking(true);
-        true
+        Ok(())
     }
 
     pub(crate) fn load_document(
@@ -364,18 +416,13 @@ impl PaintRenderer {
             return Err("the current document is busy".to_owned());
         }
         document.validate()?;
-        if [document.width, document.height] != self.document_size {
-            return Err(format!(
-                "unsupported document dimensions {}x{}; expected {}x{}",
-                document.width, document.height, self.document_size[0], self.document_size[1]
-            ));
-        }
+        let document_size = [document.width, document.height];
+        self.canvas_size_constraints().validate(document_size)?;
         if pixels.len() != document.layers.len() {
             return Err("loaded layer count does not match document metadata".to_owned());
         }
 
-        let mut layers = Vec::with_capacity(document.layers.len());
-        for (metadata, image) in document.layers.iter().zip(pixels) {
+        for (metadata, image) in document.layers.iter().zip(&pixels) {
             if image.dimensions() != (document.width, document.height) {
                 return Err(format!(
                     "layer {} has dimensions {}x{}; expected {}x{}",
@@ -386,6 +433,11 @@ impl PaintRenderer {
                     document.height
                 ));
             }
+        }
+
+        self.resize_document_resources(document_size);
+        let mut layers = Vec::with_capacity(document.layers.len());
+        for (metadata, image) in document.layers.iter().zip(pixels) {
             let resource_id = self.allocate_layer_resource_id();
             let layer = self.resources.create_paint_layer(
                 self.gpu.device(),
@@ -1139,6 +1191,16 @@ impl PaintRenderer {
         self.resources.clear_stroke_preview();
     }
 
+    fn resize_document_resources(&mut self, size: [u32; 2]) {
+        if size == self.document_size {
+            return;
+        }
+        self.resources
+            .resize_document(self.gpu.device(), self.gpu.queue(), size);
+        self.history = PaintHistory::new(self.gpu.device(), size);
+        self.document_size = size;
+    }
+
     fn layer_resource_byte_len(&self) -> u64 {
         let canvas = u64::from(self.document_size[0]) * u64::from(self.document_size[1]) * 4;
         let preview = u64::from(LAYER_PREVIEW_SIZE) * u64::from(LAYER_PREVIEW_SIZE) * 4;
@@ -1365,6 +1427,20 @@ mod tests {
         assert_eq!(stroke.layer_id, LayerId(7));
         assert_eq!(stroke.tool, PaintTool::Brush);
         assert_eq!(stroke.color, [0.4, 0.2, 0.1, 0.5]);
+    }
+
+    #[test]
+    fn canvas_size_constraints_reject_invalid_dimensions() {
+        let constraints = CanvasSizeConstraints {
+            max_dimension: 8192,
+            max_pixels: 32 * 1024 * 1024,
+        };
+
+        assert!(constraints.validate(DEFAULT_CANVAS_SIZE).is_ok());
+        assert!(constraints.validate([0, 100]).is_err());
+        assert!(constraints.validate([8193, 100]).is_err());
+        assert!(constraints.validate([8192, 8192]).is_err());
+        assert!(constraints.validate([8192, 4096]).is_ok());
     }
 
     #[test]

@@ -66,7 +66,7 @@ pub struct App {
     autosave: AutosaveController,
     screen: AppScreen,
     pending_gallery: bool,
-    pending_new_artwork: bool,
+    pending_new_artwork: Option<[u32; 2]>,
     pending_exit: bool,
 }
 
@@ -267,7 +267,7 @@ impl App {
             autosave,
             screen: AppScreen::Gallery,
             pending_gallery: false,
-            pending_new_artwork: false,
+            pending_new_artwork: None,
             pending_exit: false,
         }
     }
@@ -289,9 +289,12 @@ impl App {
                 self.autosave.request_save();
             }
         }
+        if let Some(gui) = self.gui.as_mut() {
+            gui.close_new_artwork_dialog();
+        }
         self.pending_exit = true;
         self.pending_gallery = false;
-        self.pending_new_artwork = false;
+        self.pending_new_artwork = None;
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }
@@ -314,10 +317,10 @@ impl App {
                 return;
             }
             if self.pending_gallery && self.autosave.is_clean(paint) {
-                let create_new = self.pending_new_artwork;
+                let new_size = self.pending_new_artwork;
                 self.finish_gallery_navigation();
-                if create_new {
-                    self.new_artwork();
+                if let Some(size) = new_size {
+                    self.create_artwork(size);
                 }
                 app_action_processed = true;
             }
@@ -360,7 +363,7 @@ impl App {
                     let status = self.autosave.status(paint);
                     let pending_navigation = if self.pending_exit {
                         Some("Closing Chromazen")
-                    } else if self.pending_new_artwork {
+                    } else if self.pending_new_artwork.is_some() {
                         Some("Creating New Artwork")
                     } else if self.pending_gallery {
                         Some("Returning to Gallery")
@@ -472,7 +475,18 @@ impl App {
                 AppCommand::OpenConfigDirectory => {
                     self.process_settings_commands(vec![SettingsCommand::OpenConfigDirectory]);
                 }
-                AppCommand::NewArtwork => self.new_artwork(),
+                AppCommand::NewArtwork => {
+                    if !self.navigation_pending()
+                        && let Some(gui) = self.gui.as_mut()
+                    {
+                        gui.open_new_artwork_dialog();
+                    }
+                }
+                AppCommand::CreateArtwork { width, height } => {
+                    if !self.navigation_pending() {
+                        self.create_artwork([width, height]);
+                    }
+                }
                 AppCommand::OpenArtwork(id) => self.open_artwork(&id),
                 AppCommand::SaveArtwork => {
                     if self.screen == AppScreen::Editor {
@@ -481,8 +495,11 @@ impl App {
                 }
                 AppCommand::ShowGallery => {
                     if self.screen == AppScreen::Editor {
+                        if let Some(gui) = self.gui.as_mut() {
+                            gui.close_new_artwork_dialog();
+                        }
                         self.pending_gallery = true;
-                        self.pending_new_artwork = false;
+                        self.pending_new_artwork = None;
                         self.autosave.request_save();
                     }
                 }
@@ -502,7 +519,7 @@ impl App {
                 }
                 AppCommand::CancelPendingNavigation => {
                     self.pending_gallery = false;
-                    self.pending_new_artwork = false;
+                    self.pending_new_artwork = None;
                     self.pending_exit = false;
                 }
                 AppCommand::Quit => self.request_exit(),
@@ -512,24 +529,27 @@ impl App {
         true
     }
 
-    fn new_artwork(&mut self) {
+    fn create_artwork(&mut self, size: [u32; 2]) {
         if self.screen == AppScreen::Editor {
             self.pending_gallery = true;
-            self.pending_new_artwork = true;
+            self.pending_new_artwork = Some(size);
             self.autosave.request_save();
             return;
         }
         let Some(paint) = self.paint.as_mut() else {
             return;
         };
-        if !paint.reset_document() {
+        if let Err(error) = paint.reset_document(size) {
+            if let Some(gui) = self.gui.as_mut() {
+                gui.show_error(error);
+            }
             return;
         }
         let id = crate::artwork::ArtworkId::new();
         self.autosave.begin_new(id, "Untitled".to_owned());
         self.screen = AppScreen::Editor;
         self.pending_gallery = false;
-        self.pending_new_artwork = false;
+        self.pending_new_artwork = None;
         self.pending_exit = false;
         if let Some(window) = self.window.as_ref() {
             window.set_title("Untitled • Chromazen");
@@ -537,7 +557,14 @@ impl App {
     }
 
     fn open_artwork(&mut self, id: &crate::artwork::ArtworkId) {
-        let opened = match self.gallery.open(id) {
+        let Some(constraints) = self
+            .paint
+            .as_ref()
+            .map(PaintRenderer::canvas_size_constraints)
+        else {
+            return;
+        };
+        let opened = match self.gallery.open(id, constraints) {
             Ok(opened) => opened,
             Err(error) => {
                 if let Some(gui) = self.gui.as_mut() {
@@ -560,7 +587,7 @@ impl App {
             .begin_loaded(opened.id, opened.title.clone(), versions);
         self.screen = AppScreen::Editor;
         self.pending_gallery = false;
-        self.pending_new_artwork = false;
+        self.pending_new_artwork = None;
         self.pending_exit = false;
         if let Some(window) = self.window.as_ref() {
             window.set_title(&format!("{} • Chromazen", opened.title));
@@ -572,7 +599,7 @@ impl App {
         self.autosave.clear();
         self.screen = AppScreen::Gallery;
         self.pending_gallery = false;
-        self.pending_new_artwork = false;
+        self.pending_new_artwork = None;
         self.pending_exit = false;
         if let Some(window) = self.window.as_ref() {
             window.set_title(WINDOW_TITLE);

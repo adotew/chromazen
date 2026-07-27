@@ -16,6 +16,7 @@ pub(super) enum AppCommand {
     ResetBrush,
     OpenConfigDirectory,
     NewArtwork,
+    CreateArtwork { width: u32, height: u32 },
     OpenArtwork(ArtworkId),
     SaveArtwork,
     ShowGallery,

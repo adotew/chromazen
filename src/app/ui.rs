@@ -13,7 +13,10 @@ use crate::{
     artwork::ArtworkSummary,
     config::{AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset},
     paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings, StrokeSmoothingOptions},
-    renderer::{LayerId, LayerResourceId, LayerSnapshot, PaintRenderer},
+    renderer::{
+        CanvasSizeConstraints, DEFAULT_CANVAS_SIZE, LayerId, LayerResourceId, LayerSnapshot,
+        PaintRenderer,
+    },
 };
 
 use super::{autosave::SaveStatus, command::AppCommand};
@@ -56,6 +59,8 @@ pub struct GuiLayer {
     brush_previews: Vec<(String, egui::TextureHandle)>,
     failed_brush_previews: Vec<String>,
     sidebar_visible: bool,
+    canvas_size_constraints: CanvasSizeConstraints,
+    new_artwork_dialog: Option<NewArtworkDialog>,
     gallery: gallery::GalleryUi,
 }
 
@@ -73,6 +78,11 @@ struct LayerPreviewKey {
 struct LayerThumbnail {
     key: LayerPreviewKey,
     texture_id: egui::TextureId,
+}
+
+struct NewArtworkDialog {
+    width: u32,
+    height: u32,
 }
 
 impl GuiLayer {
@@ -124,6 +134,8 @@ impl GuiLayer {
             brush_previews: Vec::new(),
             failed_brush_previews: Vec::new(),
             sidebar_visible: true,
+            canvas_size_constraints: paint.canvas_size_constraints(),
+            new_artwork_dialog: None,
             gallery: gallery::GalleryUi::default(),
         }
     }
@@ -428,6 +440,7 @@ impl GuiLayer {
             if let Some(action) = pending_navigation {
                 show_save_blocker(ui.ctx(), action, &save_status, &mut self.commands);
             }
+            self.show_new_artwork_dialog(ui.ctx());
         })
     }
 
@@ -453,7 +466,81 @@ impl GuiLayer {
         context.run_ui(raw_input, |ui| {
             self.gallery
                 .show(ui, artworks, warning.as_deref(), &mut self.commands);
+            self.show_new_artwork_dialog(ui.ctx());
         })
+    }
+
+    pub(crate) fn open_new_artwork_dialog(&mut self) {
+        self.new_artwork_dialog = Some(NewArtworkDialog {
+            width: DEFAULT_CANVAS_SIZE[0],
+            height: DEFAULT_CANVAS_SIZE[1],
+        });
+        self.context.request_repaint();
+    }
+
+    pub(crate) fn close_new_artwork_dialog(&mut self) {
+        self.new_artwork_dialog = None;
+    }
+
+    fn show_new_artwork_dialog(&mut self, context: &egui::Context) {
+        let Some(dialog) = self.new_artwork_dialog.as_mut() else {
+            return;
+        };
+        let mut close = false;
+        let mut create = None;
+        let response = egui::Modal::new(egui::Id::new("new artwork dialog")).show(context, |ui| {
+            ui.heading("New Artwork");
+            ui.add_space(8.0);
+            egui::Grid::new("new artwork dimensions")
+                .num_columns(3)
+                .spacing([10.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label("Width");
+                    ui.add(
+                        egui::DragValue::new(&mut dialog.width)
+                            .range(1..=self.canvas_size_constraints.max_dimension)
+                            .speed(1),
+                    );
+                    ui.label("px");
+                    ui.end_row();
+
+                    ui.label("Height");
+                    ui.add(
+                        egui::DragValue::new(&mut dialog.height)
+                            .range(1..=self.canvas_size_constraints.max_dimension)
+                            .speed(1),
+                    );
+                    ui.label("px");
+                    ui.end_row();
+                });
+            let validation = self
+                .canvas_size_constraints
+                .validate([dialog.width, dialog.height]);
+            if let Err(error) = &validation {
+                ui.colored_label(egui::Color32::LIGHT_RED, error);
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    close = true;
+                }
+                let submit = ui.add_enabled(validation.is_ok(), egui::Button::new("Create"));
+                if submit.clicked()
+                    || (validation.is_ok() && ui.input(|input| input.key_pressed(egui::Key::Enter)))
+                {
+                    create = Some((dialog.width, dialog.height));
+                }
+            });
+        });
+        close |= response.should_close();
+        if let Some((width, height)) = create {
+            self.commands
+                .push(AppCommand::CreateArtwork { width, height });
+            close = true;
+        }
+        if close {
+            self.new_artwork_dialog = None;
+        }
     }
 
     pub(crate) fn toggle_sidebar(&mut self) {
