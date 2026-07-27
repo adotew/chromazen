@@ -1,3 +1,5 @@
+const SMUDGE_MAX_ADVECTION: f32 = 0.35;
+
 @group(0) @binding(0) var brushSampler: sampler;
 @group(0) @binding(1) var brushStamp: texture_2d<f32>;
 @group(0) @binding(2) var<storage, read> brushes: array<Brush>;
@@ -72,7 +74,8 @@ fn sampleSource(pos: vec2f) -> vec4f {
 @fragment
 fn fs(in: VertexOut) -> @location(0) vec4f {
   let mask = textureSample(brushStamp, brushSampler, in.uv).a;
-  let strength = clamp(in.strength * mask, 0.0, 1.0);
+  let base = clamp(in.strength * mask, 0.0, 1.0);
+  let strength = SMUDGE_MAX_ADVECTION * base;
   let targetColor = sampleSource(in.targetPos);
   let draggedColor = sampleSource(in.sourcePos);
   return mix(targetColor, draggedColor, strength);
