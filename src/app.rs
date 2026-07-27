@@ -26,7 +26,7 @@ use self::{
     input::{KeyboardShortcut, PaintInputController},
     menu::NativeMenu,
     settings::{SettingsCommand, SettingsController, SettingsEffect},
-    ui::{BrushResizeLabel, EyedropperIndicator, GuiLayer},
+    ui::{BrushResizeLabel, EditorUiState, EyedropperIndicator, GuiLayer},
 };
 use crate::{
     platform::{MacosPressureMonitor, PressureStateHandle},
@@ -66,6 +66,7 @@ pub struct App {
     autosave: AutosaveController,
     screen: AppScreen,
     pending_gallery: bool,
+    pending_new_artwork: bool,
     pending_exit: bool,
 }
 
@@ -266,6 +267,7 @@ impl App {
             autosave,
             screen: AppScreen::Gallery,
             pending_gallery: false,
+            pending_new_artwork: false,
             pending_exit: false,
         }
     }
@@ -292,6 +294,7 @@ impl App {
         }
         self.pending_exit = true;
         self.pending_gallery = false;
+        self.pending_new_artwork = false;
         self.autosave.request_save();
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
@@ -311,7 +314,11 @@ impl App {
                 return;
             }
             if self.pending_gallery && self.autosave.is_clean(paint) {
+                let create_new = self.pending_new_artwork;
                 self.finish_gallery_navigation();
+                if create_new {
+                    self.new_artwork();
+                }
                 app_action_processed = true;
             }
         }
@@ -354,6 +361,8 @@ impl App {
                     let status = self.autosave.status(paint);
                     let pending_navigation = if self.pending_exit {
                         Some("Closing Chromazen")
+                    } else if self.pending_new_artwork {
+                        Some("Creating New Artwork")
                     } else if self.pending_gallery {
                         Some("Returning to Gallery")
                     } else {
@@ -361,13 +370,15 @@ impl App {
                     };
                     gui.run_editor(
                         window,
-                        &layer_snapshot,
-                        self.input.tool(),
-                        brush_resize_label,
-                        eyedropper_indicator,
-                        title,
-                        status,
-                        pending_navigation,
+                        EditorUiState {
+                            layers: &layer_snapshot,
+                            tool: self.input.tool(),
+                            brush_resize_label,
+                            eyedropper_indicator,
+                            artwork_title: title,
+                            save_status: status,
+                            pending_navigation,
+                        },
                     )
                 }
             };
@@ -473,6 +484,7 @@ impl App {
                 AppCommand::ShowGallery => {
                     if self.screen == AppScreen::Editor {
                         self.pending_gallery = true;
+                        self.pending_new_artwork = false;
                         self.autosave.request_save();
                     }
                 }
@@ -492,6 +504,7 @@ impl App {
                 }
                 AppCommand::CancelPendingNavigation => {
                     self.pending_gallery = false;
+                    self.pending_new_artwork = false;
                     self.pending_exit = false;
                 }
             }
@@ -503,6 +516,7 @@ impl App {
     fn new_artwork(&mut self) {
         if self.screen == AppScreen::Editor {
             self.pending_gallery = true;
+            self.pending_new_artwork = true;
             self.autosave.request_save();
             return;
         }
@@ -516,6 +530,7 @@ impl App {
         self.autosave.begin_new(id, "Untitled".to_owned());
         self.screen = AppScreen::Editor;
         self.pending_gallery = false;
+        self.pending_new_artwork = false;
         self.pending_exit = false;
         if let Some(window) = self.window.as_ref() {
             window.set_title("Untitled — Chromazen");
@@ -546,6 +561,7 @@ impl App {
             .begin_loaded(opened.id, opened.title.clone(), versions);
         self.screen = AppScreen::Editor;
         self.pending_gallery = false;
+        self.pending_new_artwork = false;
         self.pending_exit = false;
         if let Some(window) = self.window.as_ref() {
             window.set_title(&format!("{} — Chromazen", opened.title));
@@ -557,6 +573,7 @@ impl App {
         self.autosave.clear();
         self.screen = AppScreen::Gallery;
         self.pending_gallery = false;
+        self.pending_new_artwork = false;
         self.pending_exit = false;
         if let Some(window) = self.window.as_ref() {
             window.set_title(WINDOW_TITLE);
@@ -566,7 +583,7 @@ impl App {
 
     fn sync_history_menu(&self) {
         let (can_undo, can_redo) = (self.screen == AppScreen::Editor)
-            .then(|| self.paint.as_ref())
+            .then_some(self.paint.as_ref())
             .flatten()
             .map_or((false, false), |paint| (paint.can_undo(), paint.can_redo()));
         self.native_menu.set_history_enabled(can_undo, can_redo);

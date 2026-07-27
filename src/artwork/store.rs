@@ -10,10 +10,7 @@ use atomic_write_file::AtomicWriteFile;
 use directories::ProjectDirs;
 use uuid::Uuid;
 
-use super::format::{
-    DOCUMENT_SCHEMA_VERSION, DocumentManifest, PROJECT_SCHEMA_VERSION, ProjectManifest,
-    normalized_title,
-};
+use super::format::{DocumentManifest, PROJECT_SCHEMA_VERSION, ProjectManifest, normalized_title};
 
 const APP_NAME: &str = "chromazen";
 const PROJECT_FILE: &str = "project.toml";
@@ -402,7 +399,7 @@ impl Error for ArtworkError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artwork::format::LayerManifest;
+    use crate::artwork::format::{DOCUMENT_SCHEMA_VERSION, LayerManifest};
 
     fn revision(pixel: u8) -> RevisionWrite {
         RevisionWrite {

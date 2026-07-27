@@ -97,10 +97,6 @@ impl AutosaveController {
         self.session = None;
     }
 
-    pub(super) fn artwork_id(&self) -> Option<&ArtworkId> {
-        self.session.as_ref().map(|session| &session.id)
-    }
-
     pub(super) fn title(&self) -> Option<&str> {
         self.session.as_ref().map(|session| session.title.as_str())
     }

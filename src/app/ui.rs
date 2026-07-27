@@ -30,6 +30,16 @@ pub(crate) struct EyedropperIndicator {
     pub(crate) color: egui::Color32,
 }
 
+pub(crate) struct EditorUiState<'a> {
+    pub(crate) layers: &'a LayerSnapshot,
+    pub(crate) tool: PaintTool,
+    pub(crate) brush_resize_label: Option<BrushResizeLabel>,
+    pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
+    pub(crate) artwork_title: &'a str,
+    pub(crate) save_status: SaveStatus,
+    pub(crate) pending_navigation: Option<&'a str>,
+}
+
 pub struct GuiLayer {
     pub context: egui::Context,
     pub state: EguiWinitState,
@@ -232,23 +242,22 @@ impl GuiLayer {
         }
     }
 
-    pub fn run_editor(
-        &mut self,
-        window: &Window,
-        layers: &LayerSnapshot,
-        tool: PaintTool,
-        brush_resize_label: Option<BrushResizeLabel>,
-        eyedropper_indicator: Option<EyedropperIndicator>,
-        artwork_title: &str,
-        save_status: SaveStatus,
-        pending_navigation: Option<&str>,
-    ) -> egui::FullOutput {
+    pub fn run_editor(&mut self, window: &Window, state: EditorUiState<'_>) -> egui::FullOutput {
+        let EditorUiState {
+            layers,
+            tool,
+            brush_resize_label,
+            eyedropper_indicator,
+            artwork_title,
+            save_status,
+            pending_navigation,
+        } = state;
         self.load_brush_preview(&self.active_brush.clone());
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
 
         context.run_ui(raw_input, |ui| {
-            egui::TopBottomPanel::top("artwork header").show_inside(ui, |ui| {
+            egui::Panel::top("artwork header").show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     if ui.button("Gallery").clicked() {
                         self.commands.push(AppCommand::ShowGallery);
