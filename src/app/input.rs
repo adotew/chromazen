@@ -104,6 +104,28 @@ impl PaintInputController {
             && self.modifiers.is_empty()
     }
 
+    pub fn cycles_tool(&self, event: &WindowEvent) -> bool {
+        let WindowEvent::KeyboardInput { event, .. } = event else {
+            return false;
+        };
+        event.physical_key == PhysicalKey::Code(KeyCode::Tab)
+            && event.state == ElementState::Pressed
+            && !event.repeat
+            && self.modifiers == ModifiersState::SHIFT
+    }
+
+    pub fn cycle_tool(&mut self) -> bool {
+        if self.is_drawing {
+            return false;
+        }
+        self.tool = match self.tool {
+            PaintTool::Brush => PaintTool::Eraser,
+            PaintTool::Eraser => PaintTool::Smudge,
+            PaintTool::Smudge => PaintTool::Brush,
+        };
+        true
+    }
+
     pub fn history_command(&self, event: &WindowEvent) -> Option<AppCommand> {
         if cfg!(any(target_os = "macos", target_os = "windows")) {
             return None;

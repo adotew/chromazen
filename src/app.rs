@@ -130,6 +130,13 @@ impl ApplicationHandler<AppEvent> for App {
                     window.request_redraw();
                     return;
                 }
+                if self.input.cycles_tool(&event) {
+                    if self.input.cycle_tool() {
+                        self.next_repaint = None;
+                        window.request_redraw();
+                    }
+                    return;
+                }
                 let egui_response = gui.state.on_window_event(window.as_ref(), &event);
                 let mut needs_redraw = egui_response.repaint || cursor_changed;
                 let egui_consumed = egui_response.consumed;
