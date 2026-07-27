@@ -243,11 +243,38 @@ impl GuiLayer {
         context.run_ui(raw_input, |ui| {
             let background = background_color(layers.background_color);
 
-            if self.sidebar_visible {
+            // egui's built-in animated panel deliberately hides its contents while resizing,
+            // which makes a wide sidebar flash empty. Keep a full-width child clipped to an
+            // animated panel instead, so the complete sidebar slides off the right edge.
+            const SIDEBAR_WIDTH: f32 = 300.0;
+            let sidebar_progress = ui.ctx().animate_bool_with_time_and_easing(
+                egui::Id::new("sidebar animation"),
+                self.sidebar_visible,
+                0.18,
+                egui::emath::easing::cubic_in_out,
+            );
+            if sidebar_progress > 0.0 {
                 egui::Panel::right("tools")
-                    .default_size(300.0)
+                    .exact_size(SIDEBAR_WIDTH * sidebar_progress)
                     .resizable(false)
-                    .show_inside(ui, |ui| {
+                    .show_inside(ui, |panel_ui| {
+                        let inner_width = SIDEBAR_WIDTH
+                            - egui::Frame::side_top_panel(panel_ui.style())
+                                .inner_margin
+                                .sum()
+                                .x;
+                        let content_rect = egui::Rect::from_min_size(
+                            panel_ui.min_rect().min,
+                            egui::vec2(inner_width, panel_ui.available_height()),
+                        );
+                        let mut content_ui = panel_ui.new_child(
+                            egui::UiBuilder::new()
+                                .id_salt("sidebar contents")
+                                .max_rect(content_rect),
+                        );
+                        content_ui.set_clip_rect(panel_ui.clip_rect());
+                        let ui = &mut content_ui;
+
                         self.show_brush_controls(ui);
 
                         if let Some(message) = &self.settings_message {
