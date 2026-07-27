@@ -1,3 +1,4 @@
+mod autosave;
 mod command;
 mod input;
 mod menu;
