@@ -74,6 +74,7 @@ impl GuiLayer {
         load_error: Option<String>,
     ) -> Self {
         let context = egui::Context::default();
+        install_fonts(&context);
         egui_extras::install_image_loaders(&context);
         let state = EguiWinitState::new(
             context.clone(),
@@ -863,6 +864,48 @@ fn show_tool_button(
         .paint_at(ui, icon_rect);
 
     response.on_hover_text(format!("{label} ({shortcut})"))
+}
+
+fn install_fonts(context: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "inter".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../assets/fonts/Inter-Regular.ttf"
+        ))),
+    );
+    fonts.font_data.insert(
+        "inter_medium".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../assets/fonts/Inter-Medium.ttf"
+        ))),
+    );
+    fonts.font_data.insert(
+        "elms_sans".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../assets/fonts/ElmsSans-Medium.ttf"
+        ))),
+    );
+    fonts
+        .families
+        .get_mut(&egui::FontFamily::Proportional)
+        .expect("default proportional font family")
+        .insert(0, "inter".to_owned());
+    fonts.families.insert(
+        egui::FontFamily::Name("inter_medium".into()),
+        vec!["inter_medium".to_owned(), "inter".to_owned()],
+    );
+    fonts.families.insert(
+        egui::FontFamily::Name("elms_sans".into()),
+        vec!["elms_sans".to_owned(), "inter".to_owned()],
+    );
+    context.set_fonts(fonts);
+    context.all_styles_mut(|style| {
+        style.text_styles.insert(
+            egui::TextStyle::Heading,
+            egui::FontId::new(18.0, egui::FontFamily::Name("inter_medium".into())),
+        );
+    });
 }
 
 fn brush_settings_from_config(
