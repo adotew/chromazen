@@ -38,6 +38,7 @@ pub struct GuiLayer {
     layer_thumbnails: Vec<(LayerId, egui::TextureId)>,
     brush_previews: Vec<(String, egui::TextureHandle)>,
     failed_brush_previews: Vec<String>,
+    sidebar_visible: bool,
 }
 
 struct SettingsMessage {
@@ -92,6 +93,7 @@ impl GuiLayer {
             layer_thumbnails: Vec::new(),
             brush_previews: Vec::new(),
             failed_brush_previews: Vec::new(),
+            sidebar_visible: true,
         }
     }
 
@@ -234,103 +236,106 @@ impl GuiLayer {
         context.run_ui(raw_input, |ui| {
             let background = background_color(layers.background_color);
 
-            egui::Panel::right("tools")
-                .default_size(300.0)
-                .resizable(false)
-                .show_inside(ui, |ui| {
-                    self.show_brush_controls(ui);
+            if self.sidebar_visible {
+                egui::Panel::right("tools")
+                    .default_size(300.0)
+                    .resizable(false)
+                    .show_inside(ui, |ui| {
+                        self.show_brush_controls(ui);
 
-                    if let Some(message) = &self.settings_message {
-                        let color = if message.is_error {
-                            egui::Color32::LIGHT_RED
-                        } else {
-                            egui::Color32::LIGHT_GREEN
-                        };
-                        ui.colored_label(color, &message.text);
-                    }
+                        if let Some(message) = &self.settings_message {
+                            let color = if message.is_error {
+                                egui::Color32::LIGHT_RED
+                            } else {
+                                egui::Color32::LIGHT_GREEN
+                            };
+                            ui.colored_label(color, &message.text);
+                        }
 
-                    ui.separator();
-                    egui::Panel::bottom("layer controls")
-                        .show_separator_line(false)
-                        .show_inside(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                let add_icon = egui::Image::new(egui::include_image!(
-                                    "../../assets/icons/plus.svg"
-                                ))
-                                .fit_to_exact_size(egui::Vec2::splat(16.0))
-                                .alt_text("Add layer");
-                                let add_button = egui::Button::image(add_icon)
-                                    .image_tint_follows_text_color(true)
-                                    .min_size(egui::Vec2::splat(28.0))
-                                    .corner_radius(8);
-                                if ui.add(add_button).on_hover_text("Add layer").clicked() {
-                                    self.commands.push(AppCommand::AddLayer);
-                                }
+                        ui.separator();
+                        egui::Panel::bottom("layer controls")
+                            .show_separator_line(false)
+                            .show_inside(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    let add_icon = egui::Image::new(egui::include_image!(
+                                        "../../assets/icons/plus.svg"
+                                    ))
+                                    .fit_to_exact_size(egui::Vec2::splat(16.0))
+                                    .alt_text("Add layer");
+                                    let add_button = egui::Button::image(add_icon)
+                                        .image_tint_follows_text_color(true)
+                                        .min_size(egui::Vec2::splat(28.0))
+                                        .corner_radius(8);
+                                    if ui.add(add_button).on_hover_text("Add layer").clicked() {
+                                        self.commands.push(AppCommand::AddLayer);
+                                    }
 
-                                let can_delete = layers.layers.len() > 1;
-                                let delete_icon = egui::Image::new(egui::include_image!(
-                                    "../../assets/icons/trash-2.svg"
-                                ))
-                                .fit_to_exact_size(egui::Vec2::splat(16.0))
-                                .alt_text("Delete layer");
-                                let delete_button = egui::Button::image(delete_icon)
-                                    .image_tint_follows_text_color(true)
-                                    .min_size(egui::Vec2::splat(28.0))
-                                    .corner_radius(8);
-                                if ui
-                                    .add_enabled(can_delete, delete_button)
-                                    .on_hover_text("Delete layer")
-                                    .clicked()
-                                {
-                                    self.commands.push(AppCommand::DeleteSelectedLayer);
-                                }
-                            });
-                            ui.add_space(6.0);
-                        });
-                    ui.add_space(4.0);
-                    egui::ScrollArea::vertical()
-                        .id_salt("layer list")
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            for layer in layers.layers.iter().rev() {
-                                let selected = layers.selection == layer.id;
-                                let thumbnail = self
-                                    .layer_thumbnails
-                                    .iter()
-                                    .find(|(id, _)| *id == layer.id)
-                                    .map(|(_, texture_id)| *texture_id);
-                                if show_layer_row(ui, &layer.name, selected, thumbnail, None)
-                                    .clicked()
-                                    && !selected
-                                {
-                                    self.commands.push(AppCommand::SelectLayer(layer.id));
-                                }
-                                ui.add_space(4.0);
-                            }
-
-                            let mut color = background;
-                            let response =
-                                show_layer_row(ui, "Background", false, None, Some(background));
-                            egui::Popup::from_toggle_button_response(&response)
-                                .width(220.0)
-                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                                .show(|ui| {
-                                    if color_picker::show(ui, &mut color) {
-                                        self.background_edit_start.get_or_insert(rgb(background));
-                                        self.commands
-                                            .push(AppCommand::SetBackgroundColor(rgb(color)));
+                                    let can_delete = layers.layers.len() > 1;
+                                    let delete_icon = egui::Image::new(egui::include_image!(
+                                        "../../assets/icons/trash-2.svg"
+                                    ))
+                                    .fit_to_exact_size(egui::Vec2::splat(16.0))
+                                    .alt_text("Delete layer");
+                                    let delete_button = egui::Button::image(delete_icon)
+                                        .image_tint_follows_text_color(true)
+                                        .min_size(egui::Vec2::splat(28.0))
+                                        .corner_radius(8);
+                                    if ui
+                                        .add_enabled(can_delete, delete_button)
+                                        .on_hover_text("Delete layer")
+                                        .clicked()
+                                    {
+                                        self.commands.push(AppCommand::DeleteSelectedLayer);
                                     }
                                 });
-                            if !ui.ctx().input(|input| input.pointer.primary_down())
-                                && let Some(before) = self.background_edit_start.take()
-                            {
-                                self.commands.push(AppCommand::CommitBackgroundColor {
-                                    before,
-                                    after: rgb(color),
-                                });
-                            }
-                        });
-                });
+                                ui.add_space(6.0);
+                            });
+                        ui.add_space(4.0);
+                        egui::ScrollArea::vertical()
+                            .id_salt("layer list")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                for layer in layers.layers.iter().rev() {
+                                    let selected = layers.selection == layer.id;
+                                    let thumbnail = self
+                                        .layer_thumbnails
+                                        .iter()
+                                        .find(|(id, _)| *id == layer.id)
+                                        .map(|(_, texture_id)| *texture_id);
+                                    if show_layer_row(ui, &layer.name, selected, thumbnail, None)
+                                        .clicked()
+                                        && !selected
+                                    {
+                                        self.commands.push(AppCommand::SelectLayer(layer.id));
+                                    }
+                                    ui.add_space(4.0);
+                                }
+
+                                let mut color = background;
+                                let response =
+                                    show_layer_row(ui, "Background", false, None, Some(background));
+                                egui::Popup::from_toggle_button_response(&response)
+                                    .width(220.0)
+                                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                                    .show(|ui| {
+                                        if color_picker::show(ui, &mut color) {
+                                            self.background_edit_start
+                                                .get_or_insert(rgb(background));
+                                            self.commands
+                                                .push(AppCommand::SetBackgroundColor(rgb(color)));
+                                        }
+                                    });
+                                if !ui.ctx().input(|input| input.pointer.primary_down())
+                                    && let Some(before) = self.background_edit_start.take()
+                                {
+                                    self.commands.push(AppCommand::CommitBackgroundColor {
+                                        before,
+                                        after: rgb(color),
+                                    });
+                                }
+                            });
+                    });
+            }
 
             if let Some(label) = brush_resize_label {
                 show_brush_resize_label(ui, label, self.brush.size);
@@ -341,6 +346,10 @@ impl GuiLayer {
                 .interactable(false)
                 .show(ui.ctx(), |ui| show_tool_badge(ui, tool));
         })
+    }
+
+    pub(crate) fn toggle_sidebar(&mut self) {
+        self.sidebar_visible = !self.sidebar_visible;
     }
 
     pub(crate) fn close_popups(&self) -> bool {
