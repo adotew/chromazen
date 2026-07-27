@@ -532,7 +532,7 @@ impl App {
         self.pending_new_artwork = false;
         self.pending_exit = false;
         if let Some(window) = self.window.as_ref() {
-            window.set_title("Untitled — Chromazen");
+            window.set_title("Untitled • Chromazen");
         }
     }
 
@@ -563,7 +563,7 @@ impl App {
         self.pending_new_artwork = false;
         self.pending_exit = false;
         if let Some(window) = self.window.as_ref() {
-            window.set_title(&format!("{} — Chromazen", opened.title));
+            window.set_title(&format!("{} • Chromazen", opened.title));
         }
     }
 
