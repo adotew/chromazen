@@ -94,6 +94,7 @@ impl ArtworkStore {
 
     pub(crate) fn catalog(&self) -> ArtworkCatalog {
         let mut catalog = ArtworkCatalog::default();
+        self.cleanup_abandoned_writes();
         let entries = match fs::read_dir(&self.root) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return catalog,
@@ -123,6 +124,7 @@ impl ArtworkStore {
                         project.title
                     )));
                 }
+                self.cleanup_old_revisions(&id, project.current_revision);
                 Ok(ArtworkSummary {
                     id,
                     title: project.title,
@@ -311,6 +313,37 @@ impl ArtworkStore {
         Ok(())
     }
 
+    fn cleanup_abandoned_writes(&self) {
+        let Ok(entries) = fs::read_dir(&self.root) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if name.to_string_lossy().starts_with(".trash-") {
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+
+    fn cleanup_old_revisions(&self, id: &ArtworkId, current_revision: u64) {
+        let revisions = self.artwork_path(id).join("revisions");
+        let Ok(entries) = fs::read_dir(revisions) else {
+            return;
+        };
+        let current_name = format!("{current_revision:016}");
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(".tmp-")
+                || (name.len() == 16
+                    && name.bytes().all(|byte| byte.is_ascii_digit())
+                    && name != current_name)
+            {
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+
     fn artwork_path(&self, id: &ArtworkId) -> PathBuf {
         self.root.join(id.as_str())
     }
@@ -449,6 +482,30 @@ mod tests {
         let catalog = store.catalog();
         assert_eq!(catalog.artworks.len(), 1);
         assert_eq!(catalog.warnings.len(), 1);
+    }
+
+    #[test]
+    fn empty_rename_is_rejected_without_changing_the_title() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ArtworkStore::from_root(temp.path());
+        let id = ArtworkId::new();
+        store.commit_revision(&id, "Untitled", revision(1)).unwrap();
+
+        assert!(store.rename(&id, "  ").is_err());
+        assert_eq!(store.load(&id).unwrap().summary.title, "Untitled");
+    }
+
+    #[test]
+    fn discovery_removes_abandoned_trash_directories() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ArtworkStore::from_root(temp.path());
+        let trash = temp.path().join(".trash-abandoned");
+        fs::create_dir_all(&trash).unwrap();
+        fs::write(trash.join("pixels"), b"data").unwrap();
+
+        store.catalog();
+
+        assert!(!trash.exists());
     }
 
     #[test]
