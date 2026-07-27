@@ -172,7 +172,7 @@ impl ApplicationHandler<AppEvent> for App {
                 }
 
                 let history_command = (self.screen == AppScreen::Editor && !egui_consumed)
-                    .then(|| self.input.history_command(&event))
+                    .then(|| self.input.app_command(&event))
                     .flatten();
                 if let Some(command) = history_command {
                     self.pending_commands.push(command);
@@ -451,6 +451,11 @@ impl App {
     }
 
     fn new_artwork(&mut self) {
+        if self.screen == AppScreen::Editor {
+            self.pending_gallery = true;
+            self.autosave.request_save();
+            return;
+        }
         let Some(paint) = self.paint.as_mut() else {
             return;
         };
@@ -512,6 +517,8 @@ impl App {
             .flatten()
             .map_or((false, false), |paint| (paint.can_undo(), paint.can_redo()));
         self.native_menu.set_history_enabled(can_undo, can_redo);
+        self.native_menu
+            .set_document_enabled(self.screen == AppScreen::Editor);
     }
 
     fn process_settings_commands(&mut self, commands: Vec<SettingsCommand>) {
