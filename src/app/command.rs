@@ -1,4 +1,4 @@
-use crate::{paint::PaintTool, renderer::LayerId};
+use crate::{artwork::ArtworkId, paint::PaintTool, renderer::LayerId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum AppCommand {
@@ -15,4 +15,10 @@ pub(super) enum AppCommand {
     ReloadConfiguration,
     ResetBrush,
     OpenConfigDirectory,
+    NewArtwork,
+    OpenArtwork(ArtworkId),
+    SaveArtwork,
+    ShowGallery,
+    RenameArtwork { id: ArtworkId, title: String },
+    DeleteArtwork(ArtworkId),
 }

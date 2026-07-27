@@ -1,5 +1,6 @@
 mod brush_preview;
 mod color_picker;
+mod gallery;
 
 use std::time::Duration;
 
@@ -9,12 +10,13 @@ use egui_winit::State as EguiWinitState;
 use winit::window::Window;
 
 use crate::{
+    artwork::ArtworkSummary,
     config::{AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset},
     paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings, StrokeSmoothingOptions},
     renderer::{LayerId, LayerSnapshot, PaintRenderer},
 };
 
-use super::command::AppCommand;
+use super::{autosave::SaveStatus, command::AppCommand};
 
 #[derive(Clone, Copy)]
 pub(crate) struct BrushResizeLabel {
@@ -45,6 +47,7 @@ pub struct GuiLayer {
     brush_previews: Vec<(String, egui::TextureHandle)>,
     failed_brush_previews: Vec<String>,
     sidebar_visible: bool,
+    gallery: gallery::GalleryUi,
 }
 
 struct SettingsMessage {
@@ -100,6 +103,7 @@ impl GuiLayer {
             brush_previews: Vec::new(),
             failed_brush_previews: Vec::new(),
             sidebar_visible: true,
+            gallery: gallery::GalleryUi::default(),
         }
     }
 
@@ -228,19 +232,49 @@ impl GuiLayer {
         }
     }
 
-    pub fn run(
+    pub fn run_editor(
         &mut self,
         window: &Window,
         layers: &LayerSnapshot,
         tool: PaintTool,
         brush_resize_label: Option<BrushResizeLabel>,
         eyedropper_indicator: Option<EyedropperIndicator>,
+        artwork_title: &str,
+        save_status: SaveStatus,
     ) -> egui::FullOutput {
         self.load_brush_preview(&self.active_brush.clone());
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
 
         context.run_ui(raw_input, |ui| {
+            egui::TopBottomPanel::top("artwork header").show_inside(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("Gallery").clicked() {
+                        self.commands.push(AppCommand::ShowGallery);
+                    }
+                    ui.separator();
+                    ui.strong(artwork_title);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let (label, color) = match &save_status {
+                            SaveStatus::Clean => ("Saved", ui.visuals().weak_text_color()),
+                            SaveStatus::Waiting => {
+                                ("Unsaved changes", ui.visuals().weak_text_color())
+                            }
+                            SaveStatus::Saving => ("Saving…", ui.visuals().text_color()),
+                            SaveStatus::Failed(_) => ("Save failed", egui::Color32::LIGHT_RED),
+                        };
+                        ui.colored_label(color, label);
+                    });
+                });
+                if let SaveStatus::Failed(error) = &save_status {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(egui::Color32::LIGHT_RED, error);
+                        if ui.small_button("Retry").clicked() {
+                            self.commands.push(AppCommand::SaveArtwork);
+                        }
+                    });
+                }
+            });
             let background = background_color(layers.background_color);
 
             // egui's built-in animated panel deliberately hides its contents while resizing,
@@ -389,6 +423,31 @@ impl GuiLayer {
             if let Some(indicator) = eyedropper_indicator {
                 show_eyedropper_indicator(ui, indicator);
             }
+        })
+    }
+
+    pub fn run_gallery(
+        &mut self,
+        window: &Window,
+        artworks: &[ArtworkSummary],
+        discovery_warning: Option<&str>,
+    ) -> egui::FullOutput {
+        let raw_input = self.state.take_egui_input(window);
+        let context = self.context.clone();
+        let settings_message = self
+            .settings_message
+            .as_ref()
+            .filter(|message| message.is_error)
+            .map(|message| message.text.as_str());
+        let warning = match (discovery_warning, settings_message) {
+            (Some(discovery), Some(message)) => Some(format!("{discovery}\n{message}")),
+            (Some(discovery), None) => Some(discovery.to_owned()),
+            (None, Some(message)) => Some(message.to_owned()),
+            (None, None) => None,
+        };
+        context.run_ui(raw_input, |ui| {
+            self.gallery
+                .show(ui, artworks, warning.as_deref(), &mut self.commands);
         })
     }
 
