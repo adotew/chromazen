@@ -94,6 +94,16 @@ impl PaintInputController {
         }
     }
 
+    pub fn toggles_sidebar(&self, event: &WindowEvent) -> bool {
+        let WindowEvent::KeyboardInput { event, .. } = event else {
+            return false;
+        };
+        event.physical_key == PhysicalKey::Code(KeyCode::Tab)
+            && event.state == ElementState::Pressed
+            && !event.repeat
+            && self.modifiers.is_empty()
+    }
+
     pub fn history_command(&self, event: &WindowEvent) -> Option<AppCommand> {
         if cfg!(any(target_os = "macos", target_os = "windows")) {
             return None;

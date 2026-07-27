@@ -124,6 +124,12 @@ impl ApplicationHandler<AppEvent> for App {
                     return;
                 };
                 let cursor_changed = self.input.observe_event(&event);
+                if self.input.toggles_sidebar(&event) {
+                    gui.toggle_sidebar();
+                    self.next_repaint = None;
+                    window.request_redraw();
+                    return;
+                }
                 let egui_response = gui.state.on_window_event(window.as_ref(), &event);
                 let mut needs_redraw = egui_response.repaint || cursor_changed;
                 let egui_consumed = egui_response.consumed;
