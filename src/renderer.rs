@@ -27,6 +27,8 @@ const DEFAULT_CANVAS_WIDTH: u32 = 4000;
 const DEFAULT_CANVAS_HEIGHT: u32 = 4000;
 const DOCUMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const STROKE_MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+// Eight simulation steps per brush radius retain tip detail without dense-pass overhead.
+const SMUDGE_MIN_STEP_RATIO: f32 = 0.125;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -597,7 +599,7 @@ impl PaintRenderer {
             from,
             to,
             active_stroke.color,
-            spacing,
+            effective_spacing(active_stroke.tool, spacing),
             self.document_size[0],
             self.document_size[1],
         )
@@ -892,6 +894,17 @@ impl PaintRenderer {
     }
 }
 
+fn effective_spacing(tool: PaintTool, spacing: BrushSpacing) -> BrushSpacing {
+    BrushSpacing {
+        ratio: if tool == PaintTool::Smudge {
+            spacing.ratio.max(SMUDGE_MIN_STEP_RATIO)
+        } else {
+            spacing.ratio
+        },
+        minimum: spacing.minimum,
+    }
+}
+
 fn premultiply(mut color: [f32; 4]) -> [f32; 4] {
     color[0] *= color[3];
     color[1] *= color[3];
@@ -911,6 +924,41 @@ fn opaque_color(color: [u8; 3]) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn brush_and_eraser_keep_preset_spacing() {
+        let spacing = BrushSpacing {
+            ratio: 0.03,
+            minimum: 2.0,
+        };
+
+        assert_eq!(effective_spacing(PaintTool::Brush, spacing), spacing);
+        assert_eq!(effective_spacing(PaintTool::Eraser, spacing), spacing);
+    }
+
+    #[test]
+    fn smudge_raises_dense_spacing_to_its_minimum_ratio() {
+        let spacing = effective_spacing(
+            PaintTool::Smudge,
+            BrushSpacing {
+                ratio: 0.03,
+                minimum: 1.0,
+            },
+        );
+
+        assert_eq!(spacing.ratio, SMUDGE_MIN_STEP_RATIO);
+        assert_eq!(spacing.minimum, 1.0);
+    }
+
+    #[test]
+    fn smudge_keeps_coarser_preset_spacing() {
+        let spacing = BrushSpacing {
+            ratio: 0.25,
+            minimum: 3.0,
+        };
+
+        assert_eq!(effective_spacing(PaintTool::Smudge, spacing), spacing);
+    }
 
     #[test]
     fn active_stroke_captures_layer_tool_and_premultiplied_color() {

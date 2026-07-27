@@ -42,7 +42,7 @@ struct Stamp {
 pub(crate) struct StampQueue {
     pending: VecDeque<Stamp>,
     distance_since_last_stamp: f32,
-    last_stamp_center: Option<[f32; 2]>,
+    last_generated_center: Option<[f32; 2]>,
     stamp_aspect: f32,
     dirty_rect: Option<TextureRect>,
 }
@@ -58,7 +58,7 @@ impl StampQueue {
         Self {
             pending: VecDeque::new(),
             distance_since_last_stamp: 0.0,
-            last_stamp_center: None,
+            last_generated_center: None,
             stamp_aspect,
             dirty_rect: None,
         }
@@ -76,7 +76,7 @@ impl StampQueue {
     pub(crate) fn clear(&mut self) {
         self.pending.clear();
         self.distance_since_last_stamp = 0.0;
-        self.last_stamp_center = None;
+        self.last_generated_center = None;
         self.dirty_rect = None;
     }
 
@@ -86,13 +86,13 @@ impl StampQueue {
 
     pub(crate) fn begin_stroke(&mut self, origin: StrokePoint) {
         self.distance_since_last_stamp = 0.0;
-        self.last_stamp_center = Some([origin.x, origin.y]);
+        self.last_generated_center = Some([origin.x, origin.y]);
         self.dirty_rect = None;
     }
 
     pub(crate) fn end_stroke(&mut self) -> Option<TextureRect> {
         self.distance_since_last_stamp = 0.0;
-        self.last_stamp_center = None;
+        self.last_generated_center = None;
         self.dirty_rect.take()
     }
 
@@ -118,7 +118,10 @@ impl StampQueue {
     }
 
     fn queue_stamp(&mut self, mut stamp: Stamp, width: u32, height: u32) -> bool {
-        stamp.source_center = self.last_stamp_center.unwrap_or([stamp.x, stamp.y]);
+        stamp.source_center = self.last_generated_center.unwrap_or([stamp.x, stamp.y]);
+        // Source continuity follows generated simulation dabs, including dabs that
+        // do not intersect the document and therefore produce no GPU work.
+        self.last_generated_center = Some([stamp.x, stamp.y]);
         let bounds = get_stamp_bounds(
             stamp.x,
             stamp.y,
@@ -144,7 +147,6 @@ impl StampQueue {
             bounds.max_y as u32,
         );
         self.dirty_rect = Some(self.dirty_rect.map_or(rect, |dirty| dirty.union(rect)));
-        self.last_stamp_center = Some([stamp.x, stamp.y]);
         self.pending.push_back(stamp);
         true
     }
@@ -307,6 +309,55 @@ mod tests {
         }
     }
 
+    fn transported_impulse_displacement(step: usize, strength: f32) -> f32 {
+        const SAMPLE_COUNT: usize = 256;
+        const START: usize = 64;
+        const TRAVEL: usize = 24;
+
+        assert_eq!(TRAVEL % step, 0);
+        let mut samples = vec![0.0_f32; SAMPLE_COUNT];
+        samples[START] = 1.0;
+        for _ in 0..TRAVEL / step {
+            let previous = samples.clone();
+            for (index, sample) in samples.iter_mut().enumerate() {
+                let source = index
+                    .checked_sub(step)
+                    .map_or(0.0, |source_index| previous[source_index]);
+                *sample = previous[index] * (1.0 - strength) + source * strength;
+            }
+        }
+
+        let mass: f32 = samples.iter().sum();
+        let centroid = samples
+            .iter()
+            .enumerate()
+            .map(|(index, sample)| index as f32 * sample)
+            .sum::<f32>()
+            / mass;
+        centroid - START as f32
+    }
+
+    #[test]
+    fn shifted_source_transport_is_stable_across_step_sizes() {
+        let expected = 0.35 * 24.0;
+
+        for step in [1, 2, 4] {
+            let displacement = transported_impulse_displacement(step, 0.35);
+            assert!((displacement - expected).abs() < 1.0e-4);
+        }
+    }
+
+    #[test]
+    fn travel_scaled_strength_collapses_with_finer_steps() {
+        const RADIUS: f32 = 8.0;
+        const MAX_ADVECTION: f32 = 0.35;
+
+        let fine = transported_impulse_displacement(1, MAX_ADVECTION / RADIUS);
+        let coarse = transported_impulse_displacement(4, MAX_ADVECTION * 4.0 / RADIUS);
+
+        assert!(fine < coarse * 0.3);
+    }
+
     #[test]
     fn stamp_raw_matches_shader_layout() {
         assert_eq!(std::mem::size_of::<StampRaw>(), 64);
@@ -378,12 +429,25 @@ mod tests {
     }
 
     #[test]
-    fn rejected_stamps_do_not_advance_smudge_source() {
+    fn rejected_stamps_advance_smudge_source_without_dirtying() {
         let mut queue = StampQueue::default();
         queue.begin_stroke(point(5.0, 5.0));
         assert!(!queue.queue_point(point(-20.0, -20.0), [0.0; 4], 100, 100));
-        assert!(queue.queue_point(point(30.0, 30.0), [0.0; 4], 100, 100));
-        assert_eq!(queue.pending[0].source_center, [5.0, 5.0]);
+        assert!(queue.pending.is_empty());
+        assert_eq!(queue.dirty_rect, None);
+
+        assert!(queue.queue_point(point(5.0, 5.0), [0.0; 4], 100, 100));
+        assert_eq!(queue.pending[0].source_center, [-20.0, -20.0]);
+    }
+
+    #[test]
+    fn reentry_uses_the_previous_generated_center() {
+        let mut queue = StampQueue::default();
+        queue.begin_stroke(point(5.0, 5.0));
+        assert!(!queue.queue_point(point(-20.0, 5.0), [0.0; 4], 100, 100));
+        assert!(queue.queue_point(point(-9.0, 5.0), [0.0; 4], 100, 100));
+
+        assert_eq!(queue.pending[0].source_center, [-20.0, 5.0]);
     }
 
     #[test]

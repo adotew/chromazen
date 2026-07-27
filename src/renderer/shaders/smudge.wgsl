@@ -1,3 +1,6 @@
+// Prevent full-pressure input from cloning the previous dab exactly.
+const SMUDGE_MAX_ADVECTION: f32 = 0.35;
+
 @group(0) @binding(0) var brushSampler: sampler;
 @group(0) @binding(1) var brushStamp: texture_2d<f32>;
 @group(0) @binding(2) var<storage, read> brushes: array<Brush>;
@@ -21,9 +24,8 @@ struct Brush {
 struct VertexOut {
   @builtin(position) position: vec4f,
   @location(0) uv: vec2f,
-  @location(1) targetPos: vec2f,
-  @location(2) sourcePos: vec2f,
-  @location(3) strength: f32,
+  @location(1) sourcePos: vec2f,
+  @location(2) strength: f32,
 };
 
 fn quadCorner(vertexIndex: u32) -> vec2f {
@@ -57,23 +59,23 @@ fn vs(
     1.0,
   );
   out.uv = corner * 0.5 + vec2f(0.5, 0.5);
-  out.targetPos = paintPos;
   out.sourcePos = brush.sourceCenter + offset;
   out.strength = brush.color.a;
   return out;
 }
 
 fn sampleSource(pos: vec2f) -> vec4f {
-  let clampedPos = clamp(pos, vec2f(0.0), paint.dims - vec2f(1.0));
-  let uv = (clampedPos + vec2f(0.5)) / paint.dims;
-  return textureSampleLevel(sourceTexture, brushSampler, uv, 0.0);
+  // Varying paint positions are already at texel centers (n + 0.5).
+  let clampedPos = clamp(pos, vec2f(0.5), paint.dims - vec2f(0.5));
+  return textureSampleLevel(sourceTexture, brushSampler, clampedPos / paint.dims, 0.0);
 }
 
 @fragment
 fn fs(in: VertexOut) -> @location(0) vec4f {
   let mask = textureSample(brushStamp, brushSampler, in.uv).a;
-  let strength = clamp(in.strength * mask, 0.0, 1.0);
-  let targetColor = sampleSource(in.targetPos);
+  let base = clamp(in.strength * mask, 0.0, 1.0);
+  let strength = SMUDGE_MAX_ADVECTION * base;
+  let targetColor = textureLoad(sourceTexture, vec2i(in.position.xy), 0);
   let draggedColor = sampleSource(in.sourcePos);
   return mix(targetColor, draggedColor, strength);
 }
