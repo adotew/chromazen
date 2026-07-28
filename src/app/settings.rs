@@ -1,14 +1,22 @@
-use crate::config::{
-    AppConfig, BrushCatalog, ConfigError, ConfigStore, CurrentBrushConfig, LoadedBrushPreset,
+use crate::{
+    config::{
+        AppConfig, BrushCatalog, ConfigError, ConfigStore, CurrentBrushConfig, LoadedBrushPreset,
+    },
+    paint::PaintTool,
 };
 
 pub(super) enum SettingsCommand {
     Save {
         brush: CurrentBrushConfig,
-        active_brush: String,
+        tool_brushes: [String; 3],
+        tool_sizes: [f32; 3],
     },
-    SwitchBrush(String),
-    ReloadFromDisk,
+    SwitchBrush {
+        tool: PaintTool,
+        id: String,
+        reset_size: bool,
+    },
+    ReloadFromDisk(PaintTool),
     OpenConfigDirectory,
 }
 
@@ -19,23 +27,34 @@ pub(super) enum SettingsEffect {
 
 pub(super) struct PendingBrushChange {
     pub(super) brush: LoadedBrushPreset,
+    pub(super) tool: PaintTool,
+    pub(super) reset_size: bool,
     reloaded_config: Option<AppConfig>,
     warning: Option<String>,
 }
 
 impl PendingBrushChange {
-    fn switch(brush: LoadedBrushPreset) -> Self {
+    fn switch(tool: PaintTool, brush: LoadedBrushPreset, reset_size: bool) -> Self {
         Self {
             brush,
+            tool,
+            reset_size,
             reloaded_config: None,
             warning: None,
         }
     }
 
-    fn reload(mut config: AppConfig, brush: LoadedBrushPreset, warning: Option<String>) -> Self {
-        normalize_active_brush(&mut config, &brush);
+    fn reload(
+        mut config: AppConfig,
+        tool: PaintTool,
+        brush: LoadedBrushPreset,
+        warning: Option<String>,
+    ) -> Self {
+        config.set_brush_for_tool(tool, brush.id.clone());
         Self {
             brush,
+            tool,
+            reset_size: false,
             reloaded_config: Some(config),
             warning,
         }
@@ -137,10 +156,16 @@ impl SettingsController {
         match command {
             SettingsCommand::Save {
                 brush,
-                active_brush,
+                tool_brushes,
+                tool_sizes,
             } => {
                 self.config.brush = brush;
-                self.config.active_brush = active_brush;
+                self.config.brush.size = tool_sizes[0];
+                self.config.eraser_size = tool_sizes[1];
+                self.config.smudge_size = tool_sizes[2];
+                self.config.active_brush = tool_brushes[0].clone();
+                self.config.eraser_brush = tool_brushes[1].clone();
+                self.config.smudge_brush = tool_brushes[2].clone();
                 let Some(store) = &self.store else {
                     return Some(SettingsEffect::Error(
                         "The configuration directory is unavailable".to_owned(),
@@ -151,30 +176,36 @@ impl SettingsController {
                     Err(error) => Some(command_error("failed to save settings", error)),
                 }
             }
-            SettingsCommand::SwitchBrush(id) => {
+            SettingsCommand::SwitchBrush {
+                tool,
+                id,
+                reset_size,
+            } => {
                 let result = self.store().and_then(|store| store.load_brush(&id));
                 match result {
                     Ok(brush) => {
-                        self.pending_brush_change = Some(PendingBrushChange::switch(brush));
+                        self.pending_brush_change =
+                            Some(PendingBrushChange::switch(tool, brush, reset_size));
                         None
                     }
                     Err(error) => Some(command_error("brush preset action failed", error)),
                 }
             }
-            SettingsCommand::ReloadFromDisk => {
+            SettingsCommand::ReloadFromDisk(tool) => {
                 let result = self.store().and_then(|store| {
                     store.load_app_config().map(|config| {
-                        let (brush, warning) = match store.load_brush(&config.active_brush) {
+                        let selected = config.brush_for_tool(tool);
+                        let (brush, warning) = match store.load_brush(selected) {
                             Ok(brush) => (brush, None),
                             Err(error) => {
                                 let warning = format!(
                                     "Could not reload brush '{}': {error}. Using bundled Charcoal instead.",
-                                    config.active_brush
+                                    selected
                                 );
                                 (LoadedBrushPreset::bundled_charcoal(), Some(warning))
                             }
                         };
-                        PendingBrushChange::reload(config, brush, warning)
+                        PendingBrushChange::reload(config, tool, brush, warning)
                     })
                 });
                 match result {
@@ -209,6 +240,8 @@ impl SettingsController {
     ) -> CompletedBrushChange {
         let PendingBrushChange {
             brush,
+            tool,
+            reset_size: _,
             reloaded_config,
             warning,
         } = change;
@@ -229,7 +262,7 @@ impl SettingsController {
         if let Some(config) = reloaded_config {
             self.config = config;
         } else {
-            self.config.active_brush.clone_from(&brush.id);
+            self.config.set_brush_for_tool(tool, brush.id.clone());
         }
         self.active_brush = brush;
 
@@ -274,16 +307,18 @@ mod tests {
 
         let change = PendingBrushChange::reload(
             config,
+            PaintTool::Brush,
             LoadedBrushPreset::bundled_charcoal(),
             Some("missing brush".to_owned()),
         );
+        let brush_id = change.brush.id.clone();
 
         assert_eq!(
             change
                 .reloaded_config
                 .expect("reloaded config")
                 .active_brush,
-            change.brush.id
+            brush_id
         );
     }
 }

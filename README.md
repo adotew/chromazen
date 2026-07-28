@@ -64,9 +64,10 @@ brushes/pencil/
 └── tip.png
 ```
 
-Set `active_brush = "pencil"` in `config.toml`. The preset's `stamp` path is
-resolved relative to `brush.toml`; invalid presets fall back to the bundled
-charcoal brush.
+Set `active_brush = "pencil"` in `config.toml` for the Brush tool. The Eraser
+and Smudge selections are stored as `eraser_brush` and `smudge_brush`. The
+preset's `stamp` path is resolved relative to `brush.toml`; invalid presets
+fall back to the bundled charcoal brush.
 
 Controls:
 
@@ -76,6 +77,8 @@ Controls:
   lower layers and the Background
 - `S`: select Smudge; smudging drags colors already on the selected layer
 - `Shift-Tab`: cycle through Brush, Eraser, and Smudge
+- Click an inactive tool button to select it; click the active tool again to
+  open the shared floating brush library. Each tool remembers its own brush.
 - `Tab`: show or hide the sidebar
 - Hold `Shift` and left-drag vertically on the canvas to resize the brush; drag
   up to increase its size or down to decrease it

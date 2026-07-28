@@ -48,7 +48,8 @@ pub struct GuiLayer {
     pub renderer: EguiRenderer,
     pub brush: BrushSettings,
     pub stroke_smoothing: StrokeSmoothingOptions,
-    active_brush: String,
+    tool_brushes: [String; 3],
+    tool_sizes: [f32; 3],
     brushes: Vec<crate::config::BrushSummary>,
     size_range: std::ops::RangeInclusive<f32>,
     default_size: f32,
@@ -120,7 +121,16 @@ impl GuiLayer {
             stroke_smoothing: StrokeSmoothingOptions {
                 strength: config.smoothing.strength,
             },
-            active_brush: brush_preset.id.clone(),
+            tool_brushes: [
+                brush_preset.id.clone(),
+                config.eraser_brush.clone(),
+                config.smudge_brush.clone(),
+            ],
+            tool_sizes: [
+                config.size_for_tool(PaintTool::Brush),
+                config.size_for_tool(PaintTool::Eraser),
+                config.size_for_tool(PaintTool::Smudge),
+            ],
             brushes: catalog.brushes,
             size_range: preset.size.min..=preset.size.max,
             default_size: preset.size.default,
@@ -239,40 +249,85 @@ impl GuiLayer {
     fn show_brush_controls(&mut self, ui: &mut egui::Ui) {
         color_picker::show(ui, &mut self.brush.color);
         ui.add_space(8.0);
+    }
 
-        let active_brush = self
-            .brushes
-            .iter()
-            .find(|brush| brush.id == self.active_brush);
-        let selected_name =
-            active_brush.map_or(self.active_brush.as_str(), |brush| brush.name.as_str());
-        let selected_preview = self.brush_preview_texture(&self.active_brush);
-        let brush_button = show_brush_row(ui, selected_name, selected_preview, false);
-        let brush_popup_id = egui::Popup::default_response_id(&brush_button);
-        egui::Popup::menu(&brush_button)
-            .width(brush_button.rect.width())
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-            .show(|ui| {
-                egui::ScrollArea::vertical()
-                    .max_height(320.0)
-                    .show(ui, |ui| {
-                        for brush in &self.brushes {
-                            let selected = brush.id == self.active_brush;
-                            let preview = self.brush_preview_texture(&brush.id);
-                            if show_brush_row(ui, &brush.name, preview, selected).clicked() {
-                                if !selected {
-                                    self.commands
-                                        .push(AppCommand::SwitchBrush(brush.id.clone()));
+    fn show_tool_rail(&mut self, ui: &mut egui::Ui, active_tool: PaintTool) -> Option<PaintTool> {
+        const RAIL_WIDTH: f32 = 42.0;
+        const TOOL_HEIGHT: f32 = 40.0;
+        const VERTICAL_PADDING: f32 = 6.0;
+
+        let tools = [PaintTool::Brush, PaintTool::Eraser, PaintTool::Smudge];
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(
+                RAIL_WIDTH,
+                TOOL_HEIGHT * tools.len() as f32 + 2.0 * VERTICAL_PADDING,
+            ),
+            egui::Sense::hover(),
+        );
+        let separator_width = ui.visuals().widgets.noninteractive.bg_stroke.width;
+        let panel_rect = rect.with_max_x(rect.right() + separator_width);
+        ui.painter().rect_filled(
+            panel_rect,
+            egui::CornerRadius {
+                nw: 0,
+                ne: 0,
+                sw: 12,
+                se: 0,
+            },
+            ui.visuals().panel_fill,
+        );
+        let body = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), rect.top() + VERTICAL_PADDING),
+            egui::pos2(rect.right(), rect.bottom() - VERTICAL_PADDING),
+        );
+
+        let mut selected_tool = None;
+        for (index, tool) in tools.into_iter().enumerate() {
+            let tool_rect = egui::Rect::from_min_size(
+                egui::pos2(body.left(), body.top() + index as f32 * TOOL_HEIGHT),
+                egui::vec2(RAIL_WIDTH, TOOL_HEIGHT),
+            );
+            let response = show_tool_button(ui, tool_rect, tool, tool == active_tool);
+            if tool != active_tool {
+                if response.clicked() {
+                    egui::Popup::close_all(ui.ctx());
+                    selected_tool = Some(tool);
+                }
+                continue;
+            }
+
+            let popup_id = egui::Popup::default_response_id(&response);
+            let selected_brush = self.tool_brushes[tool_index(tool)].clone();
+            let brushes = self.brushes.clone();
+            egui::Popup::menu(&response)
+                .align(egui::RectAlign::LEFT_START)
+                .width(300.0)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(360.0)
+                        .show(ui, |ui| {
+                            for brush in &brushes {
+                                let selected = brush.id == selected_brush;
+                                let preview = self.brush_preview_texture(&brush.id);
+                                if show_brush_row(ui, &brush.name, preview, selected).clicked() {
+                                    if !selected {
+                                        self.commands.push(AppCommand::SwitchBrush {
+                                            tool,
+                                            id: brush.id.clone(),
+                                        });
+                                    }
+                                    ui.close();
                                 }
-                                ui.close();
+                                ui.add_space(4.0);
                             }
-                            ui.add_space(4.0);
-                        }
-                    });
-            });
-        if egui::Popup::is_id_open(ui.ctx(), brush_popup_id) {
-            self.load_next_brush_preview();
+                        });
+                });
+            if egui::Popup::is_id_open(ui.ctx(), popup_id) {
+                self.load_next_brush_preview();
+            }
         }
+        selected_tool
     }
 
     pub fn run_editor(&mut self, window: &Window, state: EditorUiState<'_>) -> egui::FullOutput {
@@ -284,7 +339,8 @@ impl GuiLayer {
             save_status,
             pending_navigation,
         } = state;
-        self.load_brush_preview(&self.active_brush.clone());
+        self.tool_sizes[tool_index(tool)] = self.brush.size;
+        self.load_brush_preview(&self.tool_brushes[tool_index(tool)].clone());
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
 
@@ -425,7 +481,7 @@ impl GuiLayer {
                     egui::vec2(-SIDEBAR_WIDTH * sidebar_progress, 0.0),
                 )
                 .order(egui::Order::Foreground)
-                .show(ui.ctx(), |ui| show_tool_rail(ui, tool))
+                .show(ui.ctx(), |ui| self.show_tool_rail(ui, tool))
                 .inner;
             if let Some(tool) = selected_tool {
                 self.commands.push(AppCommand::SelectTool(tool));
@@ -561,8 +617,18 @@ impl GuiLayer {
         self.size_range.clone()
     }
 
-    pub(crate) fn settings_snapshot(&self) -> (CurrentBrushConfig, String) {
-        (self.current_brush_config(), self.active_brush.clone())
+    pub(crate) fn settings_snapshot(&self) -> (CurrentBrushConfig, [String; 3], [f32; 3]) {
+        let mut brush = self.current_brush_config();
+        brush.size = self.tool_sizes[tool_index(PaintTool::Brush)];
+        (brush, self.tool_brushes.clone(), self.tool_sizes)
+    }
+
+    pub(crate) fn brush_for_tool(&self, tool: PaintTool) -> &str {
+        &self.tool_brushes[tool_index(tool)]
+    }
+
+    pub(crate) fn remember_tool_size(&mut self, tool: PaintTool) {
+        self.tool_sizes[tool_index(tool)] = self.brush.size;
     }
 
     pub(crate) fn reset_brush(&mut self) {
@@ -581,12 +647,15 @@ impl GuiLayer {
 
     pub(crate) fn apply_brush_preset(
         &mut self,
+        tool: PaintTool,
         loaded: &LoadedBrushPreset,
         catalog: BrushCatalog,
         reloaded: bool,
+        reset_size: bool,
     ) {
         let preset = &loaded.preset;
-        self.active_brush.clone_from(&loaded.id);
+        let index = tool_index(tool);
+        self.tool_brushes[index].clone_from(&loaded.id);
         if reloaded {
             self.brush_previews.clear();
         } else {
@@ -597,7 +666,12 @@ impl GuiLayer {
         self.brushes = catalog.brushes;
         self.size_range = preset.size.min..=preset.size.max;
         self.default_size = preset.size.default;
-        self.brush.size = self.default_size;
+        if reset_size {
+            self.tool_sizes[index] = self.default_size;
+        } else {
+            self.tool_sizes[index] = self.tool_sizes[index].clamp(preset.size.min, preset.size.max);
+        }
+        self.brush.size = self.tool_sizes[index];
         self.brush.pressure = PressureSettings {
             min_size: preset.pressure.min_size,
             min_opacity: preset.pressure.min_opacity,
@@ -609,11 +683,19 @@ impl GuiLayer {
         };
     }
 
-    pub(crate) fn settings_reloaded(&mut self, config: &AppConfig) {
+    pub(crate) fn settings_reloaded(&mut self, config: &AppConfig, active_tool: PaintTool) {
+        self.tool_brushes = [
+            config.active_brush.clone(),
+            config.eraser_brush.clone(),
+            config.smudge_brush.clone(),
+        ];
+        self.tool_sizes = [
+            config.size_for_tool(PaintTool::Brush),
+            config.size_for_tool(PaintTool::Eraser),
+            config.size_for_tool(PaintTool::Smudge),
+        ];
         self.brush.color = brush_color(&config.brush);
-        self.brush.size = config
-            .brush
-            .size
+        self.brush.size = self.tool_sizes[tool_index(active_tool)]
             .clamp(*self.size_range.start(), *self.size_range.end());
         self.stroke_smoothing.strength = config.smoothing.strength;
         self.settings_message = None;
@@ -889,49 +971,6 @@ fn show_brush_resize_label(ui: &egui::Ui, overlay: BrushResizeLabel, brush_size:
     painter.text(position, align, text, font, egui::Color32::WHITE);
 }
 
-fn show_tool_rail(ui: &mut egui::Ui, active_tool: PaintTool) -> Option<PaintTool> {
-    const RAIL_WIDTH: f32 = 42.0;
-    const TOOL_HEIGHT: f32 = 40.0;
-    const VERTICAL_PADDING: f32 = 6.0;
-
-    let tools = [PaintTool::Brush, PaintTool::Eraser, PaintTool::Smudge];
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(
-            RAIL_WIDTH,
-            TOOL_HEIGHT * tools.len() as f32 + 2.0 * VERTICAL_PADDING,
-        ),
-        egui::Sense::hover(),
-    );
-    let separator_width = ui.visuals().widgets.noninteractive.bg_stroke.width;
-    let panel_rect = rect.with_max_x(rect.right() + separator_width);
-    ui.painter().rect_filled(
-        panel_rect,
-        egui::CornerRadius {
-            nw: 0,
-            ne: 0,
-            sw: 12,
-            se: 0,
-        },
-        ui.visuals().panel_fill,
-    );
-    let body = egui::Rect::from_min_max(
-        egui::pos2(rect.left(), rect.top() + VERTICAL_PADDING),
-        egui::pos2(rect.right(), rect.bottom() - VERTICAL_PADDING),
-    );
-
-    let mut selected = None;
-    for (index, tool) in tools.into_iter().enumerate() {
-        let tool_rect = egui::Rect::from_min_size(
-            egui::pos2(body.left(), body.top() + index as f32 * TOOL_HEIGHT),
-            egui::vec2(RAIL_WIDTH, TOOL_HEIGHT),
-        );
-        if show_tool_button(ui, tool_rect, tool, tool == active_tool).clicked() {
-            selected = Some(tool);
-        }
-    }
-    selected
-}
-
 fn show_tool_button(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -976,6 +1015,14 @@ fn show_tool_button(
         .paint_at(ui, icon_rect);
 
     response.on_hover_text(format!("{label} ({shortcut})"))
+}
+
+fn tool_index(tool: PaintTool) -> usize {
+    match tool {
+        PaintTool::Brush => 0,
+        PaintTool::Eraser => 1,
+        PaintTool::Smudge => 2,
+    }
 }
 
 fn install_fonts(context: &egui::Context) {

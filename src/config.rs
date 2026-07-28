@@ -9,6 +9,8 @@ use atomic_write_file::AtomicWriteFile;
 use brush::{DEFAULT_BRUSH_ID, SKETCH_ID, discover_user_brushes, load_user_brush};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+
+use crate::paint::PaintTool;
 mod brush;
 
 pub(crate) use brush::{BrushCatalog, BrushSummary, LoadedBrushPreset};
@@ -21,7 +23,12 @@ const CURRENT_SCHEMA_VERSION: u32 = 1;
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct AppConfig {
     pub(crate) schema_version: u32,
+    /// Brush-tool preset. Kept under its original name for config compatibility.
     pub(crate) active_brush: String,
+    pub(crate) eraser_brush: String,
+    pub(crate) smudge_brush: String,
+    pub(crate) eraser_size: f32,
+    pub(crate) smudge_size: f32,
     pub(crate) brush: CurrentBrushConfig,
     pub(crate) smoothing: SmoothingConfig,
 }
@@ -31,6 +38,10 @@ impl Default for AppConfig {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
             active_brush: DEFAULT_BRUSH_ID.to_owned(),
+            eraser_brush: DEFAULT_BRUSH_ID.to_owned(),
+            smudge_brush: DEFAULT_BRUSH_ID.to_owned(),
+            eraser_size: CurrentBrushConfig::default().size,
+            smudge_size: CurrentBrushConfig::default().size,
             brush: CurrentBrushConfig::default(),
             smoothing: SmoothingConfig::default(),
         }
@@ -38,6 +49,30 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    pub(crate) fn brush_for_tool(&self, tool: PaintTool) -> &str {
+        match tool {
+            PaintTool::Brush => &self.active_brush,
+            PaintTool::Eraser => &self.eraser_brush,
+            PaintTool::Smudge => &self.smudge_brush,
+        }
+    }
+
+    pub(crate) fn set_brush_for_tool(&mut self, tool: PaintTool, id: String) {
+        match tool {
+            PaintTool::Brush => self.active_brush = id,
+            PaintTool::Eraser => self.eraser_brush = id,
+            PaintTool::Smudge => self.smudge_brush = id,
+        }
+    }
+
+    pub(crate) fn size_for_tool(&self, tool: PaintTool) -> f32 {
+        match tool {
+            PaintTool::Brush => self.brush.size,
+            PaintTool::Eraser => self.eraser_size,
+            PaintTool::Smudge => self.smudge_size,
+        }
+    }
+
     pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         if self.schema_version != CURRENT_SCHEMA_VERSION {
             return Err(ConfigError::new(format!(
@@ -45,10 +80,26 @@ impl AppConfig {
                 self.schema_version
             )));
         }
-        if self.active_brush.trim().is_empty() {
-            return Err(ConfigError::new("active_brush must not be empty"));
+        for (name, id) in [
+            ("active_brush", &self.active_brush),
+            ("eraser_brush", &self.eraser_brush),
+            ("smudge_brush", &self.smudge_brush),
+        ] {
+            if id.trim().is_empty() {
+                return Err(ConfigError::new(format!("{name} must not be empty")));
+            }
         }
         self.brush.validate()?;
+        for (name, size) in [
+            ("eraser_size", self.eraser_size),
+            ("smudge_size", self.smudge_size),
+        ] {
+            if !size.is_finite() || size <= 0.0 {
+                return Err(ConfigError::new(format!(
+                    "{name} must be finite and greater than zero"
+                )));
+            }
+        }
         self.smoothing.validate()
     }
 }
@@ -264,6 +315,17 @@ mod tests {
         assert_eq!(config.brush.color, CurrentBrushConfig::default().color);
         assert_eq!(config.active_brush, "charcoal");
         assert_eq!(config.smoothing, SmoothingConfig::default());
+    }
+
+    #[test]
+    fn tool_brushes_are_selected_independently() {
+        let mut config = AppConfig::default();
+        config.set_brush_for_tool(PaintTool::Eraser, "hard-round".to_owned());
+        config.set_brush_for_tool(PaintTool::Smudge, "soft-blend".to_owned());
+
+        assert_eq!(config.brush_for_tool(PaintTool::Brush), "charcoal");
+        assert_eq!(config.brush_for_tool(PaintTool::Eraser), "hard-round");
+        assert_eq!(config.brush_for_tool(PaintTool::Smudge), "soft-blend");
     }
 
     #[test]

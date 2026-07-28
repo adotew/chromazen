@@ -151,7 +151,16 @@ impl ApplicationHandler<AppEvent> for App {
                             gui.toggle_sidebar();
                             true
                         }
-                        KeyboardShortcut::CycleTool => self.input.cycle_tool(),
+                        KeyboardShortcut::CycleTool => {
+                            gui.remember_tool_size(self.input.tool());
+                            if self.input.cycle_tool() {
+                                self.pending_commands
+                                    .push(AppCommand::SelectTool(self.input.tool()));
+                                true
+                            } else {
+                                false
+                            }
+                        }
                     };
                     if changed {
                         self.next_repaint = None;
@@ -188,6 +197,7 @@ impl ApplicationHandler<AppEvent> for App {
                     && let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_mut())
                 {
                     let brush_size_range = gui.brush_size_range();
+                    let previous_tool = self.input.tool();
                     needs_redraw |= self.input.handle_event(
                         &event,
                         paint,
@@ -196,6 +206,11 @@ impl ApplicationHandler<AppEvent> for App {
                         gui.stroke_smoothing,
                         &self.pressure_state,
                     );
+                    if self.input.tool() != previous_tool {
+                        gui.remember_tool_size(previous_tool);
+                        self.pending_commands
+                            .push(AppCommand::SelectTool(self.input.tool()));
+                    }
                 }
 
                 match event {
@@ -424,6 +439,20 @@ impl App {
                 }
                 AppCommand::SelectTool(tool) => {
                     self.input.select_tool(tool);
+                    if self.input.tool() != tool {
+                        continue;
+                    }
+                    let id = self
+                        .gui
+                        .as_ref()
+                        .map(|gui| gui.brush_for_tool(tool).to_owned());
+                    if let Some(id) = id {
+                        self.process_settings_commands(vec![SettingsCommand::SwitchBrush {
+                            tool,
+                            id,
+                            reset_size: false,
+                        }]);
+                    }
                 }
                 AppCommand::SelectLayer(id) => {
                     if let Some(paint) = self.paint.as_mut() {
@@ -450,22 +479,29 @@ impl App {
                         paint.commit_background_color(before, after);
                     }
                 }
-                AppCommand::SwitchBrush(id) => {
-                    self.process_settings_commands(vec![SettingsCommand::SwitchBrush(id)]);
+                AppCommand::SwitchBrush { tool, id } => {
+                    self.process_settings_commands(vec![SettingsCommand::SwitchBrush {
+                        tool,
+                        id,
+                        reset_size: true,
+                    }]);
                 }
                 AppCommand::SaveSettings => {
-                    let Some((brush, active_brush)) =
+                    let Some((brush, tool_brushes, tool_sizes)) =
                         self.gui.as_ref().map(GuiLayer::settings_snapshot)
                     else {
                         continue;
                     };
                     self.process_settings_commands(vec![SettingsCommand::Save {
                         brush,
-                        active_brush,
+                        tool_brushes,
+                        tool_sizes,
                     }]);
                 }
                 AppCommand::ReloadConfiguration => {
-                    self.process_settings_commands(vec![SettingsCommand::ReloadFromDisk]);
+                    self.process_settings_commands(vec![SettingsCommand::ReloadFromDisk(
+                        self.input.tool(),
+                    )]);
                 }
                 AppCommand::ResetBrush => {
                     if let Some(gui) = self.gui.as_mut() {
@@ -764,6 +800,8 @@ impl App {
             self.settings.restore_pending_brush_change(change);
             return false;
         };
+        let tool = change.tool;
+        let reset_size = change.reset_size;
         match paint.try_set_brush_preset(&change.brush) {
             Ok(false) => {
                 self.settings.restore_pending_brush_change(change);
@@ -775,12 +813,14 @@ impl App {
                     return true;
                 };
                 gui.apply_brush_preset(
+                    tool,
                     self.settings.active_brush(),
                     completed.catalog,
                     completed.reloaded,
+                    reset_size,
                 );
                 if completed.reloaded {
-                    gui.settings_reloaded(self.settings.config());
+                    gui.settings_reloaded(self.settings.config(), tool);
                 }
                 if !completed.warnings.is_empty() {
                     gui.show_error(completed.warnings.join("\n"));

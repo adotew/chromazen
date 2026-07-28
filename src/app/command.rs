@@ -10,7 +10,7 @@ pub(super) enum AppCommand {
     DeleteSelectedLayer,
     SetBackgroundColor([u8; 3]),
     CommitBackgroundColor { before: [u8; 3], after: [u8; 3] },
-    SwitchBrush(String),
+    SwitchBrush { tool: PaintTool, id: String },
     SaveSettings,
     ReloadConfiguration,
     ResetBrush,
