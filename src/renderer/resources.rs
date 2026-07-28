@@ -37,6 +37,7 @@ pub(crate) struct RenderResources {
     pub(crate) cursor_pipeline: wgpu::RenderPipeline,
     pub(crate) background_pipeline: wgpu::RenderPipeline,
     pub(crate) layer_pipeline: wgpu::RenderPipeline,
+    pub(crate) merge_pipeline: wgpu::RenderPipeline,
     pub(crate) brush_preview_pipeline: wgpu::RenderPipeline,
     pub(crate) eraser_preview_pipeline: wgpu::RenderPipeline,
     pub(crate) layer_thumbnail_pipeline: wgpu::RenderPipeline,
@@ -478,6 +479,10 @@ impl RenderResources {
             label: Some("blit shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blit.wgsl").into()),
         });
+        let merge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("layer merge shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/merge.wgsl").into()),
+        });
         let stroke_composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("stroke composite shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/stroke_composite.wgsl").into()),
@@ -629,6 +634,34 @@ impl RenderResources {
         };
         let background_pipeline = create_blit_pipeline("background pipeline", "fs_background");
         let layer_pipeline = create_blit_pipeline("layer pipeline", "fs_layer");
+        let merge_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("layer merge pipeline"),
+            layout: Some(&blit_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &merge_shader,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &merge_shader,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: DOCUMENT_FORMAT,
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
         let create_preview_pipeline = |label, entry_point| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
@@ -778,6 +811,7 @@ impl RenderResources {
             cursor_pipeline,
             background_pipeline,
             layer_pipeline,
+            merge_pipeline,
             brush_preview_pipeline,
             eraser_preview_pipeline,
             layer_thumbnail_pipeline,

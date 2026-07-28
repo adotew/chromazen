@@ -103,6 +103,16 @@ enum HistoryAction {
         before: usize,
         after: usize,
     },
+    MergeDown {
+        upper_id: LayerId,
+        lower_id: LayerId,
+        lower_index: usize,
+        selection_before: LayerId,
+        detached_upper: Option<Box<PaintLayer>>,
+        detached_lower: Option<Box<PaintLayer>>,
+        detached_merged: Option<Box<PaintLayer>>,
+        bytes: u64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,13 +126,17 @@ pub(crate) enum StructureEffect {
     MetadataOnly,
     LayerAdded(LayerId),
     LayerRemoved(LayerId),
+    LayersMerged { result: LayerId, removed: LayerId },
+    MergeUndone { lower: LayerId, upper: LayerId },
 }
 
 impl HistoryAction {
     fn bytes(&self) -> u64 {
         match self {
             Self::Stroke(entry) => entry.bytes,
-            Self::AddLayer { bytes, .. } | Self::DeleteLayer { bytes, .. } => *bytes,
+            Self::AddLayer { bytes, .. }
+            | Self::DeleteLayer { bytes, .. }
+            | Self::MergeDown { bytes, .. } => *bytes,
             Self::BackgroundColor { .. }
             | Self::RenameLayer { .. }
             | Self::LayerVisibility { .. }
@@ -140,7 +154,8 @@ impl HistoryAction {
             | Self::RenameLayer { .. }
             | Self::LayerVisibility { .. }
             | Self::LayerOpacity { .. }
-            | Self::MoveLayer { .. } => HistoryTarget::Structure,
+            | Self::MoveLayer { .. }
+            | Self::MergeDown { .. } => HistoryTarget::Structure,
         }
     }
 }
@@ -310,6 +325,31 @@ impl PaintHistory {
         self.evict_to_budget();
     }
 
+    pub(crate) fn record_merge_down(
+        &mut self,
+        upper: PaintLayer,
+        lower: PaintLayer,
+        lower_index: usize,
+        selection_before: LayerId,
+        layer_bytes: u64,
+    ) {
+        let upper_id = upper.id;
+        let lower_id = lower.id;
+        self.discard_redo();
+        self.actions.push(HistoryAction::MergeDown {
+            upper_id,
+            lower_id,
+            lower_index,
+            selection_before,
+            detached_upper: Some(Box::new(upper)),
+            detached_lower: Some(Box::new(lower)),
+            detached_merged: None,
+            bytes: layer_bytes.saturating_mul(2),
+        });
+        self.cursor = self.actions.len();
+        self.evict_to_budget();
+    }
+
     pub(crate) fn record_background_color(&mut self, before: [f32; 4], after: [f32; 4]) {
         if before == after {
             return;
@@ -408,6 +448,7 @@ impl PaintHistory {
             return None;
         }
         self.cursor -= 1;
+        self.mirrored_layer = None;
         let effect = match &mut self.actions[self.cursor] {
             HistoryAction::AddLayer {
                 layer_id,
@@ -463,6 +504,31 @@ impl PaintHistory {
                 move_layer_to_index(layers, *layer_id, *before);
                 StructureEffect::MetadataOnly
             }
+            HistoryAction::MergeDown {
+                upper_id,
+                lower_id,
+                lower_index,
+                selection_before,
+                detached_upper,
+                detached_lower,
+                detached_merged,
+                ..
+            } => {
+                let merged_index = layers
+                    .iter()
+                    .position(|layer| layer.id == *lower_id)
+                    .expect("merged layer must exist before undo");
+                *detached_merged = Some(Box::new(layers.remove(merged_index)));
+                let lower = *detached_lower.take().expect("lower layer must be retained");
+                let upper = *detached_upper.take().expect("upper layer must be retained");
+                layers.insert((*lower_index).min(layers.len()), lower);
+                layers.insert((*lower_index + 1).min(layers.len()), upper);
+                *selection = *selection_before;
+                StructureEffect::MergeUndone {
+                    lower: *lower_id,
+                    upper: *upper_id,
+                }
+            }
             HistoryAction::Stroke(_) => unreachable!(),
         };
         Some(effect)
@@ -477,6 +543,7 @@ impl PaintHistory {
         if self.redo_target() != Some(HistoryTarget::Structure) {
             return None;
         }
+        self.mirrored_layer = None;
         let effect = match &mut self.actions[self.cursor] {
             HistoryAction::AddLayer {
                 index,
@@ -533,6 +600,35 @@ impl PaintHistory {
             } => {
                 move_layer_to_index(layers, *layer_id, *after);
                 StructureEffect::MetadataOnly
+            }
+            HistoryAction::MergeDown {
+                upper_id,
+                lower_id,
+                lower_index,
+                detached_upper,
+                detached_lower,
+                detached_merged,
+                ..
+            } => {
+                let upper_index = layers
+                    .iter()
+                    .position(|layer| layer.id == *upper_id)
+                    .expect("restored upper layer must exist before redo");
+                *detached_upper = Some(Box::new(layers.remove(upper_index)));
+                let current_lower_index = layers
+                    .iter()
+                    .position(|layer| layer.id == *lower_id)
+                    .expect("restored lower layer must exist before redo");
+                *detached_lower = Some(Box::new(layers.remove(current_lower_index)));
+                let merged = *detached_merged
+                    .take()
+                    .expect("merged layer must be retained");
+                layers.insert((*lower_index).min(layers.len()), merged);
+                *selection = *lower_id;
+                StructureEffect::LayersMerged {
+                    result: *lower_id,
+                    removed: *upper_id,
+                }
             }
             HistoryAction::Stroke(_) => unreachable!(),
         };

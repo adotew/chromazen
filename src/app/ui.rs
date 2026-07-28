@@ -15,7 +15,7 @@ use crate::{
     paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings, StrokeSmoothingOptions},
     renderer::{
         CanvasSizeConstraints, DEFAULT_CANVAS_SIZE, DropEdge, LayerId, LayerResourceId,
-        LayerSnapshot, PaintRenderer,
+        LayerSnapshot, PaintRenderer, merge_down_target_index,
     },
 };
 
@@ -555,9 +555,29 @@ impl GuiLayer {
                                     }
 
                                     let mut start_rename = false;
+                                    let layer_index = layers
+                                        .layers
+                                        .iter()
+                                        .position(|candidate| candidate.id == layer.id)
+                                        .expect("displayed layer must exist in snapshot");
+                                    let can_merge_down = layer.visible
+                                        && merge_down_target_index(layer_index).is_some_and(
+                                            |lower_index| layers.layers[lower_index].visible,
+                                        );
                                     row.row.context_menu(|ui| {
                                         if ui.button("Rename").clicked() {
                                             start_rename = true;
+                                            ui.close();
+                                        }
+                                        if ui
+                                            .add_enabled(
+                                                can_merge_down,
+                                                egui::Button::new("Merge Down"),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.commands
+                                                .push(AppCommand::MergeLayerDown(layer.id));
                                             ui.close();
                                         }
                                     });

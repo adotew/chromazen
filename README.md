@@ -98,7 +98,7 @@ Controls:
 - Use the minimal egui panels for brush controls and adding, selecting, or
   deleting layers
 - Click a layer's eye to show or hide it; hidden selected layers cannot be painted on
-- Right-click a layer to rename it; adjust the selected layer's opacity beside the add and delete controls
+- Right-click a layer to rename it or merge a visible layer into the visible layer below; adjust the selected layer's opacity beside the add and delete controls
 - Drag a paint layer's grip to reorder it; the Background remains fixed at the bottom
 - Select **Background** in the Layers panel to change its color; it cannot be
   painted on or deleted

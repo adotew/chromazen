@@ -23,7 +23,9 @@ use self::{
     view::PaintView,
 };
 pub(crate) use self::{
-    layers::{DropEdge, LayerId, LayerInfo, LayerResourceId, LayerSnapshot},
+    layers::{
+        DropEdge, LayerId, LayerInfo, LayerResourceId, LayerSnapshot, merge_down_target_index,
+    },
     persistence::LayerReadback,
 };
 use crate::{
@@ -717,6 +719,90 @@ impl PaintRenderer {
         true
     }
 
+    pub(crate) fn can_merge_layer_down(&self, id: LayerId) -> bool {
+        self.can_replace_document()
+            && self
+                .layers
+                .iter()
+                .position(|layer| layer.id == id)
+                .and_then(merge_down_target_index)
+                .is_some_and(|lower_index| {
+                    self.layers[lower_index + 1].visible && self.layers[lower_index].visible
+                })
+    }
+
+    pub(crate) fn merge_layer_down(&mut self, id: LayerId) -> bool {
+        if !self.can_merge_layer_down(id) {
+            return false;
+        }
+        let upper_index = self
+            .layers
+            .iter()
+            .position(|layer| layer.id == id)
+            .expect("mergeable layer must exist");
+        let lower_index =
+            merge_down_target_index(upper_index).expect("mergeable layer must have a layer below");
+        let lower_id = self.layers[lower_index].id;
+        let lower_name = self.layers[lower_index].name.clone();
+        let selection_before = self.selection;
+        let resource_id = self.allocate_layer_resource_id();
+        let merged = self.resources.create_paint_layer(
+            self.gpu.device(),
+            self.document_size,
+            lower_id,
+            resource_id,
+            LayerProperties::new(lower_name),
+        );
+
+        let upper = self.layers.remove(upper_index);
+        let lower = self.layers.remove(lower_index);
+        let mut encoder =
+            self.gpu
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("layer merge encoder"),
+                });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("layer merge pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &merged.view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.resources.merge_pipeline);
+            pass.set_bind_group(0, &lower.blit_bind_group, &[]);
+            pass.draw(0..3, 0..1);
+            pass.set_bind_group(0, &upper.blit_bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+
+        self.layers.insert(lower_index, merged);
+        self.selection = lower_id;
+        self.history.record_merge_down(
+            upper,
+            lower,
+            lower_index,
+            selection_before,
+            self.layer_resource_byte_len(),
+        );
+        self.layer_versions.remove(&id);
+        let version = self.next_document_generation();
+        self.layer_versions.insert(lower_id, version);
+        self.metadata_version = version;
+        true
+    }
+
     pub(crate) fn can_delete_selected_layer(&self) -> bool {
         self.layers.len() > 1
             && self.active_stroke.is_none()
@@ -1392,6 +1478,14 @@ impl PaintRenderer {
             }
             StructureEffect::LayerRemoved(id) => {
                 self.layer_versions.remove(&id);
+            }
+            StructureEffect::LayersMerged { result, removed } => {
+                self.layer_versions.remove(&removed);
+                self.layer_versions.insert(result, version);
+            }
+            StructureEffect::MergeUndone { lower, upper } => {
+                self.layer_versions.insert(lower, version);
+                self.layer_versions.insert(upper, version);
             }
         }
         for layer in &self.layers {

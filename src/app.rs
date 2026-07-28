@@ -481,6 +481,11 @@ impl App {
                         paint.rename_layer(id, &name);
                     }
                 }
+                AppCommand::MergeLayerDown(id) => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.merge_layer_down(id);
+                    }
+                }
                 AppCommand::SetLayerVisibility { id, visible } => {
                     if let Some(paint) = self.paint.as_mut() {
                         paint.set_layer_visibility(id, visible);

@@ -64,6 +64,10 @@ pub(crate) fn insertion_index(selected_index: Option<usize>, layer_count: usize)
     selected_index.map_or(layer_count, |index| index + 1)
 }
 
+pub(crate) fn merge_down_target_index(layer_index: usize) -> Option<usize> {
+    layer_index.checked_sub(1)
+}
+
 pub(crate) fn replacement_index_after_delete(
     layer_count: usize,
     deleted_index: usize,
@@ -111,6 +115,13 @@ mod tests {
     fn inserts_above_selection() {
         assert_eq!(insertion_index(Some(1), 3), 2);
         assert_eq!(insertion_index(None, 3), 3);
+    }
+
+    #[test]
+    fn merge_down_targets_the_next_lower_internal_layer() {
+        assert_eq!(merge_down_target_index(2), Some(1));
+        assert_eq!(merge_down_target_index(1), Some(0));
+        assert_eq!(merge_down_target_index(0), None);
     }
 
     #[test]
