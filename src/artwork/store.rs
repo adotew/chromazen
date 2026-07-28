@@ -440,6 +440,7 @@ mod tests {
                     name: "Layer 1".to_owned(),
                     visible: true,
                     opacity: 100,
+                    clipped: false,
                     file: "layers/1.png".to_owned(),
                 }],
             },

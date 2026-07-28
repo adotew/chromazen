@@ -486,6 +486,11 @@ impl App {
                         paint.merge_layer_down(id);
                     }
                 }
+                AppCommand::SetLayerClipped { id, clipped } => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.set_layer_clipped(id, clipped);
+                    }
+                }
                 AppCommand::SetLayerVisibility { id, visible } => {
                     if let Some(paint) = self.paint.as_mut() {
                         paint.set_layer_visibility(id, visible);

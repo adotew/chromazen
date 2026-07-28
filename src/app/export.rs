@@ -68,6 +68,7 @@ impl ExportController {
                         image,
                         visible: metadata.visible,
                         opacity: metadata.opacity,
+                        clipped: metadata.clipped,
                     })
                     .collect();
                 let composite =

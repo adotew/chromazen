@@ -17,6 +17,10 @@ pub(super) enum AppCommand {
         name: String,
     },
     MergeLayerDown(LayerId),
+    SetLayerClipped {
+        id: LayerId,
+        clipped: bool,
+    },
     SetLayerVisibility {
         id: LayerId,
         visible: bool,

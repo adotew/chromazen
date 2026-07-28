@@ -423,7 +423,14 @@ impl GuiLayer {
                                         self.commands.push(AppCommand::AddLayer);
                                     }
 
-                                    let can_delete = layers.layers.len() > 1;
+                                    let selected_index = layers
+                                        .layers
+                                        .iter()
+                                        .position(|layer| layer.id == layers.selection);
+                                    let can_delete = layers.layers.len() > 1
+                                        && selected_index.is_some_and(|index| {
+                                            index != 0 || !layers.layers[1].clipped
+                                        });
                                     let delete_icon = egui::Image::new(egui::include_image!(
                                         "../../assets/icons/trash-2.svg"
                                     ))
@@ -499,10 +506,16 @@ impl GuiLayer {
                                         .layer_name_edit
                                         .as_ref()
                                         .is_some_and(|edit| edit.id == layer.id);
+                                    let clipped_name =
+                                        layer.clipped.then(|| format!("↳ {}", layer.name));
                                     let row = show_layer_row(
                                         ui,
                                         LayerRow {
-                                            name: if renaming { "" } else { &layer.name },
+                                            name: if renaming {
+                                                ""
+                                            } else {
+                                                clipped_name.as_deref().unwrap_or(&layer.name)
+                                            },
                                             selected,
                                             texture_id: thumbnail,
                                             solid_color: None,
@@ -562,8 +575,15 @@ impl GuiLayer {
                                         .expect("displayed layer must exist in snapshot");
                                     let can_merge_down = layer.visible
                                         && merge_down_target_index(layer_index).is_some_and(
-                                            |lower_index| layers.layers[lower_index].visible,
-                                        );
+                                            |lower_index| {
+                                                layers.layers[lower_index].visible
+                                                    && !layers.layers[lower_index].clipped
+                                            },
+                                        )
+                                        && !layers
+                                            .layers
+                                            .get(layer_index + 1)
+                                            .is_some_and(|upper| upper.clipped);
                                     row.row.context_menu(|ui| {
                                         if ui.button("Rename").clicked() {
                                             start_rename = true;
@@ -578,6 +598,24 @@ impl GuiLayer {
                                         {
                                             self.commands
                                                 .push(AppCommand::MergeLayerDown(layer.id));
+                                            ui.close();
+                                        }
+                                        let clipping_label = if layer.clipped {
+                                            "Release Clipping Mask"
+                                        } else {
+                                            "Clip to Layer Below"
+                                        };
+                                        if ui
+                                            .add_enabled(
+                                                layer.clipped || layer_index > 0,
+                                                egui::Button::new(clipping_label),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.commands.push(AppCommand::SetLayerClipped {
+                                                id: layer.id,
+                                                clipped: !layer.clipped,
+                                            });
                                             ui.close();
                                         }
                                     });

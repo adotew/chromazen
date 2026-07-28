@@ -31,6 +31,8 @@ pub(crate) struct LayerManifest {
     pub(crate) name: String,
     pub(crate) visible: bool,
     pub(crate) opacity: u8,
+    #[serde(default)]
+    pub(crate) clipped: bool,
     pub(crate) file: String,
 }
 
@@ -54,6 +56,9 @@ impl DocumentManifest {
             .any(|layer| layer.id == self.selected_layer)
         {
             return Err("selected_layer does not identify a document layer".to_owned());
+        }
+        if self.layers[0].clipped {
+            return Err("bottom layer cannot be clipped".to_owned());
         }
         let mut ids = std::collections::HashSet::new();
         let mut files = std::collections::HashSet::new();
@@ -100,6 +105,7 @@ mod tests {
                 name: "Layer 1".to_owned(),
                 visible: true,
                 opacity: 100,
+                clipped: false,
                 file: "layers/1.png".to_owned(),
             }],
         }
@@ -118,10 +124,25 @@ mod tests {
     }
 
     #[test]
+    fn bottom_layer_cannot_be_clipped() {
+        let mut document = document();
+        document.layers[0].clipped = true;
+        assert!(document.validate().is_err());
+    }
+
+    #[test]
     fn invalid_opacity_is_rejected() {
         let mut document = document();
         document.layers[0].opacity = 101;
         assert!(document.validate().is_err());
+    }
+
+    #[test]
+    fn clipping_defaults_to_disabled_for_existing_documents() {
+        let source = toml::to_string(&document()).unwrap();
+        let without_clipping = source.replace("clipped = false\n", "");
+        let decoded: DocumentManifest = toml::from_str(&without_clipping).unwrap();
+        assert!(!decoded.layers[0].clipped);
     }
 
     #[test]

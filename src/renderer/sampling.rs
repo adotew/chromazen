@@ -1,6 +1,7 @@
 use std::sync::mpsc;
 
 use super::PaintLayer;
+use crate::artwork::clipping_base_index;
 
 const BYTES_PER_PIXEL: u64 = 4;
 
@@ -24,12 +25,11 @@ pub(super) fn read_composited_color(
     pixel: [u32; 2],
     background: [f32; 4],
 ) -> Option<[u8; 3]> {
-    let visible_layers: Vec<_> = layers.iter().filter(|layer| layer.visible).collect();
-    if visible_layers.is_empty() {
+    if layers.iter().all(|layer| !layer.visible) {
         return Some(rgb8(background));
     }
 
-    let buffer_size = visible_layers.len() as u64 * BYTES_PER_PIXEL;
+    let buffer_size = layers.len() as u64 * BYTES_PER_PIXEL;
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("eyedropper readback buffer"),
         size: buffer_size,
@@ -39,7 +39,7 @@ pub(super) fn read_composited_color(
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("eyedropper readback encoder"),
     });
-    for (index, layer) in visible_layers.iter().enumerate() {
+    for (index, layer) in layers.iter().enumerate() {
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &layer.texture,
@@ -94,8 +94,15 @@ pub(super) fn read_composited_color(
     let mapped = readback.slice(..).get_mapped_range();
     let samples: Vec<_> = mapped
         .chunks_exact(4)
-        .zip(&visible_layers)
-        .map(|(pixel, layer)| ([pixel[0], pixel[1], pixel[2], pixel[3]], layer.opacity))
+        .zip(layers)
+        .map(|(pixel, layer)| {
+            (
+                [pixel[0], pixel[1], pixel[2], pixel[3]],
+                layer.opacity,
+                layer.visible,
+                layer.clipped,
+            )
+        })
         .collect();
     let color = composite_premultiplied(background, &samples);
     drop(mapped);
@@ -103,11 +110,27 @@ pub(super) fn read_composited_color(
     Some(color)
 }
 
-fn composite_premultiplied(background: [f32; 4], layers: &[([u8; 4], u8)]) -> [u8; 3] {
+fn composite_premultiplied(background: [f32; 4], layers: &[([u8; 4], u8, bool, bool)]) -> [u8; 3] {
     // Paint textures are premultiplied RGBA and arrive in bottom-to-top render order.
     let mut color = background;
-    for (pixel, opacity) in layers {
-        let opacity = f32::from(*opacity) / 100.0;
+    let clipped: Vec<_> = layers.iter().map(|layer| layer.3).collect();
+    for (index, (pixel, opacity, visible, is_clipped)) in layers.iter().enumerate() {
+        if !visible {
+            continue;
+        }
+        let mask = if *is_clipped {
+            let Some(base_index) = clipping_base_index(&clipped, index) else {
+                continue;
+            };
+            let (base_pixel, base_opacity, base_visible, _) = layers[base_index];
+            if !base_visible {
+                continue;
+            }
+            f32::from(base_pixel[3]) / 255.0 * f32::from(base_opacity) / 100.0
+        } else {
+            1.0
+        };
+        let opacity = f32::from(*opacity) / 100.0 * mask;
         let alpha = f32::from(pixel[3]) / 255.0 * opacity;
         let inverse_alpha = 1.0 - alpha;
         for channel in 0..3 {
@@ -150,7 +173,7 @@ mod tests {
     #[test]
     fn transparent_layers_reveal_the_background() {
         assert_eq!(
-            composite_premultiplied([0.2, 0.4, 0.8, 1.0], &[([0, 0, 0, 0], 100)]),
+            composite_premultiplied([0.2, 0.4, 0.8, 1.0], &[([0, 0, 0, 0], 100, true, false)]),
             [51, 102, 204]
         );
     }
@@ -158,7 +181,10 @@ mod tests {
     #[test]
     fn composites_premultiplied_layers_bottom_to_top() {
         // Half-red over blue, followed by half-green over that result.
-        let pixels = [([128, 0, 0, 128], 100), ([0, 128, 0, 128], 100)];
+        let pixels = [
+            ([128, 0, 0, 128], 100, true, false),
+            ([0, 128, 0, 128], 100, true, false),
+        ];
         assert_eq!(
             composite_premultiplied([0.0, 0.0, 1.0, 1.0], &pixels),
             [64, 128, 63]
@@ -168,14 +194,41 @@ mod tests {
     #[test]
     fn layer_opacity_scales_premultiplied_color_and_alpha() {
         assert_eq!(
-            composite_premultiplied([0.0, 0.0, 1.0, 1.0], &[([255, 0, 0, 255], 50)]),
+            composite_premultiplied([0.0, 0.0, 1.0, 1.0], &[([255, 0, 0, 255], 50, true, false)]),
             [128, 0, 128]
         );
     }
 
     #[test]
+    fn clipped_samples_use_the_base_alpha() {
+        let pixels = [
+            ([128, 0, 0, 128], 100, true, false),
+            ([0, 255, 0, 255], 100, true, true),
+        ];
+        assert_eq!(
+            composite_premultiplied([0.0, 0.0, 1.0, 1.0], &pixels),
+            [64, 128, 63]
+        );
+    }
+
+    #[test]
+    fn hidden_base_hides_clipped_samples() {
+        let pixels = [
+            ([255, 0, 0, 255], 100, false, false),
+            ([0, 255, 0, 255], 100, true, true),
+        ];
+        assert_eq!(
+            composite_premultiplied([0.0, 0.0, 1.0, 1.0], &pixels),
+            [0, 0, 255]
+        );
+    }
+
+    #[test]
     fn opaque_top_layer_wins() {
-        let pixels = [([255, 0, 0, 255], 100), ([12, 34, 56, 255], 100)];
+        let pixels = [
+            ([255, 0, 0, 255], 100, true, false),
+            ([12, 34, 56, 255], 100, true, false),
+        ];
         assert_eq!(
             composite_premultiplied([1.0, 1.0, 1.0, 1.0], &pixels),
             [12, 34, 56]

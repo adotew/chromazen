@@ -4,6 +4,8 @@
 @group(0) @binding(3) var<uniform> view: View;
 @group(0) @binding(4) var<uniform> stroke: Stroke;
 @group(0) @binding(5) var<uniform> layerSettings: LayerSettings;
+@group(0) @binding(6) var clippingBaseTexture: texture_2d<f32>;
+@group(0) @binding(7) var<uniform> clippingBaseSettings: LayerSettings;
 
 struct LayerSettings {
   opacity: f32,
@@ -51,6 +53,21 @@ fn fs_preview_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
 }
 
 @fragment
+fn fs_preview_clipped_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let uv = paintUv(pos);
+  if (outsideCanvas(uv)) {
+    return vec4f(0.0);
+  }
+
+  let layer = textureSampleLevel(layerTexture, paintSampler, uv, 0.0);
+  let coverage = textureSampleLevel(strokeMask, paintSampler, uv, 0.0).r;
+  let source = stroke.color * coverage;
+  let mask = textureSampleLevel(clippingBaseTexture, paintSampler, uv, 0.0).a
+    * clippingBaseSettings.opacity;
+  return (source + layer * (1.0 - source.a)) * layerSettings.opacity * mask;
+}
+
+@fragment
 fn fs_preview_eraser(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let uv = paintUv(pos);
   if (outsideCanvas(uv)) {
@@ -60,6 +77,20 @@ fn fs_preview_eraser(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let layer = textureSampleLevel(layerTexture, paintSampler, uv, 0.0);
   let coverage = textureSampleLevel(strokeMask, paintSampler, uv, 0.0).r;
   return layer * (1.0 - coverage) * layerSettings.opacity;
+}
+
+@fragment
+fn fs_preview_clipped_eraser(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let uv = paintUv(pos);
+  if (outsideCanvas(uv)) {
+    return vec4f(0.0);
+  }
+
+  let layer = textureSampleLevel(layerTexture, paintSampler, uv, 0.0);
+  let coverage = textureSampleLevel(strokeMask, paintSampler, uv, 0.0).r;
+  let mask = textureSampleLevel(clippingBaseTexture, paintSampler, uv, 0.0).a
+    * clippingBaseSettings.opacity;
+  return layer * (1.0 - coverage) * layerSettings.opacity * mask;
 }
 
 @vertex

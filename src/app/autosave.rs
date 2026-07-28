@@ -326,6 +326,7 @@ fn encode_thumbnail(
             image,
             visible: metadata.visible,
             opacity: metadata.opacity,
+            clipped: metadata.clipped,
         })
         .collect();
     let composite = flatten_premultiplied_layers(&composite_layers, document.background)?;
@@ -370,6 +371,7 @@ mod tests {
                 name: "Layer 1".to_owned(),
                 visible: true,
                 opacity: 100,
+                clipped: false,
                 file: "layers/1.png".to_owned(),
             }],
         }

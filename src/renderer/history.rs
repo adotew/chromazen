@@ -93,6 +93,11 @@ enum HistoryAction {
         before: bool,
         after: bool,
     },
+    LayerClipping {
+        layer_id: LayerId,
+        before: bool,
+        after: bool,
+    },
     LayerOpacity {
         layer_id: LayerId,
         before: u8,
@@ -140,6 +145,7 @@ impl HistoryAction {
             Self::BackgroundColor { .. }
             | Self::RenameLayer { .. }
             | Self::LayerVisibility { .. }
+            | Self::LayerClipping { .. }
             | Self::LayerOpacity { .. }
             | Self::MoveLayer { .. } => 0,
         }
@@ -153,6 +159,7 @@ impl HistoryAction {
             | Self::BackgroundColor { .. }
             | Self::RenameLayer { .. }
             | Self::LayerVisibility { .. }
+            | Self::LayerClipping { .. }
             | Self::LayerOpacity { .. }
             | Self::MoveLayer { .. }
             | Self::MergeDown { .. } => HistoryTarget::Structure,
@@ -377,6 +384,16 @@ impl PaintHistory {
         }
     }
 
+    pub(crate) fn record_layer_clipping(&mut self, layer_id: LayerId, before: bool, after: bool) {
+        if before != after {
+            self.push_structure(HistoryAction::LayerClipping {
+                layer_id,
+                before,
+                after,
+            });
+        }
+    }
+
     pub(crate) fn record_layer_opacity(&mut self, layer_id: LayerId, before: u8, after: u8) {
         if before != after {
             self.push_structure(HistoryAction::LayerOpacity {
@@ -492,6 +509,12 @@ impl PaintHistory {
                 layer_mut(layers, *layer_id).visible = *before;
                 StructureEffect::MetadataOnly
             }
+            HistoryAction::LayerClipping {
+                layer_id, before, ..
+            } => {
+                layer_mut(layers, *layer_id).clipped = *before;
+                StructureEffect::MetadataOnly
+            }
             HistoryAction::LayerOpacity {
                 layer_id, before, ..
             } => {
@@ -587,6 +610,12 @@ impl PaintHistory {
                 layer_id, after, ..
             } => {
                 layer_mut(layers, *layer_id).visible = *after;
+                StructureEffect::MetadataOnly
+            }
+            HistoryAction::LayerClipping {
+                layer_id, after, ..
+            } => {
+                layer_mut(layers, *layer_id).clipped = *after;
                 StructureEffect::MetadataOnly
             }
             HistoryAction::LayerOpacity {
@@ -821,6 +850,11 @@ mod tests {
                 layer_id: LayerId(1),
                 before: true,
                 after: false,
+            },
+            HistoryAction::LayerClipping {
+                layer_id: LayerId(1),
+                before: false,
+                after: true,
             },
             HistoryAction::LayerOpacity {
                 layer_id: LayerId(1),

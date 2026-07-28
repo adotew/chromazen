@@ -16,6 +16,7 @@ pub(crate) struct LayerProperties {
     pub(crate) name: String,
     pub(crate) visible: bool,
     pub(crate) opacity: u8,
+    pub(crate) clipped: bool,
 }
 
 impl LayerProperties {
@@ -24,6 +25,7 @@ impl LayerProperties {
             name,
             visible: true,
             opacity: 100,
+            clipped: false,
         }
     }
 }
@@ -34,6 +36,7 @@ pub(crate) struct PaintLayer {
     pub(crate) name: String,
     pub(crate) visible: bool,
     pub(crate) opacity: u8,
+    pub(crate) clipped: bool,
     pub(crate) settings_buffer: wgpu::Buffer,
     pub(crate) texture: wgpu::Texture,
     pub(crate) view: wgpu::TextureView,
@@ -51,6 +54,7 @@ pub(crate) struct LayerInfo {
     pub(crate) name: String,
     pub(crate) visible: bool,
     pub(crate) opacity: u8,
+    pub(crate) clipped: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]

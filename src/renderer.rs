@@ -29,7 +29,7 @@ pub(crate) use self::{
     persistence::LayerReadback,
 };
 use crate::{
-    artwork::{DOCUMENT_SCHEMA_VERSION, DocumentManifest, LayerManifest},
+    artwork::{DOCUMENT_SCHEMA_VERSION, DocumentManifest, LayerManifest, clipping_base_index},
     config::LoadedBrushPreset,
     gpu::GpuContext,
     paint::{BrushSpacing, PaintTool, StrokePoint},
@@ -179,6 +179,8 @@ pub struct PaintRenderer {
     document_generation: u64,
     metadata_version: u64,
     layer_versions: HashMap<LayerId, u64>,
+    clipped_layer_bind_groups: HashMap<LayerId, wgpu::BindGroup>,
+    clipping_bind_groups_dirty: bool,
 }
 
 impl PaintRenderer {
@@ -229,6 +231,8 @@ impl PaintRenderer {
             document_generation: 0,
             metadata_version: 0,
             layer_versions: HashMap::from([(LayerId(1), 0)]),
+            clipped_layer_bind_groups: HashMap::new(),
+            clipping_bind_groups_dirty: true,
         };
         renderer.fit_to_screen();
         renderer.clear_canvas();
@@ -377,6 +381,7 @@ impl PaintRenderer {
                     name: layer.name.clone(),
                     visible: layer.visible,
                     opacity: layer.opacity,
+                    clipped: layer.clipped,
                     file: format!("layers/{}.png", layer.id.0),
                 })
                 .collect(),
@@ -419,6 +424,7 @@ impl PaintRenderer {
         self.next_layer_number = 2;
         self.stamp_queue.clear();
         self.history.clear();
+        self.clipping_bind_groups_dirty = true;
         self.fit_to_screen();
         self.reset_change_tracking(true);
         Ok(())
@@ -465,6 +471,7 @@ impl PaintRenderer {
                     name: metadata.name.clone(),
                     visible: metadata.visible,
                     opacity: metadata.opacity,
+                    clipped: metadata.clipped,
                 },
             );
             self.gpu.queue().write_texture(
@@ -502,6 +509,7 @@ impl PaintRenderer {
         self.next_layer_number = next_layer_number(&document.layers);
         self.stamp_queue.clear();
         self.history.clear();
+        self.clipping_bind_groups_dirty = true;
         self.fit_to_screen();
         self.reset_change_tracking(false);
         Ok(())
@@ -517,6 +525,7 @@ impl PaintRenderer {
                     name: layer.name.clone(),
                     visible: layer.visible,
                     opacity: layer.opacity,
+                    clipped: layer.clipped,
                 })
                 .collect(),
             selection: self.selection,
@@ -560,6 +569,22 @@ impl PaintRenderer {
         }
         let before = std::mem::replace(&mut layer.name, name.clone());
         self.history.record_rename_layer(id, before, name);
+        self.mark_metadata_changed();
+        true
+    }
+
+    pub(crate) fn set_layer_clipped(&mut self, id: LayerId, clipped: bool) -> bool {
+        if !self.can_replace_document() {
+            return false;
+        }
+        let Some(index) = self.layers.iter().position(|layer| layer.id == id) else {
+            return false;
+        };
+        if clipped && index == 0 || self.layers[index].clipped == clipped {
+            return false;
+        }
+        let before = std::mem::replace(&mut self.layers[index].clipped, clipped);
+        self.history.record_layer_clipping(id, before, clipped);
         self.mark_metadata_changed();
         true
     }
@@ -635,6 +660,13 @@ impl PaintRenderer {
         let Some(insertion) = relative_insertion_index(dragged_index, target_index, edge) else {
             return false;
         };
+        let mut reordered_clipping: Vec<_> =
+            self.layers.iter().map(|layer| layer.clipped).collect();
+        let dragged_clipping = reordered_clipping.remove(dragged_index);
+        reordered_clipping.insert(insertion, dragged_clipping);
+        if reordered_clipping[0] {
+            return false;
+        }
         let layer = self.layers.remove(dragged_index);
         self.layers.insert(insertion, layer);
         self.history
@@ -727,7 +759,14 @@ impl PaintRenderer {
                 .position(|layer| layer.id == id)
                 .and_then(merge_down_target_index)
                 .is_some_and(|lower_index| {
-                    self.layers[lower_index + 1].visible && self.layers[lower_index].visible
+                    let upper_index = lower_index + 1;
+                    self.layers[upper_index].visible
+                        && self.layers[lower_index].visible
+                        && !self.layers[lower_index].clipped
+                        && !self
+                            .layers
+                            .get(upper_index + 1)
+                            .is_some_and(|layer| layer.clipped)
                 })
     }
 
@@ -756,6 +795,10 @@ impl PaintRenderer {
 
         let upper = self.layers.remove(upper_index);
         let lower = self.layers.remove(lower_index);
+        let clipped_bind_group = upper.clipped.then(|| {
+            self.resources
+                .create_clipped_layer_bind_group(self.gpu.device(), &upper, &lower)
+        });
         let mut encoder =
             self.gpu
                 .device()
@@ -782,7 +825,12 @@ impl PaintRenderer {
             pass.set_pipeline(&self.resources.merge_pipeline);
             pass.set_bind_group(0, &lower.blit_bind_group, &[]);
             pass.draw(0..3, 0..1);
-            pass.set_bind_group(0, &upper.blit_bind_group, &[]);
+            if let Some(bind_group) = &clipped_bind_group {
+                pass.set_pipeline(&self.resources.clipped_layer_merge_pipeline);
+                pass.set_bind_group(0, bind_group, &[]);
+            } else {
+                pass.set_bind_group(0, &upper.blit_bind_group, &[]);
+            }
             pass.draw(0..3, 0..1);
         }
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
@@ -805,6 +853,9 @@ impl PaintRenderer {
 
     pub(crate) fn can_delete_selected_layer(&self) -> bool {
         self.layers.len() > 1
+            && self
+                .selected_layer_index()
+                .is_some_and(|index| index != 0 || !self.layers[1].clipped)
             && self.active_stroke.is_none()
             && !self.history.stroke_active()
             && !self.stamp_queue.has_pending()
@@ -852,11 +903,19 @@ impl PaintRenderer {
         let active_stroke = ActiveStroke::new(layer_id, tool, color);
         self.active_stroke = Some(active_stroke);
         if active_stroke.render_path() == StrokeRenderPath::Mask {
+            let clipped: Vec<_> = self.layers.iter().map(|layer| layer.clipped).collect();
+            let clipping_base = clipping_base_index(&clipped, layer_index).map(|base_index| {
+                (
+                    &self.layers[base_index].view,
+                    &self.layers[base_index].settings_buffer,
+                )
+            });
             self.resources.prepare_stroke_preview(
                 self.gpu.device(),
                 self.gpu.queue(),
                 &self.layers[layer_index].view,
                 &self.layers[layer_index].settings_buffer,
+                clipping_base,
                 active_stroke.color,
             );
         }
@@ -1173,6 +1232,7 @@ impl PaintRenderer {
         // egui samples these views later in this encoder, so previews include this frame's dabs.
         self.render_layer_previews(encoder);
         self.write_view_uniform();
+        self.ensure_clipped_layer_bind_groups();
         if let Some(cursor) = brush_cursor {
             self.write_brush_cursor(cursor);
         }
@@ -1201,8 +1261,15 @@ impl PaintRenderer {
         pass.set_pipeline(&self.resources.background_pipeline);
         pass.set_bind_group(0, &self.layers[0].blit_bind_group, &[]);
         pass.draw(0..3, 0..1);
-        for layer in &self.layers {
+        let clipped_flags: Vec<_> = self.layers.iter().map(|layer| layer.clipped).collect();
+        for (layer_index, layer) in self.layers.iter().enumerate() {
             if !layer.visible {
+                continue;
+            }
+            let clipping_base = clipping_base_index(&clipped_flags, layer_index);
+            if layer.clipped && clipping_base.is_none()
+                || clipping_base.is_some_and(|base_index| !self.layers[base_index].visible)
+            {
                 continue;
             }
             let preview_tool = self
@@ -1211,12 +1278,30 @@ impl PaintRenderer {
                 .map(|stroke| stroke.tool);
             match preview_tool {
                 Some(PaintTool::Brush) => {
-                    pass.set_pipeline(&self.resources.brush_preview_pipeline);
+                    let pipeline = if clipping_base.is_some() {
+                        &self.resources.clipped_brush_preview_pipeline
+                    } else {
+                        &self.resources.brush_preview_pipeline
+                    };
+                    pass.set_pipeline(pipeline);
                     pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
                 }
                 Some(PaintTool::Eraser) => {
-                    pass.set_pipeline(&self.resources.eraser_preview_pipeline);
+                    let pipeline = if clipping_base.is_some() {
+                        &self.resources.clipped_eraser_preview_pipeline
+                    } else {
+                        &self.resources.eraser_preview_pipeline
+                    };
+                    pass.set_pipeline(pipeline);
                     pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
+                }
+                Some(PaintTool::Smudge) | None if clipping_base.is_some() => {
+                    pass.set_pipeline(&self.resources.clipped_layer_pipeline);
+                    let bind_group = self
+                        .clipped_layer_bind_groups
+                        .get(&layer.id)
+                        .expect("clipped layer must have a bind group");
+                    pass.set_bind_group(0, bind_group, &[]);
                 }
                 Some(PaintTool::Smudge) | None => {
                     pass.set_pipeline(&self.resources.layer_pipeline);
@@ -1230,6 +1315,26 @@ impl PaintRenderer {
             pass.set_bind_group(0, &self.resources.cursor_bind_group, &[]);
             pass.draw(0..6, 0..1);
         }
+    }
+
+    fn ensure_clipped_layer_bind_groups(&mut self) {
+        if !self.clipping_bind_groups_dirty {
+            return;
+        }
+        self.clipped_layer_bind_groups.clear();
+        let clipped: Vec<_> = self.layers.iter().map(|layer| layer.clipped).collect();
+        for (index, layer) in self.layers.iter().enumerate() {
+            let Some(base_index) = clipping_base_index(&clipped, index) else {
+                continue;
+            };
+            let bind_group = self.resources.create_clipped_layer_bind_group(
+                self.gpu.device(),
+                layer,
+                &self.layers[base_index],
+            );
+            self.clipped_layer_bind_groups.insert(layer.id, bind_group);
+        }
+        self.clipping_bind_groups_dirty = false;
     }
 
     fn render_layer_previews(&mut self, encoder: &mut wgpu::CommandEncoder) {
@@ -1458,6 +1563,7 @@ impl PaintRenderer {
 
     fn mark_metadata_changed(&mut self) {
         self.metadata_version = self.next_document_generation();
+        self.clipping_bind_groups_dirty = true;
     }
 
     fn mark_layer_changed(&mut self, id: LayerId) {
@@ -1469,6 +1575,7 @@ impl PaintRenderer {
     }
 
     fn apply_structure_effect(&mut self, effect: StructureEffect) {
+        self.clipping_bind_groups_dirty = true;
         let version = self.next_document_generation();
         self.metadata_version = version;
         match effect {
@@ -1608,6 +1715,7 @@ mod tests {
                 name: "Layer 4".to_owned(),
                 visible: true,
                 opacity: 100,
+                clipped: false,
                 file: "layers/1.png".to_owned(),
             },
             LayerManifest {
@@ -1615,6 +1723,7 @@ mod tests {
                 name: "Reference".to_owned(),
                 visible: true,
                 opacity: 100,
+                clipped: false,
                 file: "layers/2.png".to_owned(),
             },
         ];
