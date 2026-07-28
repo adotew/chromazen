@@ -4,10 +4,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use image::{ImageEncoder, imageops::FilterType};
+use image::imageops::FilterType;
 
 use crate::{
-    artwork::{ArtworkId, ArtworkStore, LayerSource, LayerWrite, RevisionWrite},
+    artwork::{
+        ArtworkId, ArtworkStore, LayerSource, LayerWrite, RevisionWrite, encode_png,
+        flatten_premultiplied_layers,
+    },
     renderer::{DocumentVersions, LayerId, PaintRenderer},
 };
 
@@ -274,19 +277,6 @@ fn build_revision_write(
     })
 }
 
-fn encode_png(image: &image::RgbaImage) -> Result<Vec<u8>, String> {
-    let mut output = Vec::new();
-    image::codecs::png::PngEncoder::new(&mut output)
-        .write_image(
-            image.as_raw(),
-            image.width(),
-            image.height(),
-            image::ExtendedColorType::Rgba8,
-        )
-        .map_err(|error| format!("failed to encode layer PNG: {error}"))?;
-    Ok(output)
-}
-
 fn encode_thumbnail(
     layers: &[(LayerId, image::RgbaImage)],
     background: [u8; 3],
@@ -306,28 +296,18 @@ fn encode_thumbnail(
     }
 
     let (thumbnail_width, thumbnail_height) = fit_dimensions(source_size, THUMBNAIL_SIZE);
-    let mut composite = image::RgbaImage::from_pixel(
-        thumbnail_width,
-        thumbnail_height,
-        image::Rgba([background[0], background[1], background[2], 255]),
-    );
-    for (_, layer) in layers {
-        let resized = image::imageops::resize(
-            layer,
-            thumbnail_width,
-            thumbnail_height,
-            FilterType::Triangle,
-        );
-        for (destination, source) in composite.pixels_mut().zip(resized.pixels()) {
-            let alpha = u32::from(source[3]);
-            let inverse = 255 - alpha;
-            for channel in 0..3 {
-                destination[channel] = (u32::from(source[channel])
-                    + u32::from(destination[channel]) * inverse / 255)
-                    .min(255) as u8;
-            }
-        }
-    }
+    let resized: Vec<_> = layers
+        .iter()
+        .map(|(_, layer)| {
+            image::imageops::resize(
+                layer,
+                thumbnail_width,
+                thumbnail_height,
+                FilterType::Triangle,
+            )
+        })
+        .collect();
+    let composite = flatten_premultiplied_layers(&resized, background)?;
 
     let mut thumbnail = image::RgbaImage::new(THUMBNAIL_SIZE, THUMBNAIL_SIZE);
     let x = (THUMBNAIL_SIZE - thumbnail_width) / 2;
