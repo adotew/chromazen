@@ -3,6 +3,11 @@
 @group(0) @binding(2) var strokeMask: texture_2d<f32>;
 @group(0) @binding(3) var<uniform> view: View;
 @group(0) @binding(4) var<uniform> stroke: Stroke;
+@group(0) @binding(5) var<uniform> layerSettings: LayerSettings;
+
+struct LayerSettings {
+  opacity: f32,
+};
 
 struct View {
   scale: vec2f,
@@ -41,7 +46,8 @@ fn fs_preview_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let layer = textureSampleLevel(layerTexture, paintSampler, uv, 0.0);
   let coverage = textureSampleLevel(strokeMask, paintSampler, uv, 0.0).r;
   let source = stroke.color * coverage;
-  return source + layer * (1.0 - source.a);
+  // The composed layer is premultiplied, so opacity scales every channel.
+  return (source + layer * (1.0 - source.a)) * layerSettings.opacity;
 }
 
 @fragment
@@ -53,7 +59,7 @@ fn fs_preview_eraser(@builtin(position) pos: vec4f) -> @location(0) vec4f {
 
   let layer = textureSampleLevel(layerTexture, paintSampler, uv, 0.0);
   let coverage = textureSampleLevel(strokeMask, paintSampler, uv, 0.0).r;
-  return layer * (1.0 - coverage);
+  return layer * (1.0 - coverage) * layerSettings.opacity;
 }
 
 @vertex

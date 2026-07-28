@@ -1,6 +1,11 @@
 @group(0) @binding(0) var paintSampler: sampler;
 @group(0) @binding(1) var paintTex: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> view: View;
+@group(0) @binding(3) var<uniform> layer: LayerSettings;
+
+struct LayerSettings {
+  opacity: f32,
+};
 
 struct View {
   scale: vec2f,
@@ -39,5 +44,6 @@ fn fs_layer(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   if (outsideCanvas(uv)) {
     return vec4f(0.0);
   }
-  return textureSampleLevel(paintTex, paintSampler, uv, 0.0);
+  // Paint textures are premultiplied, so opacity scales every channel.
+  return textureSampleLevel(paintTex, paintSampler, uv, 0.0) * layer.opacity;
 }

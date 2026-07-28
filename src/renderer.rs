@@ -103,6 +103,13 @@ struct StrokeUniform {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
+struct LayerSettingsUniform {
+    opacity: f32,
+    padding: [f32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 struct CursorRaw {
     center: [f32; 2],
     half_size: [f32; 2],
@@ -580,6 +587,14 @@ impl PaintRenderer {
             return false;
         }
         layer.opacity = opacity;
+        self.gpu.queue().write_buffer(
+            &layer.settings_buffer,
+            0,
+            bytemuck::bytes_of(&LayerSettingsUniform {
+                opacity: f32::from(opacity) / 100.0,
+                padding: [0.0; 3],
+            }),
+        );
         self.mark_metadata_changed();
         true
     }
@@ -723,6 +738,9 @@ impl PaintRenderer {
         let Some(layer_index) = self.selected_layer_index() else {
             return false;
         };
+        if !self.layers[layer_index].visible {
+            return false;
+        }
         let layer_id = self.layers[layer_index].id;
         if !self.history.begin_stroke(layer_id) {
             return false;
@@ -734,6 +752,7 @@ impl PaintRenderer {
                 self.gpu.device(),
                 self.gpu.queue(),
                 &self.layers[layer_index].view,
+                &self.layers[layer_index].settings_buffer,
                 active_stroke.color,
             );
         }
@@ -1073,6 +1092,9 @@ impl PaintRenderer {
         pass.set_bind_group(0, &self.layers[0].blit_bind_group, &[]);
         pass.draw(0..3, 0..1);
         for layer in &self.layers {
+            if !layer.visible {
+                continue;
+            }
             let preview_tool = self
                 .active_stroke
                 .filter(|stroke| stroke.layer_id == layer.id)

@@ -34,6 +34,7 @@ pub(crate) struct PaintLayer {
     pub(crate) name: String,
     pub(crate) visible: bool,
     pub(crate) opacity: u8,
+    pub(crate) settings_buffer: wgpu::Buffer,
     pub(crate) texture: wgpu::Texture,
     pub(crate) view: wgpu::TextureView,
     pub(crate) blit_bind_group: wgpu::BindGroup,

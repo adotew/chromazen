@@ -3,8 +3,8 @@ use wgpu::util::DeviceExt;
 use super::layers::{LayerId, LayerProperties, LayerResourceId, PaintLayer};
 use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
 use super::{
-    CursorRaw, DOCUMENT_FORMAT, LAYER_PREVIEW_SIZE, LayerPreviewUniform, PaintUniform,
-    STROKE_MASK_FORMAT, StrokeUniform, ViewUniform,
+    CursorRaw, DOCUMENT_FORMAT, LAYER_PREVIEW_SIZE, LayerPreviewUniform, LayerSettingsUniform,
+    PaintUniform, STROKE_MASK_FORMAT, StrokeUniform, ViewUniform,
 };
 
 pub(crate) struct RenderResources {
@@ -267,6 +267,16 @@ impl RenderResources {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
         let stroke_preview_bind_group_layout =
@@ -311,6 +321,16 @@ impl RenderResources {
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
@@ -773,6 +793,7 @@ impl RenderResources {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layer_view: &wgpu::TextureView,
+        layer_settings_buffer: &wgpu::Buffer,
         color: [f32; 4],
     ) {
         queue.write_buffer(
@@ -804,6 +825,10 @@ impl RenderResources {
                     wgpu::BindGroupEntry {
                         binding: 4,
                         resource: self.stroke_uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: layer_settings_buffer.as_entire_binding(),
                     },
                 ],
             }));
@@ -931,6 +956,14 @@ impl RenderResources {
         properties: LayerProperties,
     ) -> PaintLayer {
         let (texture, view) = create_paint_texture(device, size);
+        let settings_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("layer settings uniform buffer"),
+            contents: bytemuck::bytes_of(&LayerSettingsUniform {
+                opacity: f32::from(properties.opacity) / 100.0,
+                padding: [0.0; 3],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
         let blit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("layer blit bind group"),
             layout: &self.blit_bind_group_layout,
@@ -946,6 +979,10 @@ impl RenderResources {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: self.view_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: settings_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -982,6 +1019,7 @@ impl RenderResources {
             name: properties.name,
             visible: properties.visible,
             opacity: properties.opacity,
+            settings_buffer,
             texture,
             view,
             blit_bind_group,
