@@ -97,6 +97,9 @@ Controls:
   from the native **File** menu; Undo and Redo are available from **Edit**
 - Use the minimal egui panels for brush controls and adding, selecting, or
   deleting layers
+- Click a layer's eye to show or hide it; hidden selected layers cannot be painted on
+- Click the selected layer again to rename it or adjust its opacity
+- Drag a paint layer row to reorder it; the Background remains fixed at the bottom
 - Select **Background** in the Layers panel to change its color; it cannot be
   painted on or deleted
 - On macOS and Windows, use the native **Settings** menu to save, reload, reset,

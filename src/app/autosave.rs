@@ -395,6 +395,15 @@ mod tests {
     }
 
     #[test]
+    fn metadata_only_changes_reuse_layer_pngs() {
+        let saved = versions(4, &[(1, 2), (2, 4)]);
+        let mut current = saved.clone();
+        current.generation = 5;
+        current.metadata = 5;
+        assert!(changed_layer_ids(&saved, &current).is_empty());
+    }
+
+    #[test]
     fn thumbnail_composites_premultiplied_layers() {
         let layer = image::RgbaImage::from_pixel(1, 1, image::Rgba([128, 0, 0, 128]));
         let document = thumbnail_document((1, 1), [0, 0, 255]);

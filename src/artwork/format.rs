@@ -125,6 +125,22 @@ mod tests {
     }
 
     #[test]
+    fn layer_metadata_is_required() {
+        let source = toml::to_string(&document()).unwrap();
+        let without_visibility = source.replace("visible = true\n", "");
+        let without_opacity = source.replace("opacity = 100\n", "");
+        assert!(toml::from_str::<DocumentManifest>(&without_visibility).is_err());
+        assert!(toml::from_str::<DocumentManifest>(&without_opacity).is_err());
+    }
+
+    #[test]
+    fn old_document_schema_is_rejected() {
+        let mut document = document();
+        document.schema_version = 1;
+        assert!(document.validate().is_err());
+    }
+
+    #[test]
     fn generated_layer_paths_cannot_escape_revision() {
         let mut document = document();
         document.layers[0].file = "../outside.png".to_owned();
