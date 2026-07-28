@@ -12,7 +12,7 @@ mod stamps;
 mod view;
 
 use self::{
-    history::{HistoryTarget, PaintHistory, TextureRect},
+    history::{HistoryTarget, PaintHistory, StructureEffect, TextureRect},
     layers::{
         LayerProperties, PaintLayer, insertion_index, layer_name, normalized_layer_name,
         relative_insertion_index, replacement_index_after_delete,
@@ -556,7 +556,8 @@ impl PaintRenderer {
         if layer.name == name {
             return false;
         }
-        layer.name = name;
+        let before = std::mem::replace(&mut layer.name, name.clone());
+        self.history.record_rename_layer(id, before, name);
         self.mark_metadata_changed();
         true
     }
@@ -571,7 +572,8 @@ impl PaintRenderer {
         if layer.visible == visible {
             return false;
         }
-        layer.visible = visible;
+        let before = std::mem::replace(&mut layer.visible, visible);
+        self.history.record_layer_visibility(id, before, visible);
         self.mark_metadata_changed();
         true
     }
@@ -599,6 +601,20 @@ impl PaintRenderer {
         true
     }
 
+    pub(crate) fn commit_layer_opacity(&mut self, id: LayerId, before: u8, after: u8) -> bool {
+        if !self.can_replace_document() || before == after || after > 100 {
+            return false;
+        }
+        let Some(layer) = self.layers.iter().find(|layer| layer.id == id) else {
+            return false;
+        };
+        if layer.opacity != after {
+            return false;
+        }
+        self.history.record_layer_opacity(id, before, after);
+        true
+    }
+
     pub(crate) fn move_layer_relative(
         &mut self,
         dragged: LayerId,
@@ -619,6 +635,8 @@ impl PaintRenderer {
         };
         let layer = self.layers.remove(dragged_index);
         self.layers.insert(insertion, layer);
+        self.history
+            .record_move_layer(dragged, dragged_index, insertion);
         self.mark_metadata_changed();
         true
     }
@@ -888,12 +906,18 @@ impl PaintRenderer {
         if self.active_stroke.is_some() {
             return false;
         }
-        let changed = match self.history.undo_target() {
-            Some(HistoryTarget::Structure) => self.history.undo_structure(
-                &mut self.layers,
-                &mut self.selection,
-                &mut self.background_color,
-            ),
+        match self.history.undo_target() {
+            Some(HistoryTarget::Structure) => {
+                let Some(effect) = self.history.undo_structure(
+                    &mut self.layers,
+                    &mut self.selection,
+                    &mut self.background_color,
+                ) else {
+                    return false;
+                };
+                self.apply_structure_effect(effect);
+                true
+            }
             Some(HistoryTarget::Stroke(layer_id)) => {
                 let layer_index = self
                     .layers
@@ -915,26 +939,29 @@ impl PaintRenderer {
                 self.history
                     .undo_stroke(&mut encoder, &self.layers[layer_index].texture);
                 self.gpu.queue().submit(std::iter::once(encoder.finish()));
+                self.mark_layer_changed(layer_id);
                 true
             }
             None => false,
-        };
-        if changed {
-            self.mark_all_changed();
         }
-        changed
     }
 
     pub fn redo(&mut self) -> bool {
         if self.active_stroke.is_some() {
             return false;
         }
-        let changed = match self.history.redo_target() {
-            Some(HistoryTarget::Structure) => self.history.redo_structure(
-                &mut self.layers,
-                &mut self.selection,
-                &mut self.background_color,
-            ),
+        match self.history.redo_target() {
+            Some(HistoryTarget::Structure) => {
+                let Some(effect) = self.history.redo_structure(
+                    &mut self.layers,
+                    &mut self.selection,
+                    &mut self.background_color,
+                ) else {
+                    return false;
+                };
+                self.apply_structure_effect(effect);
+                true
+            }
             Some(HistoryTarget::Stroke(layer_id)) => {
                 let layer_index = self
                     .layers
@@ -956,14 +983,11 @@ impl PaintRenderer {
                 self.history
                     .redo_stroke(&mut encoder, &self.layers[layer_index].texture);
                 self.gpu.queue().submit(std::iter::once(encoder.finish()));
+                self.mark_layer_changed(layer_id);
                 true
             }
             None => false,
-        };
-        if changed {
-            self.mark_all_changed();
         }
-        changed
     }
 
     pub fn queue_stamp(&mut self, point: StrokePoint) -> bool {
@@ -1358,17 +1382,28 @@ impl PaintRenderer {
         self.layer_versions.insert(id, version);
     }
 
-    fn mark_all_changed(&mut self) {
-        for layer in &mut self.layers {
-            layer.preview_dirty = true;
-        }
+    fn apply_structure_effect(&mut self, effect: StructureEffect) {
         let version = self.next_document_generation();
         self.metadata_version = version;
-        self.layer_versions = self
-            .layers
-            .iter()
-            .map(|layer| (layer.id, version))
-            .collect();
+        match effect {
+            StructureEffect::MetadataOnly => {}
+            StructureEffect::LayerAdded(id) => {
+                self.layer_versions.insert(id, version);
+            }
+            StructureEffect::LayerRemoved(id) => {
+                self.layer_versions.remove(&id);
+            }
+        }
+        for layer in &self.layers {
+            self.gpu.queue().write_buffer(
+                &layer.settings_buffer,
+                0,
+                bytemuck::bytes_of(&LayerSettingsUniform {
+                    opacity: f32::from(layer.opacity) / 100.0,
+                    padding: [0.0; 3],
+                }),
+            );
+        }
     }
 
     fn write_view_uniform(&self) {

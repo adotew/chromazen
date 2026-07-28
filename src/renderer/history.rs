@@ -83,6 +83,26 @@ enum HistoryAction {
         before: [f32; 4],
         after: [f32; 4],
     },
+    RenameLayer {
+        layer_id: LayerId,
+        before: String,
+        after: String,
+    },
+    LayerVisibility {
+        layer_id: LayerId,
+        before: bool,
+        after: bool,
+    },
+    LayerOpacity {
+        layer_id: LayerId,
+        before: u8,
+        after: u8,
+    },
+    MoveLayer {
+        layer_id: LayerId,
+        before: usize,
+        after: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,21 +111,36 @@ pub(crate) enum HistoryTarget {
     Structure,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StructureEffect {
+    MetadataOnly,
+    LayerAdded(LayerId),
+    LayerRemoved(LayerId),
+}
+
 impl HistoryAction {
     fn bytes(&self) -> u64 {
         match self {
             Self::Stroke(entry) => entry.bytes,
             Self::AddLayer { bytes, .. } | Self::DeleteLayer { bytes, .. } => *bytes,
-            Self::BackgroundColor { .. } => 0,
+            Self::BackgroundColor { .. }
+            | Self::RenameLayer { .. }
+            | Self::LayerVisibility { .. }
+            | Self::LayerOpacity { .. }
+            | Self::MoveLayer { .. } => 0,
         }
     }
 
     fn target(&self) -> HistoryTarget {
         match self {
             Self::Stroke(entry) => HistoryTarget::Stroke(entry.layer_id),
-            Self::AddLayer { .. } | Self::DeleteLayer { .. } | Self::BackgroundColor { .. } => {
-                HistoryTarget::Structure
-            }
+            Self::AddLayer { .. }
+            | Self::DeleteLayer { .. }
+            | Self::BackgroundColor { .. }
+            | Self::RenameLayer { .. }
+            | Self::LayerVisibility { .. }
+            | Self::LayerOpacity { .. }
+            | Self::MoveLayer { .. } => HistoryTarget::Structure,
         }
     }
 }
@@ -279,9 +314,52 @@ impl PaintHistory {
         if before == after {
             return;
         }
+        self.push_structure(HistoryAction::BackgroundColor { before, after });
+    }
+
+    pub(crate) fn record_rename_layer(&mut self, layer_id: LayerId, before: String, after: String) {
+        if before != after {
+            self.push_structure(HistoryAction::RenameLayer {
+                layer_id,
+                before,
+                after,
+            });
+        }
+    }
+
+    pub(crate) fn record_layer_visibility(&mut self, layer_id: LayerId, before: bool, after: bool) {
+        if before != after {
+            self.push_structure(HistoryAction::LayerVisibility {
+                layer_id,
+                before,
+                after,
+            });
+        }
+    }
+
+    pub(crate) fn record_layer_opacity(&mut self, layer_id: LayerId, before: u8, after: u8) {
+        if before != after {
+            self.push_structure(HistoryAction::LayerOpacity {
+                layer_id,
+                before,
+                after,
+            });
+        }
+    }
+
+    pub(crate) fn record_move_layer(&mut self, layer_id: LayerId, before: usize, after: usize) {
+        if before != after {
+            self.push_structure(HistoryAction::MoveLayer {
+                layer_id,
+                before,
+                after,
+            });
+        }
+    }
+
+    fn push_structure(&mut self, action: HistoryAction) {
         self.discard_redo();
-        self.actions
-            .push(HistoryAction::BackgroundColor { before, after });
+        self.actions.push(action);
         self.cursor = self.actions.len();
         self.evict_to_budget();
     }
@@ -325,12 +403,12 @@ impl PaintHistory {
         layers: &mut Vec<PaintLayer>,
         selection: &mut LayerId,
         background_color: &mut [f32; 4],
-    ) -> bool {
+    ) -> Option<StructureEffect> {
         if self.undo_target() != Some(HistoryTarget::Structure) {
-            return false;
+            return None;
         }
         self.cursor -= 1;
-        match &mut self.actions[self.cursor] {
+        let effect = match &mut self.actions[self.cursor] {
             HistoryAction::AddLayer {
                 layer_id,
                 selection_before,
@@ -343,6 +421,7 @@ impl PaintHistory {
                     .expect("added layer must exist before undo");
                 *detached = Some(layers.remove(index));
                 *selection = *selection_before;
+                StructureEffect::LayerRemoved(*layer_id)
             }
             HistoryAction::DeleteLayer {
                 index,
@@ -351,15 +430,42 @@ impl PaintHistory {
                 ..
             } => {
                 let layer = detached.take().expect("deleted layer must be retained");
+                let layer_id = layer.id;
                 layers.insert((*index).min(layers.len()), layer);
                 *selection = *selection_before;
+                StructureEffect::LayerAdded(layer_id)
             }
             HistoryAction::BackgroundColor { before, .. } => {
                 *background_color = *before;
+                StructureEffect::MetadataOnly
+            }
+            HistoryAction::RenameLayer {
+                layer_id, before, ..
+            } => {
+                layer_mut(layers, *layer_id).name.clone_from(before);
+                StructureEffect::MetadataOnly
+            }
+            HistoryAction::LayerVisibility {
+                layer_id, before, ..
+            } => {
+                layer_mut(layers, *layer_id).visible = *before;
+                StructureEffect::MetadataOnly
+            }
+            HistoryAction::LayerOpacity {
+                layer_id, before, ..
+            } => {
+                layer_mut(layers, *layer_id).opacity = *before;
+                StructureEffect::MetadataOnly
+            }
+            HistoryAction::MoveLayer {
+                layer_id, before, ..
+            } => {
+                move_layer_to_index(layers, *layer_id, *before);
+                StructureEffect::MetadataOnly
             }
             HistoryAction::Stroke(_) => unreachable!(),
-        }
-        true
+        };
+        Some(effect)
     }
 
     pub(crate) fn redo_structure(
@@ -367,11 +473,11 @@ impl PaintHistory {
         layers: &mut Vec<PaintLayer>,
         selection: &mut LayerId,
         background_color: &mut [f32; 4],
-    ) -> bool {
+    ) -> Option<StructureEffect> {
         if self.redo_target() != Some(HistoryTarget::Structure) {
-            return false;
+            return None;
         }
-        match &mut self.actions[self.cursor] {
+        let effect = match &mut self.actions[self.cursor] {
             HistoryAction::AddLayer {
                 index,
                 selection_after,
@@ -381,8 +487,10 @@ impl PaintHistory {
                 let layer = detached
                     .take()
                     .expect("undone added layer must be retained");
+                let layer_id = layer.id;
                 layers.insert((*index).min(layers.len()), layer);
                 *selection = *selection_after;
+                StructureEffect::LayerAdded(layer_id)
             }
             HistoryAction::DeleteLayer {
                 layer_id,
@@ -396,14 +504,40 @@ impl PaintHistory {
                     .expect("restored deleted layer must exist before redo");
                 *detached = Some(layers.remove(index));
                 *selection = *selection_after;
+                StructureEffect::LayerRemoved(*layer_id)
             }
             HistoryAction::BackgroundColor { after, .. } => {
                 *background_color = *after;
+                StructureEffect::MetadataOnly
+            }
+            HistoryAction::RenameLayer {
+                layer_id, after, ..
+            } => {
+                layer_mut(layers, *layer_id).name.clone_from(after);
+                StructureEffect::MetadataOnly
+            }
+            HistoryAction::LayerVisibility {
+                layer_id, after, ..
+            } => {
+                layer_mut(layers, *layer_id).visible = *after;
+                StructureEffect::MetadataOnly
+            }
+            HistoryAction::LayerOpacity {
+                layer_id, after, ..
+            } => {
+                layer_mut(layers, *layer_id).opacity = *after;
+                StructureEffect::MetadataOnly
+            }
+            HistoryAction::MoveLayer {
+                layer_id, after, ..
+            } => {
+                move_layer_to_index(layers, *layer_id, *after);
+                StructureEffect::MetadataOnly
             }
             HistoryAction::Stroke(_) => unreachable!(),
-        }
+        };
         self.cursor += 1;
-        true
+        Some(effect)
     }
 
     fn discard_redo(&mut self) {
@@ -421,6 +555,22 @@ impl PaintHistory {
         self.actions.drain(..count);
         self.cursor -= count;
     }
+}
+
+fn layer_mut(layers: &mut [PaintLayer], id: LayerId) -> &mut PaintLayer {
+    layers
+        .iter_mut()
+        .find(|layer| layer.id == id)
+        .expect("history layer must exist")
+}
+
+fn move_layer_to_index(layers: &mut Vec<PaintLayer>, id: LayerId, index: usize) {
+    let current = layers
+        .iter()
+        .position(|layer| layer.id == id)
+        .expect("moved history layer must exist");
+    let layer = layers.remove(current);
+    layers.insert(index.min(layers.len()), layer);
 }
 
 fn swap_entry(
@@ -560,12 +710,36 @@ mod tests {
     }
 
     #[test]
-    fn background_changes_are_structural_and_use_no_texture_budget() {
-        let action = HistoryAction::BackgroundColor {
-            before: [1.0; 4],
-            after: [0.0, 0.0, 0.0, 1.0],
-        };
-        assert_eq!(action.target(), HistoryTarget::Structure);
-        assert_eq!(action.bytes(), 0);
+    fn metadata_changes_are_structural_and_use_no_texture_budget() {
+        let actions = [
+            HistoryAction::BackgroundColor {
+                before: [1.0; 4],
+                after: [0.0, 0.0, 0.0, 1.0],
+            },
+            HistoryAction::RenameLayer {
+                layer_id: LayerId(1),
+                before: "Before".to_owned(),
+                after: "After".to_owned(),
+            },
+            HistoryAction::LayerVisibility {
+                layer_id: LayerId(1),
+                before: true,
+                after: false,
+            },
+            HistoryAction::LayerOpacity {
+                layer_id: LayerId(1),
+                before: 100,
+                after: 50,
+            },
+            HistoryAction::MoveLayer {
+                layer_id: LayerId(1),
+                before: 0,
+                after: 1,
+            },
+        ];
+        for action in actions {
+            assert_eq!(action.target(), HistoryTarget::Structure);
+            assert_eq!(action.bytes(), 0);
+        }
     }
 }
