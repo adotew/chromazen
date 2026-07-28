@@ -7,7 +7,7 @@ use std::{
 use atomic_write_file::AtomicWriteFile;
 
 use crate::{
-    artwork::{encode_png, flatten_premultiplied_layers},
+    artwork::{CompositeLayer, encode_png, flatten_premultiplied_layers},
     renderer::PaintRenderer,
 };
 
@@ -52,12 +52,26 @@ impl ExportController {
         let wake = self.wake.clone();
         std::thread::spawn(move || {
             let result = (|| {
-                let layers: Vec<_> = readback
-                    .finish()?
-                    .into_iter()
-                    .map(|(_, image)| image)
+                let layers = readback.finish()?;
+                if layers.len() != document.layers.len()
+                    || layers
+                        .iter()
+                        .zip(&document.layers)
+                        .any(|((id, _), metadata)| id.0 != metadata.id)
+                {
+                    return Err("exported layers do not match document metadata".to_owned());
+                }
+                let composite_layers: Vec<_> = layers
+                    .iter()
+                    .zip(&document.layers)
+                    .map(|((_, image), metadata)| CompositeLayer {
+                        image,
+                        visible: metadata.visible,
+                        opacity: metadata.opacity,
+                    })
                     .collect();
-                let composite = flatten_premultiplied_layers(&layers, document.background)?;
+                let composite =
+                    flatten_premultiplied_layers(&composite_layers, document.background)?;
                 write_png_atomic(&path, &composite)
             })();
             let _ = sender.send(ExportCompletion { path, result });

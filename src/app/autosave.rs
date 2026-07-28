@@ -8,8 +8,8 @@ use image::imageops::FilterType;
 
 use crate::{
     artwork::{
-        ArtworkId, ArtworkStore, LayerSource, LayerWrite, RevisionWrite, encode_png,
-        flatten_premultiplied_layers,
+        ArtworkId, ArtworkStore, CompositeLayer, LayerSource, LayerWrite, RevisionWrite,
+        encode_png, flatten_premultiplied_layers,
     },
     renderer::{DocumentVersions, LayerId, PaintRenderer},
 };
@@ -264,7 +264,7 @@ fn build_revision_write(
     dirty_ids: &HashSet<LayerId>,
     first_revision: bool,
 ) -> Result<RevisionWrite, String> {
-    let thumbnail_png = encode_thumbnail(&images, document.background)?;
+    let thumbnail_png = encode_thumbnail(&images, &document)?;
     let mut layers = Vec::with_capacity(images.len());
     for (id, image) in images {
         let source = if first_revision || dirty_ids.contains(&id) {
@@ -283,7 +283,7 @@ fn build_revision_write(
 
 fn encode_thumbnail(
     layers: &[(LayerId, image::RgbaImage)],
-    background: [u8; 3],
+    document: &crate::artwork::DocumentManifest,
 ) -> Result<Vec<u8>, String> {
     let Some((_, first_layer)) = layers.first() else {
         return Err("cannot create a thumbnail without layers".to_owned());
@@ -298,6 +298,14 @@ fn encode_thumbnail(
     {
         return Err("thumbnail layers must have matching dimensions".to_owned());
     }
+    if layers.len() != document.layers.len()
+        || layers
+            .iter()
+            .zip(&document.layers)
+            .any(|((id, _), metadata)| id.0 != metadata.id)
+    {
+        return Err("thumbnail layers do not match document metadata".to_owned());
+    }
 
     let (thumbnail_width, thumbnail_height) = fit_dimensions(source_size, THUMBNAIL_SIZE);
     let resized: Vec<_> = layers
@@ -311,7 +319,16 @@ fn encode_thumbnail(
             )
         })
         .collect();
-    let composite = flatten_premultiplied_layers(&resized, background)?;
+    let composite_layers: Vec<_> = resized
+        .iter()
+        .zip(&document.layers)
+        .map(|(image, metadata)| CompositeLayer {
+            image,
+            visible: metadata.visible,
+            opacity: metadata.opacity,
+        })
+        .collect();
+    let composite = flatten_premultiplied_layers(&composite_layers, document.background)?;
 
     let mut thumbnail = image::RgbaImage::new(THUMBNAIL_SIZE, THUMBNAIL_SIZE);
     let x = (THUMBNAIL_SIZE - thumbnail_width) / 2;
@@ -338,6 +355,26 @@ fn fit_dimensions(source: (u32, u32), target: u32) -> (u32, u32) {
 mod tests {
     use super::*;
 
+    fn thumbnail_document(
+        size: (u32, u32),
+        background: [u8; 3],
+    ) -> crate::artwork::DocumentManifest {
+        crate::artwork::DocumentManifest {
+            schema_version: crate::artwork::DOCUMENT_SCHEMA_VERSION,
+            width: size.0,
+            height: size.1,
+            background,
+            selected_layer: 1,
+            layers: vec![crate::artwork::LayerManifest {
+                id: 1,
+                name: "Layer 1".to_owned(),
+                visible: true,
+                opacity: 100,
+                file: "layers/1.png".to_owned(),
+            }],
+        }
+    }
+
     fn versions(generation: u64, layers: &[(u64, u64)]) -> DocumentVersions {
         DocumentVersions {
             generation,
@@ -360,7 +397,8 @@ mod tests {
     #[test]
     fn thumbnail_composites_premultiplied_layers() {
         let layer = image::RgbaImage::from_pixel(1, 1, image::Rgba([128, 0, 0, 128]));
-        let png = encode_thumbnail(&[(LayerId(1), layer)], [0, 0, 255]).unwrap();
+        let document = thumbnail_document((1, 1), [0, 0, 255]);
+        let png = encode_thumbnail(&[(LayerId(1), layer)], &document).unwrap();
         let decoded = image::load_from_memory(&png).unwrap().to_rgba8();
         let pixel = decoded.get_pixel(0, 0);
         assert!((127..=128).contains(&pixel[0]));
@@ -372,7 +410,8 @@ mod tests {
     #[test]
     fn rectangular_thumbnail_is_centered_without_stretching() {
         let layer = image::RgbaImage::new(4, 2);
-        let png = encode_thumbnail(&[(LayerId(1), layer)], [10, 20, 30]).unwrap();
+        let document = thumbnail_document((4, 2), [10, 20, 30]);
+        let png = encode_thumbnail(&[(LayerId(1), layer)], &document).unwrap();
         let decoded = image::load_from_memory(&png).unwrap().to_rgba8();
         assert_eq!(decoded.get_pixel(0, 0), &image::Rgba([0, 0, 0, 0]));
         assert_eq!(

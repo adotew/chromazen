@@ -24,11 +24,12 @@ pub(super) fn read_composited_color(
     pixel: [u32; 2],
     background: [f32; 4],
 ) -> Option<[u8; 3]> {
-    if layers.is_empty() {
+    let visible_layers: Vec<_> = layers.iter().filter(|layer| layer.visible).collect();
+    if visible_layers.is_empty() {
         return Some(rgb8(background));
     }
 
-    let buffer_size = layers.len() as u64 * BYTES_PER_PIXEL;
+    let buffer_size = visible_layers.len() as u64 * BYTES_PER_PIXEL;
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("eyedropper readback buffer"),
         size: buffer_size,
@@ -38,7 +39,7 @@ pub(super) fn read_composited_color(
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("eyedropper readback encoder"),
     });
-    for (index, layer) in layers.iter().enumerate() {
+    for (index, layer) in visible_layers.iter().enumerate() {
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &layer.texture,
@@ -91,20 +92,26 @@ pub(super) fn read_composited_color(
     }
 
     let mapped = readback.slice(..).get_mapped_range();
-    let color = composite_premultiplied(background, &mapped);
+    let samples: Vec<_> = mapped
+        .chunks_exact(4)
+        .zip(&visible_layers)
+        .map(|(pixel, layer)| ([pixel[0], pixel[1], pixel[2], pixel[3]], layer.opacity))
+        .collect();
+    let color = composite_premultiplied(background, &samples);
     drop(mapped);
     readback.unmap();
     Some(color)
 }
 
-fn composite_premultiplied(background: [f32; 4], layer_pixels: &[u8]) -> [u8; 3] {
+fn composite_premultiplied(background: [f32; 4], layers: &[([u8; 4], u8)]) -> [u8; 3] {
     // Paint textures are premultiplied RGBA and arrive in bottom-to-top render order.
     let mut color = background;
-    for pixel in layer_pixels.chunks_exact(4) {
-        let alpha = f32::from(pixel[3]) / 255.0;
+    for (pixel, opacity) in layers {
+        let opacity = f32::from(*opacity) / 100.0;
+        let alpha = f32::from(pixel[3]) / 255.0 * opacity;
         let inverse_alpha = 1.0 - alpha;
         for channel in 0..3 {
-            let source = f32::from(pixel[channel]) / 255.0;
+            let source = f32::from(pixel[channel]) / 255.0 * opacity;
             color[channel] = source + color[channel] * inverse_alpha;
         }
         color[3] = alpha + color[3] * inverse_alpha;
@@ -143,7 +150,7 @@ mod tests {
     #[test]
     fn transparent_layers_reveal_the_background() {
         assert_eq!(
-            composite_premultiplied([0.2, 0.4, 0.8, 1.0], &[0, 0, 0, 0]),
+            composite_premultiplied([0.2, 0.4, 0.8, 1.0], &[([0, 0, 0, 0], 100)]),
             [51, 102, 204]
         );
     }
@@ -151,7 +158,7 @@ mod tests {
     #[test]
     fn composites_premultiplied_layers_bottom_to_top() {
         // Half-red over blue, followed by half-green over that result.
-        let pixels = [128, 0, 0, 128, 0, 128, 0, 128];
+        let pixels = [([128, 0, 0, 128], 100), ([0, 128, 0, 128], 100)];
         assert_eq!(
             composite_premultiplied([0.0, 0.0, 1.0, 1.0], &pixels),
             [64, 128, 63]
@@ -159,8 +166,16 @@ mod tests {
     }
 
     #[test]
+    fn layer_opacity_scales_premultiplied_color_and_alpha() {
+        assert_eq!(
+            composite_premultiplied([0.0, 0.0, 1.0, 1.0], &[([255, 0, 0, 255], 50)]),
+            [128, 0, 128]
+        );
+    }
+
+    #[test]
     fn opaque_top_layer_wins() {
-        let pixels = [255, 0, 0, 255, 12, 34, 56, 255];
+        let pixels = [([255, 0, 0, 255], 100), ([12, 34, 56, 255], 100)];
         assert_eq!(
             composite_premultiplied([1.0, 1.0, 1.0, 1.0], &pixels),
             [12, 34, 56]
