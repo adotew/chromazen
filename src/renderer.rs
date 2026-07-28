@@ -13,7 +13,9 @@ mod view;
 
 use self::{
     history::{HistoryTarget, PaintHistory, TextureRect},
-    layers::{PaintLayer, insertion_index, layer_name, replacement_index_after_delete},
+    layers::{
+        LayerProperties, PaintLayer, insertion_index, layer_name, replacement_index_after_delete,
+    },
     resources::RenderResources,
     sampling::{document_pixel, read_composited_color},
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue, StampRaw},
@@ -193,7 +195,7 @@ impl PaintRenderer {
             document_size,
             LayerId(1),
             LayerResourceId(1),
-            "Layer 1".to_owned(),
+            LayerProperties::new("Layer 1".to_owned()),
         );
         let stamp_aspect = brush_preset
             .stamp_image
@@ -360,6 +362,8 @@ impl PaintRenderer {
                 .map(|layer| LayerManifest {
                     id: layer.id.0,
                     name: layer.name.clone(),
+                    visible: layer.visible,
+                    opacity: layer.opacity,
                     file: format!("layers/{}.png", layer.id.0),
                 })
                 .collect(),
@@ -392,7 +396,7 @@ impl PaintRenderer {
             self.document_size,
             id,
             resource_id,
-            "Layer 1".to_owned(),
+            LayerProperties::new("Layer 1".to_owned()),
         );
         clear_layer(self.gpu.device(), self.gpu.queue(), &layer.view);
         self.layers = vec![layer];
@@ -444,7 +448,11 @@ impl PaintRenderer {
                 self.document_size,
                 LayerId(metadata.id),
                 resource_id,
-                metadata.name.clone(),
+                LayerProperties {
+                    name: metadata.name.clone(),
+                    visible: metadata.visible,
+                    opacity: metadata.opacity,
+                },
             );
             self.gpu.queue().write_texture(
                 wgpu::TexelCopyTextureInfo {
@@ -494,6 +502,8 @@ impl PaintRenderer {
                 .map(|layer| LayerInfo {
                     id: layer.id,
                     name: layer.name.clone(),
+                    visible: layer.visible,
+                    opacity: layer.opacity,
                 })
                 .collect(),
             selection: self.selection,
@@ -562,7 +572,7 @@ impl PaintRenderer {
             self.document_size,
             id,
             resource_id,
-            name,
+            LayerProperties::new(name),
         );
         let mut encoder =
             self.gpu
@@ -1369,11 +1379,15 @@ mod tests {
             LayerManifest {
                 id: 1,
                 name: "Layer 4".to_owned(),
+                visible: true,
+                opacity: 100,
                 file: "layers/1.png".to_owned(),
             },
             LayerManifest {
                 id: 2,
                 name: "Reference".to_owned(),
+                visible: true,
+                opacity: 100,
                 file: "layers/2.png".to_owned(),
             },
         ];

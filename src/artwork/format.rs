@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 pub(crate) const PROJECT_SCHEMA_VERSION: u32 = 1;
-pub(crate) const DOCUMENT_SCHEMA_VERSION: u32 = 1;
+pub(crate) const DOCUMENT_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -29,6 +29,8 @@ pub(crate) struct DocumentManifest {
 pub(crate) struct LayerManifest {
     pub(crate) id: u64,
     pub(crate) name: String,
+    pub(crate) visible: bool,
+    pub(crate) opacity: u8,
     pub(crate) file: String,
 }
 
@@ -62,6 +64,9 @@ impl DocumentManifest {
             if layer.name.trim().is_empty() {
                 return Err("layer names must not be empty".to_owned());
             }
+            if layer.opacity > 100 {
+                return Err("layer opacity must be between 0 and 100".to_owned());
+            }
             if layer.file != format!("layers/{}.png", layer.id) || !files.insert(&layer.file) {
                 return Err(format!("invalid layer file '{}'", layer.file));
             }
@@ -93,6 +98,8 @@ mod tests {
             layers: vec![LayerManifest {
                 id: 1,
                 name: "Layer 1".to_owned(),
+                visible: true,
+                opacity: 100,
                 file: "layers/1.png".to_owned(),
             }],
         }
@@ -107,6 +114,13 @@ mod tests {
     fn selected_layer_must_exist() {
         let mut document = document();
         document.selected_layer = 2;
+        assert!(document.validate().is_err());
+    }
+
+    #[test]
+    fn invalid_opacity_is_rejected() {
+        let mut document = document();
+        document.layers[0].opacity = 101;
         assert!(document.validate().is_err());
     }
 

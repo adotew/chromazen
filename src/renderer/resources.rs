@@ -1,6 +1,6 @@
 use wgpu::util::DeviceExt;
 
-use super::layers::{LayerId, LayerResourceId, PaintLayer};
+use super::layers::{LayerId, LayerProperties, LayerResourceId, PaintLayer};
 use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
 use super::{
     CursorRaw, DOCUMENT_FORMAT, LAYER_PREVIEW_SIZE, LayerPreviewUniform, PaintUniform,
@@ -928,7 +928,7 @@ impl RenderResources {
         size: [u32; 2],
         id: LayerId,
         resource_id: LayerResourceId,
-        name: String,
+        properties: LayerProperties,
     ) -> PaintLayer {
         let (texture, view) = create_paint_texture(device, size);
         let blit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -979,7 +979,9 @@ impl RenderResources {
         PaintLayer {
             id,
             resource_id,
-            name,
+            name: properties.name,
+            visible: properties.visible,
+            opacity: properties.opacity,
             texture,
             view,
             blit_bind_group,

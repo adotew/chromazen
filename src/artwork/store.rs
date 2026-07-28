@@ -438,6 +438,8 @@ mod tests {
                 layers: vec![LayerManifest {
                     id: 1,
                     name: "Layer 1".to_owned(),
+                    visible: true,
+                    opacity: 100,
                     file: "layers/1.png".to_owned(),
                 }],
             },

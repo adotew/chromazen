@@ -6,10 +6,28 @@ pub(crate) struct LayerId(pub(crate) u64);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct LayerResourceId(pub(crate) u64);
 
+pub(crate) struct LayerProperties {
+    pub(crate) name: String,
+    pub(crate) visible: bool,
+    pub(crate) opacity: u8,
+}
+
+impl LayerProperties {
+    pub(crate) fn new(name: String) -> Self {
+        Self {
+            name,
+            visible: true,
+            opacity: 100,
+        }
+    }
+}
+
 pub(crate) struct PaintLayer {
     pub(crate) id: LayerId,
     pub(crate) resource_id: LayerResourceId,
     pub(crate) name: String,
+    pub(crate) visible: bool,
+    pub(crate) opacity: u8,
     pub(crate) texture: wgpu::Texture,
     pub(crate) view: wgpu::TextureView,
     pub(crate) blit_bind_group: wgpu::BindGroup,
@@ -24,6 +42,8 @@ pub(crate) struct PaintLayer {
 pub(crate) struct LayerInfo {
     pub(crate) id: LayerId,
     pub(crate) name: String,
+    pub(crate) visible: bool,
+    pub(crate) opacity: u8,
 }
 
 #[derive(Clone, Debug, PartialEq)]
