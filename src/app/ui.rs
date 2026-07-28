@@ -773,7 +773,7 @@ fn show_brush_row(
     };
     let stroke = selected.then(|| {
         egui::Stroke::new(
-            1.0,
+            1.0_f32,
             egui::Color32::from_gray(if dark_mode { 110 } else { 155 }),
         )
     });
@@ -815,7 +815,7 @@ fn show_brush_row(
         painter.line_segment(
             [preview.left_center(), preview.right_center()],
             egui::Stroke::new(
-                2.0,
+                2.0_f32,
                 egui::Color32::from_gray(if dark_mode { 90 } else { 175 }),
             ),
         );
@@ -844,7 +844,7 @@ fn show_layer_row(
     };
     let stroke = if selected {
         egui::Stroke::new(
-            1.0,
+            1.0_f32,
             egui::Color32::from_gray(if dark_mode { 110 } else { 155 }),
         )
     } else {
@@ -923,12 +923,12 @@ fn show_eyedropper_indicator(ui: &egui::Ui, indicator: EyedropperIndicator) {
         egui::vec2(0.0, -1.0),
     ] {
         let segment = [center + direction * 10.0, center + direction * 15.0];
-        painter.line_segment(segment, egui::Stroke::new(3.0, egui::Color32::BLACK));
-        painter.line_segment(segment, egui::Stroke::new(1.0, egui::Color32::WHITE));
+        painter.line_segment(segment, egui::Stroke::new(3.0_f32, egui::Color32::BLACK));
+        painter.line_segment(segment, egui::Stroke::new(1.0_f32, egui::Color32::WHITE));
     }
     painter.circle_filled(center, 8.0, indicator.color);
-    painter.circle_stroke(center, 9.0, egui::Stroke::new(2.0, egui::Color32::WHITE));
-    painter.circle_stroke(center, 10.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
+    painter.circle_stroke(center, 9.0, egui::Stroke::new(2.0_f32, egui::Color32::WHITE));
+    painter.circle_stroke(center, 10.0, egui::Stroke::new(1.0_f32, egui::Color32::BLACK));
 }
 
 fn show_brush_resize_label(ui: &egui::Ui, overlay: BrushResizeLabel, brush_size: f32) {
