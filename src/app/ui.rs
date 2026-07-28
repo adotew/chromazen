@@ -14,8 +14,8 @@ use crate::{
     config::{AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset},
     paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings, StrokeSmoothingOptions},
     renderer::{
-        CanvasSizeConstraints, DEFAULT_CANVAS_SIZE, LayerId, LayerResourceId, LayerSnapshot,
-        PaintRenderer,
+        CanvasSizeConstraints, DEFAULT_CANVAS_SIZE, DropEdge, LayerId, LayerResourceId,
+        LayerSnapshot, PaintRenderer,
     },
 };
 
@@ -455,14 +455,53 @@ impl GuiLayer {
                                         .iter()
                                         .find(|thumbnail| thumbnail.key.layer_id == layer.id)
                                         .map(|thumbnail| thumbnail.texture_id);
-                                    let row = show_layer_row(
-                                        ui,
-                                        &layer.name,
-                                        selected,
-                                        thumbnail,
-                                        None,
-                                        Some(layer.visible),
+                                    let drag = ui.dnd_drag_source(
+                                        egui::Id::new(("layer drag", layer.id.0)),
+                                        layer.id,
+                                        |ui| {
+                                            show_layer_row(
+                                                ui,
+                                                &layer.name,
+                                                selected,
+                                                thumbnail,
+                                                None,
+                                                Some(layer.visible),
+                                            )
+                                        },
                                     );
+                                    let row = drag.inner;
+                                    if let (Some(pointer), Some(dragged)) = (
+                                        ui.input(|input| input.pointer.interact_pos()),
+                                        drag.response.dnd_hover_payload::<LayerId>(),
+                                    ) && *dragged != layer.id
+                                    {
+                                        let edge = if pointer.y < drag.response.rect.center().y {
+                                            DropEdge::Above
+                                        } else {
+                                            DropEdge::Below
+                                        };
+                                        let y = match edge {
+                                            DropEdge::Above => drag.response.rect.top(),
+                                            DropEdge::Below => drag.response.rect.bottom(),
+                                        };
+                                        ui.painter().hline(
+                                            drag.response.rect.x_range().shrink(8.0),
+                                            y,
+                                            egui::Stroke::new(
+                                                1.5_f32,
+                                                ui.visuals().selection.stroke.color,
+                                            ),
+                                        );
+                                        if let Some(dragged) =
+                                            drag.response.dnd_release_payload::<LayerId>()
+                                        {
+                                            self.commands.push(AppCommand::MoveLayer {
+                                                dragged: *dragged,
+                                                target: layer.id,
+                                                edge,
+                                            });
+                                        }
+                                    }
                                     if row.visibility.as_ref().is_some_and(|eye| eye.clicked()) {
                                         self.commands.push(AppCommand::SetLayerVisibility {
                                             id: layer.id,
