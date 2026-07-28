@@ -71,15 +71,18 @@ mod tests {
     }
 
     #[test]
-    fn native_dimensions_are_preserved() {
-        let layer = image::RgbaImage::new(7, 3);
+    fn native_dimensions_are_preserved_and_output_is_opaque() {
+        let mut layer = image::RgbaImage::new(7, 3);
+        layer.put_pixel(2, 1, image::Rgba([25, 50, 75, 100]));
         let composite = flatten_premultiplied_layers(&[layer], [255; 3]).unwrap();
         assert_eq!(composite.dimensions(), (7, 3));
+        assert!(composite.pixels().all(|pixel| pixel[3] == 255));
     }
 
     #[test]
     fn invalid_layer_sets_are_rejected() {
         assert!(flatten_premultiplied_layers(&[], [255; 3]).is_err());
+        assert!(flatten_premultiplied_layers(&[image::RgbaImage::new(0, 1)], [255; 3]).is_err());
         let layers = [image::RgbaImage::new(1, 1), image::RgbaImage::new(2, 1)];
         assert!(flatten_premultiplied_layers(&layers, [255; 3]).is_err());
     }
