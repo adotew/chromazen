@@ -82,8 +82,11 @@ mod imp {
 
         pub(crate) fn set_document_enabled(&self, in_editor: bool) {
             self.save_artwork.set_enabled(in_editor);
-            self.export_png.set_enabled(in_editor);
             self.show_gallery.set_enabled(in_editor);
+        }
+
+        pub(crate) fn set_export_enabled(&self, enabled: bool) {
+            self.export_png.set_enabled(enabled);
         }
 
         pub(crate) fn install(&mut self, _window: &Window) -> Result<(), String> {
@@ -315,6 +318,8 @@ impl NativeMenu {
     pub(super) fn set_history_enabled(&self, _can_undo: bool, _can_redo: bool) {}
 
     pub(super) fn set_document_enabled(&self, _in_editor: bool) {}
+
+    pub(super) fn set_export_enabled(&self, _enabled: bool) {}
 
     pub(super) fn install(&mut self, _window: &winit::window::Window) -> Result<(), String> {
         Ok(())

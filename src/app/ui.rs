@@ -39,6 +39,7 @@ pub(crate) struct EditorUiState<'a> {
     pub(crate) brush_resize_label: Option<BrushResizeLabel>,
     pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
     pub(crate) save_status: SaveStatus,
+    pub(crate) export_in_progress: bool,
     pub(crate) pending_navigation: Option<&'a str>,
 }
 
@@ -337,6 +338,7 @@ impl GuiLayer {
             brush_resize_label,
             eyedropper_indicator,
             save_status,
+            export_in_progress,
             pending_navigation,
         } = state;
         self.tool_sizes[tool_index(tool)] = self.brush.size;
@@ -389,6 +391,19 @@ impl GuiLayer {
                             };
                             ui.colored_label(color, &message.text);
                         }
+
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_enabled(!export_in_progress, egui::Button::new("Export PNG…"))
+                                .clicked()
+                            {
+                                self.commands.push(AppCommand::ExportPng);
+                            }
+                            if export_in_progress {
+                                ui.spinner();
+                                ui.label("Exporting…");
+                            }
+                        });
 
                         ui.separator();
                         egui::Panel::bottom("layer controls")
@@ -927,8 +942,16 @@ fn show_eyedropper_indicator(ui: &egui::Ui, indicator: EyedropperIndicator) {
         painter.line_segment(segment, egui::Stroke::new(1.0_f32, egui::Color32::WHITE));
     }
     painter.circle_filled(center, 8.0, indicator.color);
-    painter.circle_stroke(center, 9.0, egui::Stroke::new(2.0_f32, egui::Color32::WHITE));
-    painter.circle_stroke(center, 10.0, egui::Stroke::new(1.0_f32, egui::Color32::BLACK));
+    painter.circle_stroke(
+        center,
+        9.0,
+        egui::Stroke::new(2.0_f32, egui::Color32::WHITE),
+    );
+    painter.circle_stroke(
+        center,
+        10.0,
+        egui::Stroke::new(1.0_f32, egui::Color32::BLACK),
+    );
 }
 
 fn show_brush_resize_label(ui: &egui::Ui, overlay: BrushResizeLabel, brush_size: f32) {

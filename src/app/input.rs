@@ -497,10 +497,13 @@ fn paint_tool_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<PaintTo
 }
 
 fn document_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<AppCommand> {
-    if modifiers == ModifiersState::CONTROL && key == KeyCode::KeyS {
-        Some(AppCommand::SaveArtwork)
-    } else {
-        None
+    if !modifiers.control_key() || modifiers.alt_key() || modifiers.super_key() {
+        return None;
+    }
+    match (key, modifiers.shift_key()) {
+        (KeyCode::KeyS, false) => Some(AppCommand::SaveArtwork),
+        (KeyCode::KeyE, true) => Some(AppCommand::ExportPng),
+        _ => None,
     }
 }
 
@@ -764,10 +767,17 @@ mod tests {
     }
 
     #[test]
-    fn maps_control_s_to_artwork_save() {
+    fn maps_document_shortcuts() {
         assert_eq!(
             document_command_for_key(KeyCode::KeyS, ModifiersState::CONTROL),
             Some(AppCommand::SaveArtwork)
+        );
+        assert_eq!(
+            document_command_for_key(
+                KeyCode::KeyE,
+                ModifiersState::CONTROL | ModifiersState::SHIFT,
+            ),
+            Some(AppCommand::ExportPng)
         );
         assert_eq!(
             document_command_for_key(

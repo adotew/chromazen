@@ -400,6 +400,7 @@ impl App {
                             brush_resize_label,
                             eyedropper_indicator,
                             save_status: status,
+                            export_in_progress: self.export.is_exporting(),
                             pending_navigation,
                         },
                     )
@@ -609,6 +610,7 @@ impl App {
                 }
             }
         }
+        self.sync_history_menu();
         true
     }
 
@@ -696,8 +698,10 @@ impl App {
             .flatten()
             .map_or((false, false), |paint| (paint.can_undo(), paint.can_redo()));
         self.native_menu.set_history_enabled(can_undo, can_redo);
+        let in_editor = self.screen == AppScreen::Editor;
+        self.native_menu.set_document_enabled(in_editor);
         self.native_menu
-            .set_document_enabled(self.screen == AppScreen::Editor);
+            .set_export_enabled(in_editor && !self.export.is_exporting());
     }
 
     fn process_settings_commands(&mut self, commands: Vec<SettingsCommand>) {
