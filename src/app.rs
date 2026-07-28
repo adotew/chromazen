@@ -400,7 +400,6 @@ impl App {
                             brush_resize_label,
                             eyedropper_indicator,
                             save_status: status,
-                            export_in_progress: self.export.is_exporting(),
                             pending_navigation,
                         },
                     )

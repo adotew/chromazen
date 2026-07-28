@@ -39,7 +39,6 @@ pub(crate) struct EditorUiState<'a> {
     pub(crate) brush_resize_label: Option<BrushResizeLabel>,
     pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
     pub(crate) save_status: SaveStatus,
-    pub(crate) export_in_progress: bool,
     pub(crate) pending_navigation: Option<&'a str>,
 }
 
@@ -338,7 +337,6 @@ impl GuiLayer {
             brush_resize_label,
             eyedropper_indicator,
             save_status,
-            export_in_progress,
             pending_navigation,
         } = state;
         self.tool_sizes[tool_index(tool)] = self.brush.size;
@@ -391,19 +389,6 @@ impl GuiLayer {
                             };
                             ui.colored_label(color, &message.text);
                         }
-
-                        ui.horizontal(|ui| {
-                            if ui
-                                .add_enabled(!export_in_progress, egui::Button::new("Export PNG…"))
-                                .clicked()
-                            {
-                                self.commands.push(AppCommand::ExportPng);
-                            }
-                            if export_in_progress {
-                                ui.spinner();
-                                ui.label("Exporting…");
-                            }
-                        });
 
                         ui.separator();
                         egui::Panel::bottom("layer controls")
