@@ -440,6 +440,46 @@ impl GuiLayer {
                                     {
                                         self.commands.push(AppCommand::DeleteSelectedLayer);
                                     }
+
+                                    if let Some(layer) = layers
+                                        .layers
+                                        .iter()
+                                        .find(|layer| layer.id == layers.selection)
+                                    {
+                                        ui.add_space(4.0);
+                                        let mut opacity = layer.opacity;
+                                        let opacity_changed = ui
+                                            .add_sized(
+                                                [ui.available_width(), 24.0],
+                                                egui::Slider::new(&mut opacity, 0..=100)
+                                                    .suffix("%")
+                                                    .show_value(true),
+                                            )
+                                            .on_hover_text("Layer opacity")
+                                            .changed();
+                                        if opacity_changed {
+                                            let edit = self.layer_opacity_edit.get_or_insert(
+                                                LayerOpacityEdit {
+                                                    id: layer.id,
+                                                    before: layer.opacity,
+                                                    current: opacity,
+                                                },
+                                            );
+                                            if edit.id != layer.id {
+                                                *edit = LayerOpacityEdit {
+                                                    id: layer.id,
+                                                    before: layer.opacity,
+                                                    current: opacity,
+                                                };
+                                            } else {
+                                                edit.current = opacity;
+                                            }
+                                            self.commands.push(AppCommand::SetLayerOpacity {
+                                                id: layer.id,
+                                                opacity,
+                                            });
+                                        }
+                                    }
                                 });
                                 ui.add_space(6.0);
                             });
@@ -455,14 +495,21 @@ impl GuiLayer {
                                         .iter()
                                         .find(|thumbnail| thumbnail.key.layer_id == layer.id)
                                         .map(|thumbnail| thumbnail.texture_id);
+                                    let renaming = self
+                                        .layer_name_edit
+                                        .as_ref()
+                                        .is_some_and(|edit| edit.id == layer.id);
                                     let row = show_layer_row(
                                         ui,
-                                        &layer.name,
-                                        selected,
-                                        thumbnail,
-                                        None,
-                                        Some(layer.visible),
-                                        Some(layer.id),
+                                        LayerRow {
+                                            name: if renaming { "" } else { &layer.name },
+                                            selected,
+                                            texture_id: thumbnail,
+                                            solid_color: None,
+                                            visible: Some(layer.visible),
+                                            opacity: Some(layer.opacity),
+                                            drag_id: Some(layer.id),
+                                        },
                                     );
                                     if let (Some(pointer), Some(dragged)) = (
                                         ui.input(|input| input.pointer.interact_pos()),
@@ -507,114 +554,59 @@ impl GuiLayer {
                                         self.commands.push(AppCommand::SelectLayer(layer.id));
                                     }
 
-                                    if selected || row.row.secondary_clicked() {
-                                        let properties_popup_id =
-                                            egui::Popup::default_response_id(&row.row);
-                                        if !egui::Popup::is_id_open(ui.ctx(), properties_popup_id)
-                                            || self
-                                                .layer_name_edit
-                                                .as_ref()
-                                                .is_none_or(|edit| edit.id != layer.id)
-                                        {
-                                            self.layer_name_edit = Some(LayerNameEdit {
-                                                id: layer.id,
-                                                name: layer.name.clone(),
-                                            });
+                                    let mut start_rename = false;
+                                    row.row.context_menu(|ui| {
+                                        if ui.button("Rename").clicked() {
+                                            start_rename = true;
+                                            ui.close();
                                         }
+                                    });
+                                    if start_rename {
+                                        self.layer_name_edit = Some(LayerNameEdit {
+                                            id: layer.id,
+                                            name: layer.name.clone(),
+                                        });
+                                    }
+
+                                    if renaming {
                                         let mut edited_name =
                                             self.layer_name_edit.as_ref().map_or_else(
                                                 || layer.name.clone(),
                                                 |edit| edit.name.clone(),
                                             );
-                                        let mut opacity = layer.opacity;
-                                        let mut commit_name = false;
-                                        let mut cancel_name = false;
-                                        let mut opacity_changed = false;
-                                        let popup_open_command = if row.row.secondary_clicked() {
-                                            Some(egui::SetOpenCommand::Bool(true))
-                                        } else if row.row.clicked() {
-                                            Some(egui::SetOpenCommand::Toggle)
-                                        } else {
-                                            None
-                                        };
-                                        egui::Popup::from_response(&row.row)
-                                            .open_memory(popup_open_command)
-                                            .width(240.0)
-                                            .close_behavior(
-                                                egui::PopupCloseBehavior::CloseOnClickOutside,
-                                            )
-                                            .show(|ui| {
-                                                egui::Grid::new(("layer properties", layer.id.0))
-                                                    .num_columns(2)
-                                                    .spacing([10.0, 8.0])
-                                                    .show(ui, |ui| {
-                                                        ui.label("Name");
-                                                        let response = ui.add(
-                                                            egui::TextEdit::singleline(
-                                                                &mut edited_name,
-                                                            )
-                                                            .desired_width(150.0),
-                                                        );
-                                                        let enter = response.has_focus()
-                                                            && ui.input(|input| {
-                                                                input.key_pressed(egui::Key::Enter)
-                                                            });
-                                                        cancel_name = response.has_focus()
-                                                            && ui.input(|input| {
-                                                                input.key_pressed(egui::Key::Escape)
-                                                            });
-                                                        commit_name = !cancel_name
-                                                            && (enter || response.lost_focus());
-                                                        ui.end_row();
-
-                                                        ui.label("Opacity");
-                                                        opacity_changed = ui
-                                                            .add(
-                                                                egui::Slider::new(
-                                                                    &mut opacity,
-                                                                    0..=100,
-                                                                )
-                                                                .suffix("%")
-                                                                .show_value(true),
-                                                            )
-                                                            .changed();
-                                                        ui.end_row();
-                                                    });
-                                            });
-                                        if cancel_name {
-                                            edited_name.clone_from(&layer.name);
-                                        } else if commit_name && !edited_name.trim().is_empty() {
-                                            self.commands.push(AppCommand::RenameLayer {
-                                                id: layer.id,
-                                                name: edited_name.clone(),
-                                            });
+                                        let response = ui.put(
+                                            row.name_rect,
+                                            egui::TextEdit::singleline(&mut edited_name)
+                                                .desired_width(row.name_rect.width()),
+                                        );
+                                        if !response.has_focus() && !response.lost_focus() {
+                                            response.request_focus();
                                         }
-                                        if let Some(edit) = self.layer_name_edit.as_mut() {
+                                        let cancel = response.has_focus()
+                                            && ui.input(|input| {
+                                                input.key_pressed(egui::Key::Escape)
+                                            });
+                                        let commit = !cancel
+                                            && (response.lost_focus()
+                                                || (response.has_focus()
+                                                    && ui.input(|input| {
+                                                        input.key_pressed(egui::Key::Enter)
+                                                    })));
+                                        if cancel {
+                                            self.layer_name_edit = None;
+                                        } else if commit {
+                                            if !edited_name.trim().is_empty() {
+                                                self.commands.push(AppCommand::RenameLayer {
+                                                    id: layer.id,
+                                                    name: edited_name,
+                                                });
+                                            }
+                                            self.layer_name_edit = None;
+                                        } else if let Some(edit) = self.layer_name_edit.as_mut() {
                                             edit.name = edited_name;
                                         }
-                                        if opacity_changed {
-                                            let edit = self.layer_opacity_edit.get_or_insert(
-                                                LayerOpacityEdit {
-                                                    id: layer.id,
-                                                    before: layer.opacity,
-                                                    current: opacity,
-                                                },
-                                            );
-                                            if edit.id != layer.id {
-                                                *edit = LayerOpacityEdit {
-                                                    id: layer.id,
-                                                    before: layer.opacity,
-                                                    current: opacity,
-                                                };
-                                            } else {
-                                                edit.current = opacity;
-                                            }
-                                            self.commands.push(AppCommand::SetLayerOpacity {
-                                                id: layer.id,
-                                                opacity,
-                                            });
-                                        }
                                     }
+
                                     ui.add_space(4.0);
                                 }
 
@@ -631,12 +623,15 @@ impl GuiLayer {
                                 let mut color = background;
                                 let response = show_layer_row(
                                     ui,
-                                    "Background",
-                                    false,
-                                    None,
-                                    Some(background),
-                                    None,
-                                    None,
+                                    LayerRow {
+                                        name: "Background",
+                                        selected: false,
+                                        texture_id: None,
+                                        solid_color: Some(background),
+                                        visible: None,
+                                        opacity: None,
+                                        drag_id: None,
+                                    },
                                 );
                                 egui::Popup::from_toggle_button_response(&response.row)
                                     .width(220.0)
@@ -1010,20 +1005,32 @@ fn show_brush_row(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-struct LayerRowResponse {
-    row: egui::Response,
-    visibility: Option<egui::Response>,
-}
-
-fn show_layer_row(
-    ui: &mut egui::Ui,
-    name: &str,
+struct LayerRow<'a> {
+    name: &'a str,
     selected: bool,
     texture_id: Option<egui::TextureId>,
     solid_color: Option<egui::Color32>,
     visible: Option<bool>,
+    opacity: Option<u8>,
     drag_id: Option<LayerId>,
-) -> LayerRowResponse {
+}
+
+struct LayerRowResponse {
+    row: egui::Response,
+    visibility: Option<egui::Response>,
+    name_rect: egui::Rect,
+}
+
+fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
+    let LayerRow {
+        name,
+        selected,
+        texture_id,
+        solid_color,
+        visible,
+        opacity,
+        drag_id,
+    } = layer;
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 60.0), egui::Sense::click());
     let visibility = visible.map(|_| {
@@ -1037,6 +1044,14 @@ fn show_layer_row(
             egui::Sense::click(),
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand)
+    });
+    let mode = opacity.map(|opacity| {
+        let mode_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - 45.0, rect.center().y),
+            egui::vec2(24.0, 28.0),
+        );
+        ui.interact(mode_rect, response.id.with("mode"), egui::Sense::hover())
+            .on_hover_text(format!("Normal · {opacity}%"))
     });
     let visuals = ui.style().interact(&response);
     let dark_mode = ui.visuals().dark_mode;
@@ -1073,6 +1088,23 @@ fn show_layer_row(
             .fit_to_exact_size(egui::Vec2::splat(16.0))
             .tint(egui::Color32::from_white_alpha(alpha))
             .paint_at(ui, visibility.rect.shrink(4.0));
+    }
+
+    if let Some(mode) = &mode {
+        if mode.hovered() {
+            painter.rect_filled(
+                mode.rect,
+                6,
+                egui::Color32::from_white_alpha(if dark_mode { 20 } else { 35 }),
+            );
+        }
+        painter.text(
+            mode.rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "N",
+            egui::TextStyle::Small.resolve(ui.style()),
+            ui.visuals().weak_text_color(),
+        );
     }
 
     let thumbnail =
@@ -1120,18 +1152,21 @@ fn show_layer_row(
     } else {
         visuals.text_color()
     };
-    painter
-        .with_clip_rect(egui::Rect::from_min_max(
-            rect.min,
-            egui::pos2(rect.right() - 28.0, rect.bottom()),
-        ))
-        .text(
-            egui::pos2(thumbnail.max.x + 10.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            name,
-            egui::TextStyle::Button.resolve(ui.style()),
-            text_color,
-        );
+    let name_rect = egui::Rect::from_min_max(
+        egui::pos2(thumbnail.max.x + 6.0, rect.top() + 14.0),
+        egui::pos2(
+            mode.as_ref()
+                .map_or(rect.right() - 8.0, |mode| mode.rect.left() - 4.0),
+            rect.bottom() - 14.0,
+        ),
+    );
+    painter.with_clip_rect(name_rect).text(
+        egui::pos2(name_rect.left() + 4.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        name,
+        egui::TextStyle::Button.resolve(ui.style()),
+        text_color,
+    );
 
     if let Some(layer_id) = drag_id {
         let drag_rect = egui::Rect::from_center_size(
@@ -1168,6 +1203,7 @@ fn show_layer_row(
     LayerRowResponse {
         row: response.on_hover_cursor(egui::CursorIcon::PointingHand),
         visibility,
+        name_rect,
     }
 }
 
