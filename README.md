@@ -8,6 +8,7 @@ Implemented:
 - `wgpu` renderer
 - `egui` artwork gallery and editor controls
 - persistent editable artworks with automatic background saving
+- full-resolution flattened PNG export
 - 4000 × 4000 paint texture
 - bundled charcoal brush using the original stamp PNG
 - pressure-sensitive brush size/opacity on macOS via AppKit tablet and
@@ -31,8 +32,9 @@ Artwork changes save automatically after a short idle period. Use
 Returning to the gallery and closing the app wait for pending changes to save;
 a failed save is shown and must be retried or the navigation cancelled.
 Artworks are stored in the platform application-data directory under
-`chromazen/artworks`. Each artwork uses a private, versioned Chromazen format;
-PNG export is not currently provided.
+`chromazen/artworks`. Each artwork uses a private, versioned Chromazen format.
+Use **Export PNG…** to flatten the current live layers over the Background and
+write an opaque PNG at the canvas's native dimensions.
 
 Run:
 
@@ -87,11 +89,12 @@ Controls:
 - Wheel: zoom around cursor
 - Middle/right drag or Space + left drag: pan
 - Save artwork immediately: `Command-S` on macOS; `Control-S` on Windows and Linux
+- Export PNG: `Command-Shift-E` on macOS; `Control-Shift-E` on Windows and Linux
 - Undo: `Command-Z` on macOS; `Control-Z` on Windows and Linux
 - Redo: `Command-Shift-Z` on macOS; `Control-Y` on Windows;
   `Control-Shift-Z` or `Control-Y` on Linux
-- On macOS and Windows, create, save, and gallery actions are available from
-  the native **File** menu; Undo and Redo are available from **Edit**
+- On macOS and Windows, create, save, export, and gallery actions are available
+  from the native **File** menu; Undo and Redo are available from **Edit**
 - Use the minimal egui panels for brush controls and adding, selecting, or
   deleting layers
 - Select **Background** in the Layers panel to change its color; it cannot be
