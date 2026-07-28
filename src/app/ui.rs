@@ -1136,22 +1136,12 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
             }
         }
         if let Some(texture_id) = texture_id {
-            let tint = if visible == Some(false) {
-                egui::Color32::from_white_alpha(100)
-            } else {
-                egui::Color32::WHITE
-            };
             egui::Image::new((texture_id, thumbnail.size()))
                 .corner_radius(8)
-                .tint(tint)
                 .paint_at(ui, thumbnail);
         }
     }
-    let text_color = if visible == Some(false) {
-        ui.visuals().weak_text_color()
-    } else {
-        visuals.text_color()
-    };
+    let text_color = visuals.text_color();
     let name_rect = egui::Rect::from_min_max(
         egui::pos2(thumbnail.max.x + 6.0, rect.top() + 14.0),
         egui::pos2(
