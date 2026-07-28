@@ -6,6 +6,12 @@ pub(crate) struct LayerId(pub(crate) u64);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct LayerResourceId(pub(crate) u64);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DropEdge {
+    Above,
+    Below,
+}
+
 pub(crate) struct LayerProperties {
     pub(crate) name: String,
     pub(crate) visible: bool,
@@ -74,6 +80,28 @@ pub(crate) fn layer_name(number: u64) -> String {
     format!("Layer {number}")
 }
 
+pub(crate) fn normalized_layer_name(name: &str) -> Option<String> {
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
+pub(crate) fn relative_insertion_index(
+    dragged_index: usize,
+    target_index: usize,
+    edge: DropEdge,
+) -> Option<usize> {
+    if dragged_index == target_index {
+        return None;
+    }
+    let target_after_removal = target_index - usize::from(dragged_index < target_index);
+    let insertion = match edge {
+        // The internal vector is bottom-to-top, opposite the visual layer list.
+        DropEdge::Above => target_after_removal + 1,
+        DropEdge::Below => target_after_removal,
+    };
+    (insertion != dragged_index).then_some(insertion)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,5 +123,22 @@ mod tests {
     fn names_are_monotonic() {
         assert_eq!(layer_name(1), "Layer 1");
         assert_eq!(layer_name(42), "Layer 42");
+    }
+
+    #[test]
+    fn layer_names_are_trimmed_and_must_not_be_empty() {
+        assert_eq!(
+            normalized_layer_name("  Sketch  "),
+            Some("Sketch".to_owned())
+        );
+        assert_eq!(normalized_layer_name("   "), None);
+    }
+
+    #[test]
+    fn relative_moves_translate_visual_edges_to_internal_order() {
+        assert_eq!(relative_insertion_index(0, 1, DropEdge::Above), Some(1));
+        assert_eq!(relative_insertion_index(2, 1, DropEdge::Below), Some(1));
+        assert_eq!(relative_insertion_index(0, 1, DropEdge::Below), None);
+        assert_eq!(relative_insertion_index(1, 1, DropEdge::Above), None);
     }
 }

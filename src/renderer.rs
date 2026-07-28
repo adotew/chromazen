@@ -14,7 +14,8 @@ mod view;
 use self::{
     history::{HistoryTarget, PaintHistory, TextureRect},
     layers::{
-        LayerProperties, PaintLayer, insertion_index, layer_name, replacement_index_after_delete,
+        LayerProperties, PaintLayer, insertion_index, layer_name, normalized_layer_name,
+        relative_insertion_index, replacement_index_after_delete,
     },
     resources::RenderResources,
     sampling::{document_pixel, read_composited_color},
@@ -22,7 +23,7 @@ use self::{
     view::PaintView,
 };
 pub(crate) use self::{
-    layers::{LayerId, LayerInfo, LayerResourceId, LayerSnapshot},
+    layers::{DropEdge, LayerId, LayerInfo, LayerResourceId, LayerSnapshot},
     persistence::LayerReadback,
 };
 use crate::{
@@ -321,7 +322,10 @@ impl PaintRenderer {
     }
 
     pub fn can_paint(&self) -> bool {
-        self.active_stroke.is_none() && self.selected_layer_index().is_some()
+        self.active_stroke.is_none()
+            && self
+                .selected_layer_index()
+                .is_some_and(|index| self.layers[index].visible)
     }
 
     pub(crate) fn document_versions(&self) -> DocumentVersions {
@@ -530,6 +534,78 @@ impl PaintRenderer {
         } else {
             false
         }
+    }
+
+    pub(crate) fn rename_layer(&mut self, id: LayerId, name: &str) -> bool {
+        if !self.can_replace_document() {
+            return false;
+        }
+        let Some(name) = normalized_layer_name(name) else {
+            return false;
+        };
+        let Some(layer) = self.layers.iter_mut().find(|layer| layer.id == id) else {
+            return false;
+        };
+        if layer.name == name {
+            return false;
+        }
+        layer.name = name;
+        self.mark_metadata_changed();
+        true
+    }
+
+    pub(crate) fn set_layer_visibility(&mut self, id: LayerId, visible: bool) -> bool {
+        if !self.can_replace_document() {
+            return false;
+        }
+        let Some(layer) = self.layers.iter_mut().find(|layer| layer.id == id) else {
+            return false;
+        };
+        if layer.visible == visible {
+            return false;
+        }
+        layer.visible = visible;
+        self.mark_metadata_changed();
+        true
+    }
+
+    pub(crate) fn set_layer_opacity(&mut self, id: LayerId, opacity: u8) -> bool {
+        if !self.can_replace_document() || opacity > 100 {
+            return false;
+        }
+        let Some(layer) = self.layers.iter_mut().find(|layer| layer.id == id) else {
+            return false;
+        };
+        if layer.opacity == opacity {
+            return false;
+        }
+        layer.opacity = opacity;
+        self.mark_metadata_changed();
+        true
+    }
+
+    pub(crate) fn move_layer_relative(
+        &mut self,
+        dragged: LayerId,
+        target: LayerId,
+        edge: DropEdge,
+    ) -> bool {
+        if !self.can_replace_document() {
+            return false;
+        }
+        let Some(dragged_index) = self.layers.iter().position(|layer| layer.id == dragged) else {
+            return false;
+        };
+        let Some(target_index) = self.layers.iter().position(|layer| layer.id == target) else {
+            return false;
+        };
+        let Some(insertion) = relative_insertion_index(dragged_index, target_index, edge) else {
+            return false;
+        };
+        let layer = self.layers.remove(dragged_index);
+        self.layers.insert(insertion, layer);
+        self.mark_metadata_changed();
+        true
     }
 
     pub(crate) fn set_background_color(&mut self, color: [u8; 3]) {
