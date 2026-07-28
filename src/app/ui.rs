@@ -455,37 +455,31 @@ impl GuiLayer {
                                         .iter()
                                         .find(|thumbnail| thumbnail.key.layer_id == layer.id)
                                         .map(|thumbnail| thumbnail.texture_id);
-                                    let drag = ui.dnd_drag_source(
-                                        egui::Id::new(("layer drag", layer.id.0)),
-                                        layer.id,
-                                        |ui| {
-                                            show_layer_row(
-                                                ui,
-                                                &layer.name,
-                                                selected,
-                                                thumbnail,
-                                                None,
-                                                Some(layer.visible),
-                                            )
-                                        },
+                                    let row = show_layer_row(
+                                        ui,
+                                        &layer.name,
+                                        selected,
+                                        thumbnail,
+                                        None,
+                                        Some(layer.visible),
+                                        Some(layer.id),
                                     );
-                                    let row = drag.inner;
                                     if let (Some(pointer), Some(dragged)) = (
                                         ui.input(|input| input.pointer.interact_pos()),
-                                        drag.response.dnd_hover_payload::<LayerId>(),
+                                        row.row.dnd_hover_payload::<LayerId>(),
                                     ) && *dragged != layer.id
                                     {
-                                        let edge = if pointer.y < drag.response.rect.center().y {
+                                        let edge = if pointer.y < row.row.rect.center().y {
                                             DropEdge::Above
                                         } else {
                                             DropEdge::Below
                                         };
                                         let y = match edge {
-                                            DropEdge::Above => drag.response.rect.top(),
-                                            DropEdge::Below => drag.response.rect.bottom(),
+                                            DropEdge::Above => row.row.rect.top(),
+                                            DropEdge::Below => row.row.rect.bottom(),
                                         };
                                         ui.painter().hline(
-                                            drag.response.rect.x_range().shrink(8.0),
+                                            row.row.rect.x_range().shrink(8.0),
                                             y,
                                             egui::Stroke::new(
                                                 1.5_f32,
@@ -493,7 +487,7 @@ impl GuiLayer {
                                             ),
                                         );
                                         if let Some(dragged) =
-                                            drag.response.dnd_release_payload::<LayerId>()
+                                            row.row.dnd_release_payload::<LayerId>()
                                         {
                                             self.commands.push(AppCommand::MoveLayer {
                                                 dragged: *dragged,
@@ -507,11 +501,13 @@ impl GuiLayer {
                                             id: layer.id,
                                             visible: !layer.visible,
                                         });
-                                    } else if row.row.clicked() && !selected {
+                                    } else if (row.row.clicked() || row.row.secondary_clicked())
+                                        && !selected
+                                    {
                                         self.commands.push(AppCommand::SelectLayer(layer.id));
                                     }
 
-                                    if selected {
+                                    if selected || row.row.secondary_clicked() {
                                         let properties_popup_id =
                                             egui::Popup::default_response_id(&row.row);
                                         if !egui::Popup::is_id_open(ui.ctx(), properties_popup_id)
@@ -534,7 +530,15 @@ impl GuiLayer {
                                         let mut commit_name = false;
                                         let mut cancel_name = false;
                                         let mut opacity_changed = false;
-                                        egui::Popup::from_toggle_button_response(&row.row)
+                                        let popup_open_command = if row.row.secondary_clicked() {
+                                            Some(egui::SetOpenCommand::Bool(true))
+                                        } else if row.row.clicked() {
+                                            Some(egui::SetOpenCommand::Toggle)
+                                        } else {
+                                            None
+                                        };
+                                        egui::Popup::from_response(&row.row)
+                                            .open_memory(popup_open_command)
                                             .width(240.0)
                                             .close_behavior(
                                                 egui::PopupCloseBehavior::CloseOnClickOutside,
@@ -631,6 +635,7 @@ impl GuiLayer {
                                     false,
                                     None,
                                     Some(background),
+                                    None,
                                     None,
                                 );
                                 egui::Popup::from_toggle_button_response(&response.row)
@@ -1017,6 +1022,7 @@ fn show_layer_row(
     texture_id: Option<egui::TextureId>,
     solid_color: Option<egui::Color32>,
     visible: Option<bool>,
+    drag_id: Option<LayerId>,
 ) -> LayerRowResponse {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 60.0), egui::Sense::click());
@@ -1114,13 +1120,50 @@ fn show_layer_row(
     } else {
         visuals.text_color()
     };
-    painter.text(
-        egui::pos2(thumbnail.max.x + 10.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        name,
-        egui::TextStyle::Button.resolve(ui.style()),
-        text_color,
-    );
+    painter
+        .with_clip_rect(egui::Rect::from_min_max(
+            rect.min,
+            egui::pos2(rect.right() - 28.0, rect.bottom()),
+        ))
+        .text(
+            egui::pos2(thumbnail.max.x + 10.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            name,
+            egui::TextStyle::Button.resolve(ui.style()),
+            text_color,
+        );
+
+    if let Some(layer_id) = drag_id {
+        let drag_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - 15.0, rect.center().y),
+            egui::vec2(24.0, 44.0),
+        );
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(drag_rect)
+                .layout(egui::Layout::top_down(egui::Align::Center)),
+            |ui| {
+                ui.dnd_drag_source(egui::Id::new(("layer drag", layer_id.0)), layer_id, |ui| {
+                    let (icon_rect, response) =
+                        ui.allocate_exact_size(drag_rect.size(), egui::Sense::hover());
+                    let alpha = if response.hovered() { 190 } else { 70 };
+                    egui::Image::new(egui::include_image!("../../assets/icons/grip-vertical.svg"))
+                        .fit_to_exact_size(egui::Vec2::splat(16.0))
+                        .tint(egui::Color32::from_white_alpha(alpha))
+                        .paint_at(
+                            ui,
+                            egui::Rect::from_center_size(
+                                icon_rect.center(),
+                                egui::Vec2::splat(16.0),
+                            ),
+                        );
+                    response
+                })
+                .response
+                .on_hover_text("Drag to reorder");
+            },
+        );
+    }
 
     LayerRowResponse {
         row: response.on_hover_cursor(egui::CursorIcon::PointingHand),
