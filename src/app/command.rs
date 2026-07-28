@@ -19,6 +19,7 @@ pub(super) enum AppCommand {
     CreateArtwork { width: u32, height: u32 },
     OpenArtwork(ArtworkId),
     SaveArtwork,
+    ExportPng,
     ShowGallery,
     RenameArtwork { id: ArtworkId, title: String },
     DeleteArtwork(ArtworkId),

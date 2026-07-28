@@ -100,6 +100,10 @@ impl AutosaveController {
         self.session = None;
     }
 
+    pub(super) fn artwork_title(&self) -> Option<&str> {
+        self.session.as_ref().map(|session| session.title.as_str())
+    }
+
     pub(super) fn status(&self, paint: &PaintRenderer) -> SaveStatus {
         let Some(session) = &self.session else {
             return SaveStatus::Clean;

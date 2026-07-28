@@ -1,5 +1,6 @@
 mod autosave;
 mod command;
+mod export;
 mod gallery;
 mod input;
 mod menu;
@@ -22,6 +23,7 @@ use winit::{
 use self::{
     autosave::AutosaveController,
     command::AppCommand,
+    export::{ExportController, choose_export_path},
     gallery::GalleryController,
     input::{KeyboardShortcut, PaintInputController},
     menu::NativeMenu,
@@ -38,6 +40,7 @@ const WINDOW_TITLE: &str = "Chromazen";
 enum AppEvent {
     Command(AppCommand),
     AutosaveWake,
+    ExportWake,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +67,7 @@ pub struct App {
     native_menu: NativeMenu,
     gallery: GalleryController,
     autosave: AutosaveController,
+    export: ExportController,
     screen: AppScreen,
     pending_gallery: bool,
     pending_new_artwork: Option<[u32; 2]>,
@@ -241,7 +245,7 @@ impl ApplicationHandler<AppEvent> for App {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
             AppEvent::Command(command) => self.pending_commands.push(command),
-            AppEvent::AutosaveWake => {}
+            AppEvent::AutosaveWake | AppEvent::ExportWake => {}
         }
         self.next_repaint = None;
         if let Some(window) = self.window.as_ref() {
@@ -266,6 +270,7 @@ impl App {
         native_menu: NativeMenu,
         gallery: GalleryController,
         autosave: AutosaveController,
+        export: ExportController,
     ) -> Self {
         Self {
             window: None,
@@ -280,6 +285,7 @@ impl App {
             native_menu,
             gallery,
             autosave,
+            export,
             screen: AppScreen::Gallery,
             pending_gallery: false,
             pending_new_artwork: None,
@@ -316,10 +322,11 @@ impl App {
     }
 
     fn render(&mut self, window: &Window, event_loop: &ActiveEventLoop) {
-        let mut app_action_processed = self.process_pending_commands();
+        let mut app_action_processed = self.process_export_completion();
+        app_action_processed |= self.process_pending_commands();
         let mut brush_switched = self.apply_pending_brush_change();
 
-        if self.pending_exit && self.screen == AppScreen::Gallery {
+        if self.pending_exit && self.screen == AppScreen::Gallery && !self.export.is_exporting() {
             event_loop.exit();
             return;
         }
@@ -327,7 +334,7 @@ impl App {
             && let Some(paint) = self.paint.as_ref()
         {
             app_action_processed |= self.autosave.update(paint);
-            if self.pending_exit && self.autosave.is_clean(paint) {
+            if self.pending_exit && self.autosave.is_clean(paint) && !self.export.is_exporting() {
                 event_loop.exit();
                 return;
             }
@@ -529,6 +536,28 @@ impl App {
                         self.autosave.request_save();
                     }
                 }
+                AppCommand::ExportPng => {
+                    if self.screen != AppScreen::Editor || self.export.is_exporting() {
+                        continue;
+                    }
+                    if let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_ref()) {
+                        self.input.finish_document_interaction(paint, gui.brush);
+                    }
+                    let title = self.autosave.artwork_title().unwrap_or("Untitled");
+                    let Some(path) = choose_export_path(title) else {
+                        continue;
+                    };
+                    let result = self
+                        .paint
+                        .as_ref()
+                        .ok_or_else(|| "the paint renderer is unavailable".to_owned())
+                        .and_then(|paint| self.export.start(path, paint));
+                    if let Err(error) = result
+                        && let Some(gui) = self.gui.as_mut()
+                    {
+                        gui.show_error(error);
+                    }
+                }
                 AppCommand::ShowGallery => {
                     if self.screen == AppScreen::Editor {
                         if let Some(gui) = self.gui.as_mut() {
@@ -562,6 +591,24 @@ impl App {
             }
         }
         self.sync_history_menu();
+        true
+    }
+
+    fn process_export_completion(&mut self) -> bool {
+        let Some(completion) = self.export.take_completion() else {
+            return false;
+        };
+        if let Some(gui) = self.gui.as_mut() {
+            match completion.result {
+                Ok(()) => {
+                    gui.show_success(format!("Exported PNG to {}", completion.path.display()))
+                }
+                Err(error) => {
+                    self.pending_exit = false;
+                    gui.show_error(error);
+                }
+            }
+        }
         true
     }
 
@@ -903,7 +950,17 @@ pub fn run() {
         let _ = proxy.send_event(AppEvent::AutosaveWake);
     });
     let autosave = AutosaveController::new(autosave_store, wake);
+    let export_proxy = event_loop.create_proxy();
+    let export = ExportController::new(Arc::new(move || {
+        let _ = export_proxy.send_event(AppEvent::ExportWake);
+    }));
 
-    let mut app = App::new(SettingsController::load(), native_menu, gallery, autosave);
+    let mut app = App::new(
+        SettingsController::load(),
+        native_menu,
+        gallery,
+        autosave,
+        export,
+    );
     event_loop.run_app(&mut app).expect("event loop error");
 }
