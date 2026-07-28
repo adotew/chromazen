@@ -476,6 +476,35 @@ impl App {
                         paint.delete_selected_layer();
                     }
                 }
+                AppCommand::RenameLayer { id, name } => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.rename_layer(id, &name);
+                    }
+                }
+                AppCommand::SetLayerVisibility { id, visible } => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.set_layer_visibility(id, visible);
+                    }
+                }
+                AppCommand::SetLayerOpacity { id, opacity } => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.set_layer_opacity(id, opacity);
+                    }
+                }
+                AppCommand::CommitLayerOpacity { id, before, after } => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.commit_layer_opacity(id, before, after);
+                    }
+                }
+                AppCommand::MoveLayer {
+                    dragged,
+                    target,
+                    edge,
+                } => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.move_layer_relative(dragged, target, edge);
+                    }
+                }
                 AppCommand::SetBackgroundColor(color) => {
                     if let Some(paint) = self.paint.as_mut() {
                         paint.set_background_color(color);
