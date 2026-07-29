@@ -253,6 +253,9 @@ impl PaintRenderer {
     pub fn surface_size(&self) -> [u32; 2] {
         self.gpu.surface_size()
     }
+    pub(crate) fn document_size(&self) -> [u32; 2] {
+        self.document_size
+    }
     pub fn zoom(&self) -> f32 {
         self.view.zoom()
     }

@@ -4,6 +4,7 @@ mod export;
 mod gallery;
 mod input;
 mod menu;
+mod reference_import;
 mod references;
 mod settings;
 mod ui;
@@ -28,6 +29,7 @@ use self::{
     gallery::GalleryController,
     input::{KeyboardShortcut, PaintInputController},
     menu::NativeMenu,
+    reference_import::{ReferenceImportController, choose_reference_paths},
     references::ReferenceBoard,
     settings::{SettingsCommand, SettingsController, SettingsEffect},
     ui::{BrushResizeLabel, EditorUiState, EyedropperIndicator, GuiLayer},
@@ -43,6 +45,7 @@ enum AppEvent {
     Command(AppCommand),
     AutosaveWake,
     ExportWake,
+    ReferenceImportWake,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,6 +74,7 @@ pub struct App {
     autosave: AutosaveController,
     export: ExportController,
     references: ReferenceBoard,
+    reference_import: ReferenceImportController,
     screen: AppScreen,
     pending_gallery: bool,
     pending_new_artwork: Option<[u32; 2]>,
@@ -143,6 +147,15 @@ impl ApplicationHandler<AppEvent> for App {
         match event {
             WindowEvent::CloseRequested => self.request_exit(),
             WindowEvent::RedrawRequested => self.render(window.as_ref(), event_loop),
+            WindowEvent::DroppedFile(path)
+                if self.screen == AppScreen::Editor && !self.navigation_pending() =>
+            {
+                let placement = self
+                    .paint
+                    .as_ref()
+                    .map(|paint| paint.window_to_document(self.input.cursor_position()));
+                self.reference_import.start(vec![path], placement);
+            }
             event => {
                 let navigation_pending = self.navigation_pending();
                 let Some(gui) = self.gui.as_mut() else {
@@ -248,7 +261,7 @@ impl ApplicationHandler<AppEvent> for App {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
             AppEvent::Command(command) => self.pending_commands.push(command),
-            AppEvent::AutosaveWake | AppEvent::ExportWake => {}
+            AppEvent::AutosaveWake | AppEvent::ExportWake | AppEvent::ReferenceImportWake => {}
         }
         self.next_repaint = None;
         if let Some(window) = self.window.as_ref() {
@@ -274,6 +287,7 @@ impl App {
         gallery: GalleryController,
         autosave: AutosaveController,
         export: ExportController,
+        reference_import: ReferenceImportController,
     ) -> Self {
         Self {
             window: None,
@@ -290,6 +304,7 @@ impl App {
             autosave,
             export,
             references: ReferenceBoard::default(),
+            reference_import,
             screen: AppScreen::Gallery,
             pending_gallery: false,
             pending_new_artwork: None,
@@ -327,6 +342,7 @@ impl App {
 
     fn render(&mut self, window: &Window, event_loop: &ActiveEventLoop) {
         let mut app_action_processed = self.process_export_completion();
+        app_action_processed |= self.process_reference_import_completions();
         app_action_processed |= self.process_pending_commands();
         let mut brush_switched = self.apply_pending_brush_change();
 
@@ -521,7 +537,13 @@ impl App {
                         paint.move_layer_relative(dragged, target, edge);
                     }
                 }
-                AppCommand::AddReferences => {}
+                AppCommand::AddReferences => {
+                    if self.screen != AppScreen::Editor {
+                        continue;
+                    }
+                    let paths = choose_reference_paths();
+                    self.reference_import.start(paths, None);
+                }
                 AppCommand::SetReferenceTransform { id, position, size } => {
                     self.references.set_transform(id, position, size);
                 }
@@ -657,6 +679,29 @@ impl App {
         }
         self.sync_history_menu();
         true
+    }
+
+    fn process_reference_import_completions(&mut self) -> bool {
+        let mut changed = false;
+        while let Some(completion) = self.reference_import.take_completion() {
+            changed = true;
+            let base = completion.placement.unwrap_or_else(|| {
+                self.paint.as_ref().map_or([100.0, 100.0], |paint| {
+                    [paint.document_size()[0] as f32 + 100.0, 100.0]
+                })
+            });
+            for (index, image) in completion.images.into_iter().enumerate() {
+                let offset = index as f32 * 32.0;
+                self.references
+                    .add(image, [base[0] + offset, base[1] + offset]);
+            }
+            if !completion.errors.is_empty()
+                && let Some(gui) = self.gui.as_mut()
+            {
+                gui.show_error(completion.errors.join("\n"));
+            }
+        }
+        changed
     }
 
     fn process_export_completion(&mut self) -> bool {
@@ -1030,6 +1075,10 @@ pub fn run() {
     let export = ExportController::new(Arc::new(move || {
         let _ = export_proxy.send_event(AppEvent::ExportWake);
     }));
+    let reference_import_proxy = event_loop.create_proxy();
+    let reference_import = ReferenceImportController::new(Arc::new(move || {
+        let _ = reference_import_proxy.send_event(AppEvent::ReferenceImportWake);
+    }));
 
     let mut app = App::new(
         SettingsController::load(),
@@ -1037,6 +1086,7 @@ pub fn run() {
         gallery,
         autosave,
         export,
+        reference_import,
     );
     event_loop.run_app(&mut app).expect("event loop error");
 }

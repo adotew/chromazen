@@ -55,6 +55,10 @@ impl PaintInputController {
         self.tool
     }
 
+    pub(crate) fn cursor_position(&self) -> [f32; 2] {
+        self.cursor_pos
+    }
+
     pub fn brush_cursor_pos(&self) -> Option<[f32; 2]> {
         (self.cursor_inside
             && !self.is_panning
