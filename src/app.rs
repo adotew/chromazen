@@ -883,42 +883,44 @@ impl App {
     }
 
     fn undo(&mut self) {
-        let Some(action) = self.history.undo_action() else {
-            return;
-        };
-        let applied = match action {
-            AppHistoryAction::Paint => self
-                .paint
-                .as_mut()
-                .is_some_and(|paint| paint.can_undo() && paint.undo()),
-            AppHistoryAction::References { before, .. } => {
-                self.references.restore(before);
-                true
-            }
-        };
-        if applied {
-            self.pending_reference_transform = None;
+        while let Some(action) = self.history.undo_action() {
+            let applied = match action {
+                AppHistoryAction::Paint => self
+                    .paint
+                    .as_mut()
+                    .is_some_and(|paint| paint.can_undo() && paint.undo()),
+                AppHistoryAction::References { before, .. } => {
+                    self.references.restore(before);
+                    true
+                }
+            };
+            // Texture-budget eviction can remove an old renderer entry before its lightweight
+            // app-level marker. Skip that stale marker so older reference actions stay reachable.
             self.history.commit_undo();
+            if applied {
+                self.pending_reference_transform = None;
+                break;
+            }
         }
     }
 
     fn redo(&mut self) {
-        let Some(action) = self.history.redo_action() else {
-            return;
-        };
-        let applied = match action {
-            AppHistoryAction::Paint => self
-                .paint
-                .as_mut()
-                .is_some_and(|paint| paint.can_redo() && paint.redo()),
-            AppHistoryAction::References { after, .. } => {
-                self.references.restore(after);
-                true
-            }
-        };
-        if applied {
-            self.pending_reference_transform = None;
+        while let Some(action) = self.history.redo_action() {
+            let applied = match action {
+                AppHistoryAction::Paint => self
+                    .paint
+                    .as_mut()
+                    .is_some_and(|paint| paint.can_redo() && paint.redo()),
+                AppHistoryAction::References { after, .. } => {
+                    self.references.restore(after);
+                    true
+                }
+            };
             self.history.commit_redo();
+            if applied {
+                self.pending_reference_transform = None;
+                break;
+            }
         }
     }
 
