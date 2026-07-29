@@ -580,6 +580,13 @@ impl App {
                             .record_references(before, self.references.snapshot());
                     }
                 }
+                AppCommand::SetAllReferencesVisible(visible) => {
+                    let before = self.references.snapshot();
+                    if self.references.set_all_visible(visible) {
+                        self.history
+                            .record_references(before, self.references.snapshot());
+                    }
+                }
                 AppCommand::BringReferenceForward(id) => {
                     let before = self.references.snapshot();
                     if self.references.bring_forward(id) {

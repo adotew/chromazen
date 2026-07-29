@@ -280,6 +280,16 @@ impl GuiLayer {
             if ui.small_button("Add…").clicked() {
                 self.commands.push(AppCommand::AddReferences);
             }
+            if !references.is_empty() {
+                let any_visible = references.iter().any(|reference| reference.visible);
+                if ui
+                    .small_button(if any_visible { "Hide all" } else { "Show all" })
+                    .clicked()
+                {
+                    self.commands
+                        .push(AppCommand::SetAllReferencesVisible(!any_visible));
+                }
+            }
         });
         if references.is_empty() {
             ui.weak("Drop an image here or use Add…");
@@ -309,6 +319,10 @@ impl GuiLayer {
                 {
                     self.commands
                         .push(AppCommand::ToggleReferenceLocked(reference.id));
+                }
+                if ui.small_button("×").on_hover_text("Delete").clicked() {
+                    self.commands
+                        .push(AppCommand::DeleteReference(reference.id));
                 }
             });
         }
@@ -388,6 +402,11 @@ impl GuiLayer {
                 if ui.button("Lock").clicked() {
                     self.commands
                         .push(AppCommand::ToggleReferenceLocked(reference.id));
+                    ui.close();
+                }
+                if ui.button("Hide").clicked() {
+                    self.commands
+                        .push(AppCommand::ToggleReferenceVisible(reference.id));
                     ui.close();
                 }
                 if ui.button("Bring Forward").clicked() {
@@ -650,6 +669,12 @@ impl GuiLayer {
         context.run_ui(raw_input, |ui| {
             let background = background_color(layers.background_color);
             self.show_workspace_references(ui.ctx(), references, workspace_view);
+            if let Some(id) = self.selected_reference
+                && !ui.ctx().egui_wants_keyboard_input()
+                && ui.ctx().input(|input| input.key_pressed(egui::Key::Delete))
+            {
+                self.commands.push(AppCommand::DeleteReference(id));
+            }
 
             // egui's built-in animated panel deliberately hides its contents while resizing,
             // which makes a wide sidebar flash empty. Keep a full-width child clipped to an
