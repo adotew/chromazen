@@ -9,7 +9,8 @@ Implemented:
 - `egui` artwork gallery and editor controls
 - persistent editable artworks with automatic background saving
 - full-resolution flattened PNG export
-- 4000 × 4000 paint texture
+- custom canvas dimensions up to the renderer's safe texture and pixel limits
+- per-artwork reference images arranged in the workspace outside or over the canvas
 - bundled charcoal brush using the original stamp PNG
 - pressure-sensitive brush size/opacity on macOS via AppKit tablet and
   pressure events
@@ -32,9 +33,12 @@ Artwork changes save automatically after a short idle period. Use
 Returning to the gallery and closing the app wait for pending changes to save;
 a failed save is shown and must be retried or the navigation cancelled.
 Artworks are stored in the platform application-data directory under
-`chromazen/artworks`. Each artwork uses a private, versioned Chromazen format.
-Use **Export PNG…** to flatten the current live layers over the Background and
-write an opaque PNG at the canvas's native dimensions.
+`chromazen/artworks`. Each artwork uses a private, versioned Chromazen format. Imported reference
+images are copied into that format, so their saved layout does not depend on the
+original files remaining in place. References are workspace aids: they are not
+included in gallery thumbnails or exported images. Use **Export PNG…** to
+flatten the current live layers over the Background and write an opaque PNG at
+the canvas's native dimensions.
 
 Run:
 
@@ -74,6 +78,15 @@ fall back to the bundled charcoal brush.
 Controls:
 
 - Left drag: use the selected tool on the selected paint layer
+- Use **Add…** in the References section or **File → Add Reference…** to import
+  PNG and JPEG reference images; image files can also be dropped into the editor
+- Drag an unlocked reference to move it; drag its lower-right handle to resize
+  it while preserving its aspect ratio
+- Use the References section to select, hide, show, lock, unlock, or delete a
+  reference; right-click an unlocked reference to change its order or remove it
+- Locked references are click-through, allowing painting and panning over them
+- Reference positions and sizes use canvas-relative workspace coordinates and
+  are restored when the artwork is reopened
 - `B`: select Brush
 - `E`: select Eraser; erasing makes the selected layer transparent to reveal
   lower layers and the Background
@@ -93,8 +106,9 @@ Controls:
 - Undo: `Command-Z` on macOS; `Control-Z` on Windows and Linux
 - Redo: `Command-Shift-Z` on macOS; `Control-Y` on Windows;
   `Control-Shift-Z` or `Control-Y` on Linux
-- On macOS and Windows, create, save, export, and gallery actions are available
-  from the native **File** menu; Undo and Redo are available from **Edit**
+- On macOS and Windows, create, save, export, reference import, and gallery
+  actions are available from the native **File** menu; Undo and Redo are
+  available from **Edit**
 - Use the minimal egui panels for brush controls and adding, selecting, or
   deleting layers
 - Click a layer's eye to show or hide it; hidden selected layers cannot be painted on
