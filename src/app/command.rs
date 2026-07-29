@@ -1,10 +1,11 @@
 use crate::{
+    app::references::ReferenceId,
     artwork::ArtworkId,
     paint::PaintTool,
     renderer::{DropEdge, LayerId},
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) enum AppCommand {
     Undo,
     Redo,
@@ -39,6 +40,24 @@ pub(super) enum AppCommand {
         target: LayerId,
         edge: DropEdge,
     },
+    AddReferences,
+    SetReferenceTransform {
+        id: ReferenceId,
+        position: [f32; 2],
+        size: [f32; 2],
+    },
+    CommitReferenceTransform {
+        id: ReferenceId,
+        before_position: [f32; 2],
+        before_size: [f32; 2],
+        after_position: [f32; 2],
+        after_size: [f32; 2],
+    },
+    ToggleReferenceLocked(ReferenceId),
+    ToggleReferenceVisible(ReferenceId),
+    BringReferenceForward(ReferenceId),
+    SendReferenceBackward(ReferenceId),
+    DeleteReference(ReferenceId),
     SetBackgroundColor([u8; 3]),
     CommitBackgroundColor {
         before: [u8; 3],

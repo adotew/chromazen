@@ -15,11 +15,15 @@ use crate::{
     paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings, StrokeSmoothingOptions},
     renderer::{
         CanvasSizeConstraints, DEFAULT_CANVAS_SIZE, DropEdge, LayerId, LayerResourceId,
-        LayerSnapshot, PaintRenderer, merge_down_target_index,
+        LayerSnapshot, PaintRenderer, PaintViewSnapshot, merge_down_target_index,
     },
 };
 
-use super::{autosave::SaveStatus, command::AppCommand};
+use super::{
+    autosave::SaveStatus,
+    command::AppCommand,
+    references::{ReferenceId, ReferenceImage},
+};
 
 #[derive(Clone, Copy)]
 pub(crate) struct BrushResizeLabel {
@@ -40,6 +44,8 @@ pub(crate) struct EditorUiState<'a> {
     pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
     pub(crate) save_status: SaveStatus,
     pub(crate) pending_navigation: Option<&'a str>,
+    pub(crate) references: &'a [ReferenceImage],
+    pub(crate) workspace_view: PaintViewSnapshot,
 }
 
 pub struct GuiLayer {
@@ -59,6 +65,9 @@ pub struct GuiLayer {
     layer_name_edit: Option<LayerNameEdit>,
     layer_opacity_edit: Option<LayerOpacityEdit>,
     layer_thumbnails: Vec<LayerThumbnail>,
+    reference_textures: Vec<ReferenceTexture>,
+    selected_reference: Option<ReferenceId>,
+    reference_transform_edit: Option<ReferenceTransformEdit>,
     brush_previews: Vec<(String, egui::TextureHandle)>,
     failed_brush_previews: Vec<String>,
     sidebar_visible: bool,
@@ -81,6 +90,26 @@ struct LayerPreviewKey {
 struct LayerThumbnail {
     key: LayerPreviewKey,
     texture_id: egui::TextureId,
+}
+
+struct ReferenceTexture {
+    id: ReferenceId,
+    resource_version: u64,
+    texture: egui::TextureHandle,
+}
+
+#[derive(Clone, Copy)]
+enum ReferenceDrag {
+    Move(egui::Vec2),
+    Resize(egui::Vec2),
+}
+
+struct ReferenceTransformEdit {
+    id: ReferenceId,
+    before_position: [f32; 2],
+    before_size: [f32; 2],
+    current_position: [f32; 2],
+    current_size: [f32; 2],
 }
 
 struct LayerNameEdit {
@@ -156,6 +185,9 @@ impl GuiLayer {
             layer_name_edit: None,
             layer_opacity_edit: None,
             layer_thumbnails: Vec::new(),
+            reference_textures: Vec::new(),
+            selected_reference: None,
+            reference_transform_edit: None,
             brush_previews: Vec::new(),
             failed_brush_previews: Vec::new(),
             sidebar_visible: true,
@@ -203,6 +235,284 @@ impl GuiLayer {
                     .push(LayerThumbnail { key, texture_id });
             }
         }
+    }
+
+    fn sync_reference_textures(&mut self, references: &[ReferenceImage]) {
+        self.reference_textures.retain(|cached| {
+            references.iter().any(|reference| {
+                reference.id == cached.id && reference.resource_version == cached.resource_version
+            })
+        });
+        for reference in references {
+            if self.reference_texture(reference.id).is_some() {
+                continue;
+            }
+            let size = [
+                reference.pixels.width() as usize,
+                reference.pixels.height() as usize,
+            ];
+            let image = egui::ColorImage::from_rgba_unmultiplied(size, reference.pixels.as_raw());
+            let texture = self.context.load_texture(
+                format!("reference {}", reference.id.0),
+                image,
+                egui::TextureOptions::LINEAR,
+            );
+            self.reference_textures.push(ReferenceTexture {
+                id: reference.id,
+                resource_version: reference.resource_version,
+                texture,
+            });
+        }
+        if self
+            .selected_reference
+            .is_some_and(|id| references.iter().all(|reference| reference.id != id))
+        {
+            self.selected_reference = None;
+        }
+    }
+
+    fn reference_texture(&self, id: ReferenceId) -> Option<egui::TextureId> {
+        self.reference_textures
+            .iter()
+            .find(|cached| cached.id == id)
+            .map(|cached| cached.texture.id())
+    }
+
+    fn show_reference_controls(&mut self, ui: &mut egui::Ui, references: &[ReferenceImage]) {
+        ui.horizontal(|ui| {
+            ui.strong("References");
+            if ui.small_button("Add…").clicked() {
+                self.commands.push(AppCommand::AddReferences);
+            }
+        });
+        if references.is_empty() {
+            ui.weak("Drop an image here or use Add…");
+            return;
+        }
+        for (index, reference) in references.iter().enumerate().rev() {
+            ui.horizontal(|ui| {
+                let selected = self.selected_reference == Some(reference.id);
+                if ui
+                    .selectable_label(selected, format!("Reference {}", index + 1))
+                    .clicked()
+                {
+                    self.selected_reference = Some(reference.id);
+                }
+                if ui
+                    .small_button(if reference.visible { "◉" } else { "○" })
+                    .on_hover_text(if reference.visible { "Hide" } else { "Show" })
+                    .clicked()
+                {
+                    self.commands
+                        .push(AppCommand::ToggleReferenceVisible(reference.id));
+                }
+                if ui
+                    .small_button(if reference.locked { "🔒" } else { "🔓" })
+                    .on_hover_text(if reference.locked { "Unlock" } else { "Lock" })
+                    .clicked()
+                {
+                    self.commands
+                        .push(AppCommand::ToggleReferenceLocked(reference.id));
+                }
+            });
+        }
+    }
+
+    fn show_workspace_references(
+        &mut self,
+        context: &egui::Context,
+        references: &[ReferenceImage],
+        view: PaintViewSnapshot,
+    ) {
+        let pixels_per_point = context.pixels_per_point();
+        for reference in references.iter().filter(|reference| reference.visible) {
+            let Some(texture_id) = self.reference_texture(reference.id) else {
+                continue;
+            };
+            let window_position = view.document_to_window(reference.position);
+            let position = egui::pos2(
+                window_position[0] / pixels_per_point,
+                window_position[1] / pixels_per_point,
+            );
+            let size = egui::vec2(
+                reference.size[0] * view.zoom / pixels_per_point,
+                reference.size[1] * view.zoom / pixels_per_point,
+            );
+            if size.x <= 0.5 || size.y <= 0.5 {
+                continue;
+            }
+
+            if reference.locked {
+                let rect = egui::Rect::from_min_size(position, size);
+                let painter = context.layer_painter(egui::LayerId::new(
+                    egui::Order::Middle,
+                    egui::Id::new(("locked reference", reference.id.0)),
+                ));
+                painter.image(
+                    texture_id,
+                    rect,
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+                if self.selected_reference == Some(reference.id) {
+                    painter.rect_stroke(
+                        rect,
+                        0.0,
+                        egui::Stroke::new(2.0_f32, egui::Color32::LIGHT_BLUE),
+                        egui::StrokeKind::Outside,
+                    );
+                }
+                continue;
+            }
+
+            let area = egui::Area::new(egui::Id::new(("reference", reference.id.0)))
+                .order(egui::Order::Middle)
+                .fixed_pos(position)
+                .show(context, |ui| {
+                    let image =
+                        egui::Image::new((texture_id, size)).sense(egui::Sense::click_and_drag());
+                    let response = ui.add(image);
+                    let handle_size = 18.0;
+                    let handle_rect = egui::Rect::from_min_size(
+                        response.rect.right_bottom() - egui::vec2(handle_size, handle_size),
+                        egui::Vec2::splat(handle_size),
+                    );
+                    let resize = ui.interact(
+                        handle_rect,
+                        egui::Id::new(("reference resize", reference.id.0)),
+                        egui::Sense::drag(),
+                    );
+                    (response, resize)
+                });
+            let (response, resize) = area.inner;
+            if response.clicked() || resize.drag_started() {
+                self.selected_reference = Some(reference.id);
+            }
+            response.context_menu(|ui| {
+                if ui.button("Lock").clicked() {
+                    self.commands
+                        .push(AppCommand::ToggleReferenceLocked(reference.id));
+                    ui.close();
+                }
+                if ui.button("Bring Forward").clicked() {
+                    self.commands
+                        .push(AppCommand::BringReferenceForward(reference.id));
+                    ui.close();
+                }
+                if ui.button("Send Backward").clicked() {
+                    self.commands
+                        .push(AppCommand::SendReferenceBackward(reference.id));
+                    ui.close();
+                }
+                if ui.button("Delete").clicked() {
+                    self.commands
+                        .push(AppCommand::DeleteReference(reference.id));
+                    ui.close();
+                }
+            });
+
+            let active = if resize.dragged() {
+                Some(ReferenceDrag::Resize(resize.drag_delta()))
+            } else if response.dragged() {
+                Some(ReferenceDrag::Move(response.drag_delta()))
+            } else {
+                None
+            };
+            if response.drag_started() || resize.drag_started() {
+                self.reference_transform_edit = Some(ReferenceTransformEdit {
+                    id: reference.id,
+                    before_position: reference.position,
+                    before_size: reference.size,
+                    current_position: reference.position,
+                    current_size: reference.size,
+                });
+            }
+            if let Some(drag) = active {
+                self.update_reference_drag(reference, drag, view, pixels_per_point);
+            }
+            if response.drag_stopped() || resize.drag_stopped() {
+                self.commit_reference_drag(reference.id);
+            }
+
+            if self.selected_reference == Some(reference.id) {
+                let painter = context.layer_painter(area.response.layer_id);
+                painter.rect_stroke(
+                    response.rect,
+                    0.0,
+                    egui::Stroke::new(2.0_f32, egui::Color32::LIGHT_BLUE),
+                    egui::StrokeKind::Outside,
+                );
+                painter.rect_filled(
+                    egui::Rect::from_min_size(
+                        response.rect.right_bottom() - egui::vec2(14.0, 14.0),
+                        egui::Vec2::splat(14.0),
+                    ),
+                    2.0,
+                    egui::Color32::LIGHT_BLUE,
+                );
+            }
+        }
+    }
+
+    fn update_reference_drag(
+        &mut self,
+        reference: &ReferenceImage,
+        drag: ReferenceDrag,
+        view: PaintViewSnapshot,
+        pixels_per_point: f32,
+    ) {
+        let delta = match drag {
+            ReferenceDrag::Move(delta) | ReferenceDrag::Resize(delta) => view
+                .window_delta_to_document([delta.x * pixels_per_point, delta.y * pixels_per_point]),
+        };
+        let (position, size) = match drag {
+            ReferenceDrag::Move(_) => (
+                [
+                    reference.position[0] + delta[0],
+                    reference.position[1] + delta[1],
+                ],
+                reference.size,
+            ),
+            ReferenceDrag::Resize(_) => {
+                let scale = ((reference.size[0] + delta[0]) / reference.size[0])
+                    .max((reference.size[1] + delta[1]) / reference.size[1])
+                    .max(40.0 / reference.size[0].min(reference.size[1]));
+                (
+                    reference.position,
+                    [reference.size[0] * scale, reference.size[1] * scale],
+                )
+            }
+        };
+        if let Some(edit) = self
+            .reference_transform_edit
+            .as_mut()
+            .filter(|edit| edit.id == reference.id)
+        {
+            edit.current_position = position;
+            edit.current_size = size;
+        }
+        self.commands.push(AppCommand::SetReferenceTransform {
+            id: reference.id,
+            position,
+            size,
+        });
+    }
+
+    fn commit_reference_drag(&mut self, id: ReferenceId) {
+        let Some(edit) = self
+            .reference_transform_edit
+            .take()
+            .filter(|edit| edit.id == id)
+        else {
+            return;
+        };
+        self.commands.push(AppCommand::CommitReferenceTransform {
+            id,
+            before_position: edit.before_position,
+            before_size: edit.before_size,
+            after_position: edit.current_position,
+            after_size: edit.current_size,
+        });
     }
 
     fn brush_preview_texture(&self, brush_id: &str) -> Option<egui::TextureId> {
@@ -353,14 +663,18 @@ impl GuiLayer {
             eyedropper_indicator,
             save_status,
             pending_navigation,
+            references,
+            workspace_view,
         } = state;
         self.tool_sizes[tool_index(tool)] = self.brush.size;
+        self.sync_reference_textures(references);
         self.load_brush_preview(&self.tool_brushes[tool_index(tool)].clone());
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
 
         context.run_ui(raw_input, |ui| {
             let background = background_color(layers.background_color);
+            self.show_workspace_references(ui.ctx(), references, workspace_view);
 
             // egui's built-in animated panel deliberately hides its contents while resizing,
             // which makes a wide sidebar flash empty. Keep a full-width child clipped to an
@@ -405,6 +719,8 @@ impl GuiLayer {
                             ui.colored_label(color, &message.text);
                         }
 
+                        ui.separator();
+                        self.show_reference_controls(ui, references);
                         ui.separator();
                         egui::Panel::bottom("layer controls")
                             .show_separator_line(false)

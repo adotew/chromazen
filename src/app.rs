@@ -405,6 +405,8 @@ impl App {
                             eyedropper_indicator,
                             save_status: status,
                             pending_navigation,
+                            references: self.references.images(),
+                            workspace_view: paint.view_snapshot(),
                         },
                     )
                 }
@@ -518,6 +520,26 @@ impl App {
                     if let Some(paint) = self.paint.as_mut() {
                         paint.move_layer_relative(dragged, target, edge);
                     }
+                }
+                AppCommand::AddReferences => {}
+                AppCommand::SetReferenceTransform { id, position, size } => {
+                    self.references.set_transform(id, position, size);
+                }
+                AppCommand::CommitReferenceTransform { .. } => {}
+                AppCommand::ToggleReferenceLocked(id) => {
+                    self.references.toggle_locked(id);
+                }
+                AppCommand::ToggleReferenceVisible(id) => {
+                    self.references.toggle_visible(id);
+                }
+                AppCommand::BringReferenceForward(id) => {
+                    self.references.bring_forward(id);
+                }
+                AppCommand::SendReferenceBackward(id) => {
+                    self.references.send_backward(id);
+                }
+                AppCommand::DeleteReference(id) => {
+                    self.references.remove(id);
                 }
                 AppCommand::SetBackgroundColor(color) => {
                     if let Some(paint) = self.paint.as_mut() {
