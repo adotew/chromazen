@@ -27,6 +27,7 @@ pub(crate) use self::{
         DropEdge, LayerId, LayerInfo, LayerResourceId, LayerSnapshot, merge_down_target_index,
     },
     persistence::LayerReadback,
+    view::PaintViewSnapshot,
 };
 use crate::{
     artwork::{DOCUMENT_SCHEMA_VERSION, DocumentManifest, LayerManifest, clipping_base_index},
@@ -254,6 +255,10 @@ impl PaintRenderer {
     }
     pub fn zoom(&self) -> f32 {
         self.view.zoom()
+    }
+    #[allow(dead_code)]
+    pub(crate) fn view_snapshot(&self) -> PaintViewSnapshot {
+        self.view.snapshot()
     }
     pub fn brush_outline_half_size(&self, diameter: f32) -> [f32; 2] {
         let half_size = self.stamp_queue.half_size(diameter * 0.5);
