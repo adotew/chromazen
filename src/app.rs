@@ -78,7 +78,6 @@ pub struct App {
     references: ReferenceBoard,
     reference_import: ReferenceImportController,
     history: AppHistory,
-    pending_reference_transform: Option<references::ReferenceBoardSnapshot>,
     screen: AppScreen,
     pending_gallery: bool,
     pending_new_artwork: Option<[u32; 2]>,
@@ -195,6 +194,16 @@ impl ApplicationHandler<AppEvent> for App {
                 let egui_response = gui.state.on_window_event(window.as_ref(), &event);
                 let mut needs_redraw = egui_response.repaint || cursor_changed;
                 let egui_consumed = egui_response.consumed;
+                let primary_press_over_reference = self.screen == AppScreen::Editor
+                    && matches!(
+                        &event,
+                        WindowEvent::MouseInput {
+                            state: ElementState::Pressed,
+                            button: MouseButton::Left,
+                            ..
+                        }
+                    )
+                    && gui.window_point_over_reference(self.input.cursor_position());
                 if !egui_consumed
                     && matches!(
                         &event,
@@ -217,7 +226,8 @@ impl ApplicationHandler<AppEvent> for App {
                     needs_redraw = true;
                 } else if self.screen == AppScreen::Editor
                     && !navigation_pending
-                    && (!egui_consumed || self.input.captures_drag_event(&event))
+                    && (self.input.captures_drag_event(&event)
+                        || (!egui_consumed && !primary_press_over_reference))
                     && let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_mut())
                 {
                     let brush_size_range = gui.brush_size_range();
@@ -314,7 +324,6 @@ impl App {
             references: ReferenceBoard::default(),
             reference_import,
             history: AppHistory::default(),
-            pending_reference_transform: None,
             screen: AppScreen::Gallery,
             pending_gallery: false,
             pending_new_artwork: None,
@@ -555,30 +564,13 @@ impl App {
                     self.reference_import.start(paths, None);
                 }
                 AppCommand::SetReferenceTransform { id, position, size } => {
-                    if self.pending_reference_transform.is_none() {
-                        self.pending_reference_transform = Some(self.references.snapshot());
-                    }
                     self.references.set_transform(id, position, size);
                 }
-                AppCommand::CommitReferenceTransform(_) => {
-                    if let Some(before) = self.pending_reference_transform.take() {
-                        let after = self.references.snapshot();
-                        self.history.record_references(before, after);
-                    }
-                }
                 AppCommand::ToggleReferenceLocked(id) => {
-                    let before = self.references.snapshot();
-                    if self.references.toggle_locked(id) {
-                        self.history
-                            .record_references(before, self.references.snapshot());
-                    }
+                    self.references.toggle_locked(id);
                 }
                 AppCommand::DeleteReference(id) => {
-                    let before = self.references.snapshot();
-                    if self.references.remove(id) {
-                        self.history
-                            .record_references(before, self.references.snapshot());
-                    }
+                    self.references.remove(id);
                 }
                 AppCommand::SetBackgroundColor(color) => {
                     if let Some(paint) = self.paint.as_mut() {
@@ -711,8 +703,6 @@ impl App {
         let mut changed = false;
         while let Some(completion) = self.reference_import.take_completion() {
             changed = true;
-            let before = self.references.snapshot();
-            let imported = !completion.images.is_empty();
             let base = completion.placement.unwrap_or_else(|| {
                 self.paint.as_ref().map_or([100.0, 100.0], |paint| {
                     [paint.document_size()[0] as f32 + 100.0, 100.0]
@@ -722,10 +712,6 @@ impl App {
                 let offset = index as f32 * 32.0;
                 self.references
                     .add(image, [base[0] + offset, base[1] + offset]);
-            }
-            if imported {
-                self.history
-                    .record_references(before, self.references.snapshot());
             }
             if !completion.errors.is_empty()
                 && let Some(gui) = self.gui.as_mut()
@@ -777,7 +763,6 @@ impl App {
         let id = crate::artwork::ArtworkId::new();
         self.references.clear();
         self.history.clear();
-        self.pending_reference_transform = None;
         self.autosave.begin_new(id, "Untitled".to_owned());
         self.screen = AppScreen::Editor;
         self.pending_gallery = false;
@@ -817,7 +802,6 @@ impl App {
         let versions = paint.document_versions();
         self.references.load(opened.references);
         self.history.clear();
-        self.pending_reference_transform = None;
         if !opened.warnings.is_empty()
             && let Some(gui) = self.gui.as_mut()
         {
@@ -843,7 +827,6 @@ impl App {
         self.autosave.clear();
         self.references.clear();
         self.history.clear();
-        self.pending_reference_transform = None;
         self.screen = AppScreen::Gallery;
         self.pending_gallery = false;
         self.pending_new_artwork = None;
@@ -855,42 +838,28 @@ impl App {
     }
 
     fn undo(&mut self) {
-        while let Some(action) = self.history.undo_action() {
-            let applied = match action {
-                AppHistoryAction::Paint => self
-                    .paint
-                    .as_mut()
-                    .is_some_and(|paint| paint.can_undo() && paint.undo()),
-                AppHistoryAction::References { before, .. } => {
-                    self.references.restore(before);
-                    true
-                }
-            };
+        while let Some(AppHistoryAction::Paint) = self.history.undo_action() {
+            let applied = self
+                .paint
+                .as_mut()
+                .is_some_and(|paint| paint.can_undo() && paint.undo());
             // Texture-budget eviction can remove an old renderer entry before its lightweight
-            // app-level marker. Skip that stale marker so older reference actions stay reachable.
+            // app-level marker. Skip stale markers so older paint actions stay reachable.
             self.history.commit_undo();
             if applied {
-                self.pending_reference_transform = None;
                 break;
             }
         }
     }
 
     fn redo(&mut self) {
-        while let Some(action) = self.history.redo_action() {
-            let applied = match action {
-                AppHistoryAction::Paint => self
-                    .paint
-                    .as_mut()
-                    .is_some_and(|paint| paint.can_redo() && paint.redo()),
-                AppHistoryAction::References { after, .. } => {
-                    self.references.restore(after);
-                    true
-                }
-            };
+        while let Some(AppHistoryAction::Paint) = self.history.redo_action() {
+            let applied = self
+                .paint
+                .as_mut()
+                .is_some_and(|paint| paint.can_redo() && paint.redo());
             self.history.commit_redo();
             if applied {
-                self.pending_reference_transform = None;
                 break;
             }
         }
@@ -942,7 +911,11 @@ impl App {
         let pointer_over_ui = gui.context.is_pointer_over_egui();
         let pointer_over_reference =
             self.screen == AppScreen::Editor && gui.pointer_over_reference();
-        let pointer_over_ui_or_reference = pointer_over_ui || pointer_over_reference;
+        let reference_drag_active = self.screen == AppScreen::Editor && gui.reference_drag_active();
+        let reference_resize_active =
+            self.screen == AppScreen::Editor && gui.reference_resize_active();
+        let pointer_over_ui_or_reference =
+            pointer_over_ui || pointer_over_reference || reference_drag_active;
         let brush_cursor = brush_resize_pos
             .filter(|_| resize_is_anchored || !pointer_over_ui_or_reference)
             .map(|center| BrushCursor {
@@ -960,7 +933,9 @@ impl App {
         let repaint_delay = ui::repaint_delay(&full_output);
         gui.state
             .handle_platform_output(window, full_output.platform_output);
-        if is_panning {
+        if reference_resize_active {
+            window.set_cursor(CursorIcon::NwseResize);
+        } else if reference_drag_active || is_panning {
             window.set_cursor(CursorIcon::Grabbing);
         } else if is_pan_modifier_active && !pointer_over_ui_or_reference {
             window.set_cursor(CursorIcon::Grab);

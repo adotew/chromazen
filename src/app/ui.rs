@@ -68,6 +68,7 @@ pub struct GuiLayer {
     reference_textures: Vec<ReferenceTexture>,
     selected_reference: Option<ReferenceId>,
     reference_transform_edit: Option<ReferenceTransformEdit>,
+    reference_hit_rects: Vec<egui::Rect>,
     pointer_over_reference: bool,
     pointer_over_selected_reference: bool,
     brush_previews: Vec<(String, egui::TextureHandle)>,
@@ -100,14 +101,18 @@ struct ReferenceTexture {
     texture: egui::TextureHandle,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ReferenceDrag {
-    Move(egui::Vec2),
-    Resize(egui::Vec2),
+    Move,
+    Resize,
 }
 
+#[derive(Clone, Copy)]
 struct ReferenceTransformEdit {
     id: ReferenceId,
+    drag: ReferenceDrag,
+    position: [f32; 2],
+    size: [f32; 2],
 }
 
 struct LayerNameEdit {
@@ -186,6 +191,7 @@ impl GuiLayer {
             reference_textures: Vec::new(),
             selected_reference: None,
             reference_transform_edit: None,
+            reference_hit_rects: Vec::new(),
             pointer_over_reference: false,
             pointer_over_selected_reference: false,
             brush_previews: Vec::new(),
@@ -285,6 +291,7 @@ impl GuiLayer {
         view: PaintViewSnapshot,
         workspace_rect: egui::Rect,
     ) {
+        self.reference_hit_rects.clear();
         self.pointer_over_reference = false;
         self.pointer_over_selected_reference = false;
         let pointer_position = context.pointer_latest_pos();
@@ -323,6 +330,13 @@ impl GuiLayer {
             if !visible_rect.is_positive() {
                 continue;
             }
+            self.reference_hit_rects.push(visible_rect);
+            if !reference.locked && self.selected_reference == Some(reference.id) {
+                let resize_rect = reference_resize_handle(rect).1.intersect(workspace_rect);
+                if resize_rect.is_positive() {
+                    self.reference_hit_rects.push(resize_rect);
+                }
+            }
 
             let area = egui::Area::new(egui::Id::new(("reference", reference.id.0)))
                 .order(egui::Order::Middle)
@@ -355,7 +369,7 @@ impl GuiLayer {
                             egui::Id::new(("reference resize", reference.id.0)),
                             egui::Sense::drag(),
                         )
-                        .on_hover_cursor(egui::CursorIcon::ResizeNwSe)
+                        .on_hover_and_drag_cursor(egui::CursorIcon::ResizeNwSe)
                     });
                     (response, resize)
                 });
@@ -371,19 +385,34 @@ impl GuiLayer {
             if !reference.locked {
                 let active = if let Some(resize) = resize.as_ref().filter(|resize| resize.dragged())
                 {
-                    Some(ReferenceDrag::Resize(resize.drag_delta()))
+                    resize
+                        .total_drag_delta()
+                        .map(|delta| (ReferenceDrag::Resize, delta))
                 } else if response.dragged() {
-                    Some(ReferenceDrag::Move(response.drag_delta()))
+                    response
+                        .total_drag_delta()
+                        .map(|delta| (ReferenceDrag::Move, delta))
                 } else {
                     None
                 };
                 let resize_started = resize.as_ref().is_some_and(egui::Response::drag_started);
-                if response.drag_started() || resize_started {
-                    self.reference_transform_edit =
-                        Some(ReferenceTransformEdit { id: reference.id });
+                let started_drag = if resize_started {
+                    Some(ReferenceDrag::Resize)
+                } else if response.drag_started() {
+                    Some(ReferenceDrag::Move)
+                } else {
+                    None
+                };
+                if let Some(drag) = started_drag {
+                    self.reference_transform_edit = Some(ReferenceTransformEdit {
+                        id: reference.id,
+                        drag,
+                        position: reference.position,
+                        size: reference.size,
+                    });
                 }
-                if let Some(drag) = active {
-                    self.update_reference_drag(reference, drag, view, pixels_per_point);
+                if let Some((drag, delta)) = active {
+                    self.update_reference_drag(reference.id, drag, delta, view, pixels_per_point);
                 }
                 let resize_stopped = resize.as_ref().is_some_and(egui::Response::drag_stopped);
                 if response.drag_stopped() || resize_stopped {
@@ -432,6 +461,23 @@ impl GuiLayer {
         self.pointer_over_reference
     }
 
+    pub(crate) fn reference_drag_active(&self) -> bool {
+        self.reference_transform_edit.is_some()
+    }
+
+    pub(crate) fn reference_resize_active(&self) -> bool {
+        self.reference_transform_edit
+            .is_some_and(|edit| edit.drag == ReferenceDrag::Resize)
+    }
+
+    pub(crate) fn window_point_over_reference(&self, point: [f32; 2]) -> bool {
+        window_point_over_rects(
+            point,
+            self.context.pixels_per_point(),
+            &self.reference_hit_rects,
+        )
+    }
+
     fn clear_reference_selection_on_outside_press(&mut self, context: &egui::Context) {
         let primary_pressed = context.input(|input| input.pointer.primary_pressed());
         if should_clear_reference_selection(
@@ -446,47 +492,31 @@ impl GuiLayer {
 
     fn update_reference_drag(
         &mut self,
-        reference: &ReferenceImage,
+        id: ReferenceId,
         drag: ReferenceDrag,
+        drag_delta: egui::Vec2,
         view: PaintViewSnapshot,
         pixels_per_point: f32,
     ) {
-        let delta = match drag {
-            ReferenceDrag::Move(delta) | ReferenceDrag::Resize(delta) => view
-                .window_delta_to_document([delta.x * pixels_per_point, delta.y * pixels_per_point]),
+        let Some(origin) = self.reference_transform_edit.filter(|edit| edit.id == id) else {
+            return;
         };
-        let (position, size) = match drag {
-            ReferenceDrag::Move(_) => (
-                [
-                    reference.position[0] + delta[0],
-                    reference.position[1] + delta[1],
-                ],
-                reference.size,
-            ),
-            ReferenceDrag::Resize(_) => {
-                let scale = ((reference.size[0] + delta[0]) / reference.size[0])
-                    .max((reference.size[1] + delta[1]) / reference.size[1])
-                    .max(40.0 / reference.size[0].min(reference.size[1]));
-                (
-                    reference.position,
-                    [reference.size[0] * scale, reference.size[1] * scale],
-                )
-            }
-        };
-        self.commands.push(AppCommand::SetReferenceTransform {
-            id: reference.id,
-            position,
-            size,
-        });
+        let delta = view.window_delta_to_document([
+            drag_delta.x * pixels_per_point,
+            drag_delta.y * pixels_per_point,
+        ]);
+        let (position, size) =
+            reference_transform_from_drag_origin(origin.position, origin.size, drag, delta);
+        self.commands
+            .push(AppCommand::SetReferenceTransform { id, position, size });
     }
 
     fn commit_reference_drag(&mut self, id: ReferenceId) {
         if self
             .reference_transform_edit
-            .take()
             .is_some_and(|edit| edit.id == id)
         {
-            self.commands.push(AppCommand::CommitReferenceTransform(id));
+            self.reference_transform_edit = None;
         }
     }
 
@@ -1687,6 +1717,25 @@ const REFERENCE_RESIZE_HANDLE_SIZE: f32 = 14.0;
 const REFERENCE_RESIZE_HANDLE_INSET: f32 = 2.0;
 const REFERENCE_RESIZE_HIT_SIZE: f32 = 28.0;
 
+fn reference_transform_from_drag_origin(
+    position: [f32; 2],
+    size: [f32; 2],
+    drag: ReferenceDrag,
+    delta: [f32; 2],
+) -> ([f32; 2], [f32; 2]) {
+    match drag {
+        ReferenceDrag::Move => ([position[0] + delta[0], position[1] + delta[1]], size),
+        ReferenceDrag::Resize => {
+            // Project the pointer delta onto the reference diagonal. This keeps the corner as
+            // close to the pointer as possible while preserving the original aspect ratio.
+            let diagonal_length_squared = size[0] * size[0] + size[1] * size[1];
+            let scale = (1.0 + (delta[0] * size[0] + delta[1] * size[1]) / diagonal_length_squared)
+                .max(40.0 / size[0].min(size[1]));
+            (position, [size[0] * scale, size[1] * scale])
+        }
+    }
+}
+
 fn reference_resize_handle(reference_rect: egui::Rect) -> (egui::Pos2, egui::Rect) {
     let center = reference_rect.right_bottom() - egui::Vec2::splat(REFERENCE_RESIZE_HANDLE_INSET);
     let hit_rect =
@@ -1720,6 +1769,11 @@ fn paint_reference_selection(
         painter.rect_filled(handle_rect, 2.0, shadow);
         painter.rect_filled(handle_rect.shrink(1.0), 1.0, accent);
     }
+}
+
+fn window_point_over_rects(point: [f32; 2], pixels_per_point: f32, rects: &[egui::Rect]) -> bool {
+    let point = egui::pos2(point[0] / pixels_per_point, point[1] / pixels_per_point);
+    rects.iter().any(|rect| rect.contains(point))
 }
 
 fn pointer_over_visible_reference(
@@ -1871,6 +1925,26 @@ mod tests {
     }
 
     #[test]
+    fn reference_transform_uses_total_drag_delta_from_the_origin() {
+        let position = [10.0, 20.0];
+        let size = [100.0, 50.0];
+
+        let (_, resized) = reference_transform_from_drag_origin(
+            position,
+            size,
+            ReferenceDrag::Resize,
+            [25.0, 20.0],
+        );
+        assert!((resized[0] - 128.0).abs() < 0.0001);
+        assert!((resized[1] - 64.0).abs() < 0.0001);
+        assert!((resized[0] / resized[1] - size[0] / size[1]).abs() < 0.0001);
+        assert_eq!(
+            reference_transform_from_drag_origin(position, size, ReferenceDrag::Move, [50.0, 25.0],),
+            ([60.0, 45.0], size),
+        );
+    }
+
+    #[test]
     fn resize_handle_overlaps_the_corner_with_a_larger_invisible_hit_target() {
         let reference = egui::Rect::from_min_max(egui::pos2(20.0, 30.0), egui::pos2(120.0, 130.0));
         let (center, hit_rect) = reference_resize_handle(reference);
@@ -1878,6 +1952,17 @@ mod tests {
         assert_eq!(center, egui::pos2(118.0, 128.0));
         assert_eq!(hit_rect.min, egui::pos2(104.0, 114.0));
         assert_eq!(hit_rect.max, egui::pos2(132.0, 142.0));
+    }
+
+    #[test]
+    fn physical_window_points_hit_cached_reference_rects() {
+        let rects = [egui::Rect::from_min_max(
+            egui::pos2(20.0, 30.0),
+            egui::pos2(120.0, 130.0),
+        )];
+
+        assert!(window_point_over_rects([100.0, 120.0], 2.0, &rects));
+        assert!(!window_point_over_rects([10.0, 10.0], 2.0, &rects));
     }
 
     #[test]

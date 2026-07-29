@@ -1,14 +1,8 @@
-use super::references::ReferenceBoardSnapshot;
-
 const MAX_ACTIONS: usize = 256;
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub(super) enum AppHistoryAction {
     Paint,
-    References {
-        before: ReferenceBoardSnapshot,
-        after: ReferenceBoardSnapshot,
-    },
 }
 
 #[derive(Default)]
@@ -25,14 +19,6 @@ impl AppHistory {
 
     pub(super) fn record_paint(&mut self) {
         self.record(AppHistoryAction::Paint);
-    }
-
-    pub(super) fn record_references(
-        &mut self,
-        before: ReferenceBoardSnapshot,
-        after: ReferenceBoardSnapshot,
-    ) {
-        self.record(AppHistoryAction::References { before, after });
     }
 
     pub(super) fn undo_action(&self) -> Option<AppHistoryAction> {
@@ -77,18 +63,16 @@ impl AppHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::references::ReferenceBoard;
 
     #[test]
     fn new_actions_discard_redo_entries() {
-        let board = ReferenceBoard::default();
         let mut history = AppHistory::default();
         history.record_paint();
         history.record_paint();
         history.commit_undo();
         assert!(history.can_redo());
 
-        history.record_references(board.snapshot(), board.snapshot());
+        history.record_paint();
         assert!(!history.can_redo());
         assert!(history.can_undo());
     }

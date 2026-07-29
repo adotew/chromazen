@@ -46,7 +46,6 @@ pub(super) enum AppCommand {
         position: [f32; 2],
         size: [f32; 2],
     },
-    CommitReferenceTransform(ReferenceId),
     ToggleReferenceLocked(ReferenceId),
     DeleteReference(ReferenceId),
     SetBackgroundColor([u8; 3]),

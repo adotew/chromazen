@@ -33,11 +33,6 @@ pub(crate) struct ReferenceVersions {
     pub(crate) assets: Vec<(ReferenceId, u64)>,
 }
 
-#[derive(Clone)]
-pub(crate) struct ReferenceBoardSnapshot {
-    images: Vec<ReferenceImage>,
-}
-
 #[derive(Default)]
 pub(crate) struct ReferenceBoard {
     images: Vec<ReferenceImage>,
@@ -49,25 +44,6 @@ pub(crate) struct ReferenceBoard {
 impl ReferenceBoard {
     pub(crate) fn images(&self) -> &[ReferenceImage] {
         &self.images
-    }
-
-    pub(crate) fn snapshot(&self) -> ReferenceBoardSnapshot {
-        ReferenceBoardSnapshot {
-            images: self.images.clone(),
-        }
-    }
-
-    pub(crate) fn restore(&mut self, snapshot: ReferenceBoardSnapshot) {
-        self.images = snapshot.images;
-        self.next_id = self
-            .images
-            .iter()
-            .map(|reference| reference.id.0)
-            .max()
-            .unwrap_or(0)
-            .saturating_add(1)
-            .max(1);
-        self.mark_changed();
     }
 
     pub(crate) fn clear(&mut self) {
