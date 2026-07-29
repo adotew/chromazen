@@ -259,7 +259,6 @@ impl PaintRenderer {
     pub fn zoom(&self) -> f32 {
         self.view.zoom()
     }
-    #[allow(dead_code)]
     pub(crate) fn view_snapshot(&self) -> PaintViewSnapshot {
         self.view.snapshot()
     }

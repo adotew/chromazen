@@ -1,14 +1,12 @@
 const MIN_ZOOM: f32 = 0.01;
 const MAX_ZOOM: f32 = 32.0;
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PaintViewSnapshot {
     pub(crate) zoom: f32,
     pub(crate) offset: [f32; 2],
 }
 
-#[allow(dead_code)]
 impl PaintViewSnapshot {
     pub(crate) fn document_to_window(self, point: [f32; 2]) -> [f32; 2] {
         [
