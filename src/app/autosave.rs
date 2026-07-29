@@ -277,6 +277,7 @@ fn build_revision_write(
     Ok(RevisionWrite {
         document,
         layers,
+        references: Vec::new(),
         thumbnail_png,
     })
 }
