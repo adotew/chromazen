@@ -573,34 +573,6 @@ impl App {
                             .record_references(before, self.references.snapshot());
                     }
                 }
-                AppCommand::ToggleReferenceVisible(id) => {
-                    let before = self.references.snapshot();
-                    if self.references.toggle_visible(id) {
-                        self.history
-                            .record_references(before, self.references.snapshot());
-                    }
-                }
-                AppCommand::SetAllReferencesVisible(visible) => {
-                    let before = self.references.snapshot();
-                    if self.references.set_all_visible(visible) {
-                        self.history
-                            .record_references(before, self.references.snapshot());
-                    }
-                }
-                AppCommand::BringReferenceForward(id) => {
-                    let before = self.references.snapshot();
-                    if self.references.bring_forward(id) {
-                        self.history
-                            .record_references(before, self.references.snapshot());
-                    }
-                }
-                AppCommand::SendReferenceBackward(id) => {
-                    let before = self.references.snapshot();
-                    if self.references.send_backward(id) {
-                        self.history
-                            .record_references(before, self.references.snapshot());
-                    }
-                }
                 AppCommand::DeleteReference(id) => {
                     let before = self.references.snapshot();
                     if self.references.remove(id) {
@@ -968,15 +940,18 @@ impl App {
         let paint = self.paint.as_mut()?;
         let gui = self.gui.as_mut()?;
         let pointer_over_ui = gui.context.is_pointer_over_egui();
+        let pointer_over_reference =
+            self.screen == AppScreen::Editor && gui.pointer_over_reference();
+        let pointer_over_ui_or_reference = pointer_over_ui || pointer_over_reference;
         let brush_cursor = brush_resize_pos
-            .filter(|_| resize_is_anchored || !pointer_over_ui)
+            .filter(|_| resize_is_anchored || !pointer_over_ui_or_reference)
             .map(|center| BrushCursor {
                 center,
                 diameter: gui.brush.size,
             })
             .or_else(|| {
                 cursor_pos
-                    .filter(|_| !pointer_over_ui)
+                    .filter(|_| !pointer_over_ui_or_reference)
                     .map(|center| BrushCursor {
                         center,
                         diameter: gui.brush.radius(brush_pressure) * 2.0,
@@ -987,10 +962,10 @@ impl App {
             .handle_platform_output(window, full_output.platform_output);
         if is_panning {
             window.set_cursor(CursorIcon::Grabbing);
-        } else if is_pan_modifier_active && !pointer_over_ui {
+        } else if is_pan_modifier_active && !pointer_over_ui_or_reference {
             window.set_cursor(CursorIcon::Grab);
         }
-        let eyedropper_over_canvas = is_eyedropper_active && !pointer_over_ui;
+        let eyedropper_over_canvas = is_eyedropper_active && !pointer_over_ui_or_reference;
         window.set_cursor_visible(
             is_resizing_brush || (brush_cursor.is_none() && !eyedropper_over_canvas),
         );

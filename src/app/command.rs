@@ -48,10 +48,6 @@ pub(super) enum AppCommand {
     },
     CommitReferenceTransform(ReferenceId),
     ToggleReferenceLocked(ReferenceId),
-    ToggleReferenceVisible(ReferenceId),
-    SetAllReferencesVisible(bool),
-    BringReferenceForward(ReferenceId),
-    SendReferenceBackward(ReferenceId),
     DeleteReference(ReferenceId),
     SetBackgroundColor([u8; 3]),
     CommitBackgroundColor {

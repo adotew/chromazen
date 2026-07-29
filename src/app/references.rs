@@ -168,53 +168,6 @@ impl ReferenceBoard {
         true
     }
 
-    pub(crate) fn toggle_visible(&mut self, id: ReferenceId) -> bool {
-        let Some(reference) = self.images.iter_mut().find(|image| image.id == id) else {
-            return false;
-        };
-        reference.visible = !reference.visible;
-        self.mark_changed();
-        true
-    }
-
-    pub(crate) fn set_all_visible(&mut self, visible: bool) -> bool {
-        let mut changed = false;
-        for reference in &mut self.images {
-            if reference.visible != visible {
-                reference.visible = visible;
-                changed = true;
-            }
-        }
-        if changed {
-            self.mark_changed();
-        }
-        changed
-    }
-
-    pub(crate) fn bring_forward(&mut self, id: ReferenceId) -> bool {
-        let Some(index) = self.images.iter().position(|image| image.id == id) else {
-            return false;
-        };
-        if index + 1 == self.images.len() {
-            return false;
-        }
-        self.images.swap(index, index + 1);
-        self.mark_changed();
-        true
-    }
-
-    pub(crate) fn send_backward(&mut self, id: ReferenceId) -> bool {
-        let Some(index) = self.images.iter().position(|image| image.id == id) else {
-            return false;
-        };
-        if index == 0 {
-            return false;
-        }
-        self.images.swap(index, index - 1);
-        self.mark_changed();
-        true
-    }
-
     pub(crate) fn manifest(&self) -> Vec<ReferenceManifest> {
         self.images
             .iter()
@@ -328,17 +281,6 @@ mod tests {
         assert!(!board.set_transform(id, [f32::NAN, 0.0], [10.0, 10.0]));
         assert!(board.toggle_locked(id));
         assert!(!board.set_transform(id, [20.0, 20.0], [10.0, 10.0]));
-    }
-
-    #[test]
-    fn visibility_can_be_changed_for_the_whole_board() {
-        let mut board = ReferenceBoard::default();
-        board.add(decoded(10, 10), [0.0, 0.0]);
-        board.add(decoded(10, 10), [20.0, 0.0]);
-        assert!(board.set_all_visible(false));
-        assert!(board.images().iter().all(|reference| !reference.visible));
-        assert!(!board.set_all_visible(false));
-        assert!(board.set_all_visible(true));
     }
 
     #[test]

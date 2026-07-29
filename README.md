@@ -78,13 +78,12 @@ fall back to the bundled charcoal brush.
 Controls:
 
 - Left drag: use the selected tool on the selected paint layer
-- Use **Add…** in the References section or **File → Add Reference…** to import
-  PNG and JPEG reference images; image files can also be dropped into the editor
+- Use **File → Add Reference…** to import PNG and JPEG reference images where
+  the native File menu is available; image files can also be dropped into the editor
 - Drag an unlocked reference to move it; drag its lower-right handle to resize
   it while preserving its aspect ratio
-- Use the References section to select, hide, show, lock, unlock, or delete a
-  reference; right-click an unlocked reference to change its order or remove it
-- Locked references are click-through, allowing painting and panning over them
+- Right-click a reference to lock, unlock, or delete it.
+- Locked references cannot be moved or resized, but retain their right-click menu
 - Reference positions and sizes use canvas-relative workspace coordinates and
   are restored when the artwork is reopened
 - `B`: select Brush
