@@ -1,5 +1,3 @@
-#![allow(dead_code)] // Reference editing and autosave are connected in subsequent commits.
-
 use std::{fs, path::Path, sync::Arc};
 
 use crate::artwork::{ReferenceManifest, encode_png};
@@ -25,9 +23,7 @@ pub(crate) struct ReferenceImage {
     pub(crate) visible: bool,
     pub(crate) locked: bool,
     pub(crate) resource_version: u64,
-    #[allow(dead_code)]
     pub(crate) pixels: Arc<image::RgbaImage>,
-    #[allow(dead_code)]
     pub(crate) png: Arc<Vec<u8>>,
 }
 
@@ -105,7 +101,6 @@ impl ReferenceBoard {
         id
     }
 
-    #[allow(dead_code)]
     pub(crate) fn remove(&mut self, id: ReferenceId) -> bool {
         let Some(index) = self.images.iter().position(|image| image.id == id) else {
             return false;
@@ -149,7 +144,6 @@ impl ReferenceBoard {
         true
     }
 
-    #[allow(dead_code)]
     pub(crate) fn toggle_visible(&mut self, id: ReferenceId) -> bool {
         let Some(reference) = self.images.iter_mut().find(|image| image.id == id) else {
             return false;
@@ -159,7 +153,6 @@ impl ReferenceBoard {
         true
     }
 
-    #[allow(dead_code)]
     pub(crate) fn bring_forward(&mut self, id: ReferenceId) -> bool {
         let Some(index) = self.images.iter().position(|image| image.id == id) else {
             return false;
@@ -172,7 +165,6 @@ impl ReferenceBoard {
         true
     }
 
-    #[allow(dead_code)]
     pub(crate) fn send_backward(&mut self, id: ReferenceId) -> bool {
         let Some(index) = self.images.iter().position(|image| image.id == id) else {
             return false;

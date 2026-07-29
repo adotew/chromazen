@@ -324,7 +324,7 @@ impl App {
             let clean = self
                 .paint
                 .as_ref()
-                .is_some_and(|paint| self.autosave.is_clean(paint));
+                .is_some_and(|paint| self.autosave.is_clean(paint, &self.references));
             if !clean {
                 self.autosave.request_save();
             }
@@ -353,12 +353,15 @@ impl App {
         if self.screen == AppScreen::Editor
             && let Some(paint) = self.paint.as_ref()
         {
-            app_action_processed |= self.autosave.update(paint);
-            if self.pending_exit && self.autosave.is_clean(paint) && !self.export.is_exporting() {
+            app_action_processed |= self.autosave.update(paint, &self.references);
+            if self.pending_exit
+                && self.autosave.is_clean(paint, &self.references)
+                && !self.export.is_exporting()
+            {
                 event_loop.exit();
                 return;
             }
-            if self.pending_gallery && self.autosave.is_clean(paint) {
+            if self.pending_gallery && self.autosave.is_clean(paint, &self.references) {
                 let new_size = self.pending_new_artwork;
                 self.finish_gallery_navigation();
                 if let Some(size) = new_size {
@@ -402,7 +405,7 @@ impl App {
                                 center,
                                 color: gui.brush.color,
                             });
-                    let status = self.autosave.status(paint);
+                    let status = self.autosave.status(paint, &self.references);
                     let pending_navigation = if self.pending_exit {
                         Some("Closing Chromazen")
                     } else if self.pending_new_artwork.is_some() {
@@ -435,7 +438,7 @@ impl App {
         if self.screen == AppScreen::Editor
             && let Some(paint) = self.paint.as_ref()
         {
-            app_action_processed |= self.autosave.update(paint);
+            app_action_processed |= self.autosave.update(paint, &self.references);
         }
         let Some(outcome) = self.render_frame(window, full_output) else {
             return;
@@ -784,8 +787,12 @@ impl App {
         {
             gui.show_error(opened.warnings.join("\n"));
         }
-        self.autosave
-            .begin_loaded(opened.id, opened.title.clone(), versions);
+        self.autosave.begin_loaded(
+            opened.id,
+            opened.title.clone(),
+            versions,
+            self.references.versions(),
+        );
         self.screen = AppScreen::Editor;
         self.pending_gallery = false;
         self.pending_new_artwork = None;

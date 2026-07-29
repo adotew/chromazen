@@ -61,7 +61,6 @@ pub(crate) struct LayerWrite {
     pub(crate) source: LayerSource,
 }
 
-#[allow(dead_code)]
 pub(crate) enum ReferenceSource {
     Png(Vec<u8>),
     ReuseCurrent,
@@ -83,7 +82,6 @@ pub(crate) struct LoadedArtwork {
     pub(crate) summary: ArtworkSummary,
     pub(crate) document: DocumentManifest,
     pub(crate) layer_paths: Vec<PathBuf>,
-    #[allow(dead_code)]
     pub(crate) reference_paths: Vec<PathBuf>,
 }
 
