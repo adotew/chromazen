@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 pub(crate) const PROJECT_SCHEMA_VERSION: u32 = 1;
-pub(crate) const DOCUMENT_SCHEMA_VERSION: u32 = 2;
+pub(crate) const DOCUMENT_SCHEMA_VERSION: u32 = 3;
+const LEGACY_DOCUMENT_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -13,7 +14,7 @@ pub(crate) struct ProjectManifest {
     pub(crate) modified_unix_ms: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DocumentManifest {
     pub(crate) schema_version: u32,
@@ -22,6 +23,19 @@ pub(crate) struct DocumentManifest {
     pub(crate) background: [u8; 3],
     pub(crate) selected_layer: u64,
     pub(crate) layers: Vec<LayerManifest>,
+    #[serde(default)]
+    pub(crate) references: Vec<ReferenceManifest>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReferenceManifest {
+    pub(crate) id: u64,
+    pub(crate) file: String,
+    pub(crate) position: [f32; 2],
+    pub(crate) size: [f32; 2],
+    pub(crate) visible: bool,
+    pub(crate) locked: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +51,20 @@ pub(crate) struct LayerManifest {
 }
 
 impl DocumentManifest {
+    pub(crate) fn migrate(mut self) -> Result<Self, String> {
+        match self.schema_version {
+            DOCUMENT_SCHEMA_VERSION => Ok(self),
+            LEGACY_DOCUMENT_SCHEMA_VERSION => {
+                self.schema_version = DOCUMENT_SCHEMA_VERSION;
+                self.references.clear();
+                Ok(self)
+            }
+            version => Err(format!(
+                "unsupported document schema_version {version}; expected {DOCUMENT_SCHEMA_VERSION}"
+            )),
+        }
+    }
+
     pub(crate) fn validate(&self) -> Result<(), String> {
         if self.schema_version != DOCUMENT_SCHEMA_VERSION {
             return Err(format!(
@@ -76,6 +104,30 @@ impl DocumentManifest {
                 return Err(format!("invalid layer file '{}'", layer.file));
             }
         }
+
+        let mut reference_ids = std::collections::HashSet::new();
+        let mut reference_files = std::collections::HashSet::new();
+        for reference in &self.references {
+            if reference.id == 0 || !reference_ids.insert(reference.id) {
+                return Err("reference IDs must be non-zero and unique".to_owned());
+            }
+            if reference.file != format!("references/{}.png", reference.id)
+                || !reference_files.insert(&reference.file)
+            {
+                return Err(format!("invalid reference file '{}'", reference.file));
+            }
+            if reference
+                .position
+                .into_iter()
+                .chain(reference.size)
+                .any(|value| !value.is_finite())
+            {
+                return Err("reference position and size must be finite".to_owned());
+            }
+            if reference.size.into_iter().any(|value| value <= 0.0) {
+                return Err("reference width and height must be positive".to_owned());
+            }
+        }
         Ok(())
     }
 }
@@ -108,6 +160,7 @@ mod tests {
                 clipped: false,
                 file: "layers/1.png".to_owned(),
             }],
+            references: Vec::new(),
         }
     }
 
@@ -155,9 +208,38 @@ mod tests {
     }
 
     #[test]
-    fn old_document_schema_is_rejected() {
+    fn version_two_document_is_migrated_without_references() {
+        let mut document = document();
+        document.schema_version = LEGACY_DOCUMENT_SCHEMA_VERSION;
+        let migrated = document.migrate().unwrap();
+        assert_eq!(migrated.schema_version, DOCUMENT_SCHEMA_VERSION);
+        assert!(migrated.references.is_empty());
+    }
+
+    #[test]
+    fn unsupported_document_schema_is_rejected() {
         let mut document = document();
         document.schema_version = 1;
+        assert!(document.migrate().is_err());
+    }
+
+    #[test]
+    fn reference_geometry_and_paths_are_validated() {
+        let mut document = document();
+        document.references.push(ReferenceManifest {
+            id: 1,
+            file: "references/1.png".to_owned(),
+            position: [-100.0, 20.0],
+            size: [640.0, 480.0],
+            visible: true,
+            locked: false,
+        });
+        assert!(document.validate().is_ok());
+
+        document.references[0].size[0] = 0.0;
+        assert!(document.validate().is_err());
+        document.references[0].size[0] = 640.0;
+        document.references[0].file = "../reference.png".to_owned();
         assert!(document.validate().is_err());
     }
 

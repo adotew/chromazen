@@ -374,6 +374,7 @@ mod tests {
                 clipped: false,
                 file: "layers/1.png".to_owned(),
             }],
+            references: Vec::new(),
         }
     }
 

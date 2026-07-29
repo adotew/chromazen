@@ -149,12 +149,20 @@ impl ArtworkStore {
         let document_path = revision.join(DOCUMENT_FILE);
         let source = fs::read_to_string(&document_path)
             .map_err(|error| ArtworkError::io("read", &document_path, error))?;
-        let document: DocumentManifest = toml::from_str(&source).map_err(|error| {
-            ArtworkError::new(format!(
-                "failed to parse {}: {error}",
-                document_path.display()
-            ))
-        })?;
+        let document: DocumentManifest = toml::from_str::<DocumentManifest>(&source)
+            .map_err(|error| {
+                ArtworkError::new(format!(
+                    "failed to parse {}: {error}",
+                    document_path.display()
+                ))
+            })?
+            .migrate()
+            .map_err(|error| {
+                ArtworkError::new(format!(
+                    "failed to migrate {}: {error}",
+                    document_path.display()
+                ))
+            })?;
         document.validate().map_err(|error| {
             ArtworkError::new(format!(
                 "invalid document in {}: {error}",
@@ -443,6 +451,7 @@ mod tests {
                     clipped: false,
                     file: "layers/1.png".to_owned(),
                 }],
+                references: Vec::new(),
             },
             layers: vec![LayerWrite {
                 id: 1,

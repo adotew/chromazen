@@ -385,6 +385,7 @@ impl PaintRenderer {
                     file: format!("layers/{}.png", layer.id.0),
                 })
                 .collect(),
+            references: Vec::new(),
         }
     }
 
