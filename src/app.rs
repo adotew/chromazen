@@ -2,6 +2,7 @@ mod autosave;
 mod command;
 mod export;
 mod gallery;
+mod history;
 mod input;
 mod menu;
 mod reference_import;
@@ -27,6 +28,7 @@ use self::{
     command::AppCommand,
     export::{ExportController, choose_export_path},
     gallery::GalleryController,
+    history::{AppHistory, AppHistoryAction},
     input::{KeyboardShortcut, PaintInputController},
     menu::NativeMenu,
     reference_import::{ReferenceImportController, choose_reference_paths},
@@ -75,6 +77,8 @@ pub struct App {
     export: ExportController,
     references: ReferenceBoard,
     reference_import: ReferenceImportController,
+    history: AppHistory,
+    pending_reference_transform: Option<references::ReferenceBoardSnapshot>,
     screen: AppScreen,
     pending_gallery: bool,
     pending_new_artwork: Option<[u32; 2]>,
@@ -218,6 +222,7 @@ impl ApplicationHandler<AppEvent> for App {
                 {
                     let brush_size_range = gui.brush_size_range();
                     let previous_tool = self.input.tool();
+                    let generation_before = paint.document_versions().generation;
                     needs_redraw |= self.input.handle_event(
                         &event,
                         paint,
@@ -230,6 +235,9 @@ impl ApplicationHandler<AppEvent> for App {
                         gui.remember_tool_size(previous_tool);
                         self.pending_commands
                             .push(AppCommand::SelectTool(self.input.tool()));
+                    }
+                    if paint.document_versions().generation != generation_before {
+                        self.history.record_paint();
                     }
                 }
 
@@ -305,6 +313,8 @@ impl App {
             export,
             references: ReferenceBoard::default(),
             reference_import,
+            history: AppHistory::default(),
+            pending_reference_transform: None,
             screen: AppScreen::Gallery,
             pending_gallery: false,
             pending_new_artwork: None,
@@ -458,17 +468,14 @@ impl App {
 
         let commands = std::mem::take(&mut self.pending_commands);
         for command in commands {
+            let (track_paint_history, force_paint_history) = paint_history_tracking(&command);
+            let paint_generation_before = self
+                .paint
+                .as_ref()
+                .map(|paint| paint.document_versions().generation);
             match command {
-                AppCommand::Undo => {
-                    if let Some(paint) = self.paint.as_mut() {
-                        paint.undo();
-                    }
-                }
-                AppCommand::Redo => {
-                    if let Some(paint) = self.paint.as_mut() {
-                        paint.redo();
-                    }
-                }
+                AppCommand::Undo => self.undo(),
+                AppCommand::Redo => self.redo(),
                 AppCommand::SelectTool(tool) => {
                     self.input.select_tool(tool);
                     if self.input.tool() != tool {
@@ -548,23 +555,51 @@ impl App {
                     self.reference_import.start(paths, None);
                 }
                 AppCommand::SetReferenceTransform { id, position, size } => {
+                    if self.pending_reference_transform.is_none() {
+                        self.pending_reference_transform = Some(self.references.snapshot());
+                    }
                     self.references.set_transform(id, position, size);
                 }
-                AppCommand::CommitReferenceTransform { .. } => {}
+                AppCommand::CommitReferenceTransform(_) => {
+                    if let Some(before) = self.pending_reference_transform.take() {
+                        let after = self.references.snapshot();
+                        self.history.record_references(before, after);
+                    }
+                }
                 AppCommand::ToggleReferenceLocked(id) => {
-                    self.references.toggle_locked(id);
+                    let before = self.references.snapshot();
+                    if self.references.toggle_locked(id) {
+                        self.history
+                            .record_references(before, self.references.snapshot());
+                    }
                 }
                 AppCommand::ToggleReferenceVisible(id) => {
-                    self.references.toggle_visible(id);
+                    let before = self.references.snapshot();
+                    if self.references.toggle_visible(id) {
+                        self.history
+                            .record_references(before, self.references.snapshot());
+                    }
                 }
                 AppCommand::BringReferenceForward(id) => {
-                    self.references.bring_forward(id);
+                    let before = self.references.snapshot();
+                    if self.references.bring_forward(id) {
+                        self.history
+                            .record_references(before, self.references.snapshot());
+                    }
                 }
                 AppCommand::SendReferenceBackward(id) => {
-                    self.references.send_backward(id);
+                    let before = self.references.snapshot();
+                    if self.references.send_backward(id) {
+                        self.history
+                            .record_references(before, self.references.snapshot());
+                    }
                 }
                 AppCommand::DeleteReference(id) => {
-                    self.references.remove(id);
+                    let before = self.references.snapshot();
+                    if self.references.remove(id) {
+                        self.history
+                            .record_references(before, self.references.snapshot());
+                    }
                 }
                 AppCommand::SetBackgroundColor(color) => {
                     if let Some(paint) = self.paint.as_mut() {
@@ -679,6 +714,15 @@ impl App {
                 }
                 AppCommand::Quit => self.request_exit(),
             }
+            let paint_generation_after = self
+                .paint
+                .as_ref()
+                .map(|paint| paint.document_versions().generation);
+            if track_paint_history
+                && (force_paint_history || paint_generation_before != paint_generation_after)
+            {
+                self.history.record_paint();
+            }
         }
         self.sync_history_menu();
         true
@@ -688,6 +732,8 @@ impl App {
         let mut changed = false;
         while let Some(completion) = self.reference_import.take_completion() {
             changed = true;
+            let before = self.references.snapshot();
+            let imported = !completion.images.is_empty();
             let base = completion.placement.unwrap_or_else(|| {
                 self.paint.as_ref().map_or([100.0, 100.0], |paint| {
                     [paint.document_size()[0] as f32 + 100.0, 100.0]
@@ -698,11 +744,18 @@ impl App {
                 self.references
                     .add(image, [base[0] + offset, base[1] + offset]);
             }
+            if imported {
+                self.history
+                    .record_references(before, self.references.snapshot());
+            }
             if !completion.errors.is_empty()
                 && let Some(gui) = self.gui.as_mut()
             {
                 gui.show_error(completion.errors.join("\n"));
             }
+        }
+        if changed {
+            self.sync_history_menu();
         }
         changed
     }
@@ -744,6 +797,8 @@ impl App {
         }
         let id = crate::artwork::ArtworkId::new();
         self.references.clear();
+        self.history.clear();
+        self.pending_reference_transform = None;
         self.autosave.begin_new(id, "Untitled".to_owned());
         self.screen = AppScreen::Editor;
         self.pending_gallery = false;
@@ -782,6 +837,8 @@ impl App {
         }
         let versions = paint.document_versions();
         self.references.load(opened.references);
+        self.history.clear();
+        self.pending_reference_transform = None;
         if !opened.warnings.is_empty()
             && let Some(gui) = self.gui.as_mut()
         {
@@ -806,6 +863,8 @@ impl App {
         self.gallery.refresh();
         self.autosave.clear();
         self.references.clear();
+        self.history.clear();
+        self.pending_reference_transform = None;
         self.screen = AppScreen::Gallery;
         self.pending_gallery = false;
         self.pending_new_artwork = None;
@@ -816,11 +875,52 @@ impl App {
         self.sync_history_menu();
     }
 
+    fn undo(&mut self) {
+        let Some(action) = self.history.undo_action() else {
+            return;
+        };
+        let applied = match action {
+            AppHistoryAction::Paint => self
+                .paint
+                .as_mut()
+                .is_some_and(|paint| paint.can_undo() && paint.undo()),
+            AppHistoryAction::References { before, .. } => {
+                self.references.restore(before);
+                true
+            }
+        };
+        if applied {
+            self.pending_reference_transform = None;
+            self.history.commit_undo();
+        }
+    }
+
+    fn redo(&mut self) {
+        let Some(action) = self.history.redo_action() else {
+            return;
+        };
+        let applied = match action {
+            AppHistoryAction::Paint => self
+                .paint
+                .as_mut()
+                .is_some_and(|paint| paint.can_redo() && paint.redo()),
+            AppHistoryAction::References { after, .. } => {
+                self.references.restore(after);
+                true
+            }
+        };
+        if applied {
+            self.pending_reference_transform = None;
+            self.history.commit_redo();
+        }
+    }
+
     fn sync_history_menu(&self) {
-        let (can_undo, can_redo) = (self.screen == AppScreen::Editor)
-            .then_some(self.paint.as_ref())
-            .flatten()
-            .map_or((false, false), |paint| (paint.can_undo(), paint.can_redo()));
+        let (can_undo, can_redo) = if self.screen == AppScreen::Editor {
+            (self.history.can_undo(), self.history.can_redo())
+        } else {
+            (false, false)
+        };
         self.native_menu.set_history_enabled(can_undo, can_redo);
         let in_editor = self.screen == AppScreen::Editor;
         self.native_menu.set_document_enabled(in_editor);
@@ -1056,6 +1156,21 @@ impl App {
         } else {
             event_loop.set_control_flow(ControlFlow::WaitUntil(next_repaint));
         }
+    }
+}
+
+fn paint_history_tracking(command: &AppCommand) -> (bool, bool) {
+    match command {
+        AppCommand::AddLayer
+        | AppCommand::DeleteSelectedLayer
+        | AppCommand::RenameLayer { .. }
+        | AppCommand::MergeLayerDown(_)
+        | AppCommand::SetLayerClipped { .. }
+        | AppCommand::SetLayerVisibility { .. }
+        | AppCommand::MoveLayer { .. } => (true, false),
+        AppCommand::CommitLayerOpacity { before, after, .. } => (true, before != after),
+        AppCommand::CommitBackgroundColor { before, after } => (true, before != after),
+        _ => (false, false),
     }
 }
 

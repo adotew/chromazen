@@ -106,10 +106,6 @@ enum ReferenceDrag {
 
 struct ReferenceTransformEdit {
     id: ReferenceId,
-    before_position: [f32; 2],
-    before_size: [f32; 2],
-    current_position: [f32; 2],
-    current_size: [f32; 2],
 }
 
 struct LayerNameEdit {
@@ -419,13 +415,7 @@ impl GuiLayer {
                 None
             };
             if response.drag_started() || resize.drag_started() {
-                self.reference_transform_edit = Some(ReferenceTransformEdit {
-                    id: reference.id,
-                    before_position: reference.position,
-                    before_size: reference.size,
-                    current_position: reference.position,
-                    current_size: reference.size,
-                });
+                self.reference_transform_edit = Some(ReferenceTransformEdit { id: reference.id });
             }
             if let Some(drag) = active {
                 self.update_reference_drag(reference, drag, view, pixels_per_point);
@@ -483,14 +473,6 @@ impl GuiLayer {
                 )
             }
         };
-        if let Some(edit) = self
-            .reference_transform_edit
-            .as_mut()
-            .filter(|edit| edit.id == reference.id)
-        {
-            edit.current_position = position;
-            edit.current_size = size;
-        }
         self.commands.push(AppCommand::SetReferenceTransform {
             id: reference.id,
             position,
@@ -499,20 +481,13 @@ impl GuiLayer {
     }
 
     fn commit_reference_drag(&mut self, id: ReferenceId) {
-        let Some(edit) = self
+        if self
             .reference_transform_edit
             .take()
-            .filter(|edit| edit.id == id)
-        else {
-            return;
-        };
-        self.commands.push(AppCommand::CommitReferenceTransform {
-            id,
-            before_position: edit.before_position,
-            before_size: edit.before_size,
-            after_position: edit.current_position,
-            after_size: edit.current_size,
-        });
+            .is_some_and(|edit| edit.id == id)
+        {
+            self.commands.push(AppCommand::CommitReferenceTransform(id));
+        }
     }
 
     fn brush_preview_texture(&self, brush_id: &str) -> Option<egui::TextureId> {
