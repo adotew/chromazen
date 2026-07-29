@@ -1,13 +1,17 @@
 use crate::{
-    artwork::{ArtworkId, ArtworkStore, ArtworkSummary, DocumentManifest},
+    artwork::{ArtworkId, ArtworkStore, ArtworkSummary, DocumentManifest, ReferenceManifest},
     renderer::CanvasSizeConstraints,
 };
+
+use super::references::{DecodedReference, decode_reference_file};
 
 pub(super) struct OpenedArtwork {
     pub(super) id: ArtworkId,
     pub(super) title: String,
     pub(super) document: DocumentManifest,
     pub(super) layers: Vec<image::RgbaImage>,
+    pub(super) references: Vec<(ReferenceManifest, DecodedReference)>,
+    pub(super) warnings: Vec<String>,
 }
 
 pub(super) struct GalleryController {
@@ -91,11 +95,27 @@ impl GalleryController {
             }
             layers.push(image);
         }
+        let mut references = Vec::with_capacity(loaded.reference_paths.len());
+        let mut warnings = Vec::new();
+        for (metadata, path) in loaded
+            .document
+            .references
+            .iter()
+            .cloned()
+            .zip(&loaded.reference_paths)
+        {
+            match decode_reference_file(path) {
+                Ok(decoded) => references.push((metadata, decoded)),
+                Err(error) => warnings.push(error),
+            }
+        }
         Ok(OpenedArtwork {
             id: loaded.summary.id,
             title: loaded.summary.title,
             document: loaded.document,
             layers,
+            references,
+            warnings,
         })
     }
 

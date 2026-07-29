@@ -4,6 +4,7 @@ mod export;
 mod gallery;
 mod input;
 mod menu;
+mod references;
 mod settings;
 mod ui;
 
@@ -27,6 +28,7 @@ use self::{
     gallery::GalleryController,
     input::{KeyboardShortcut, PaintInputController},
     menu::NativeMenu,
+    references::ReferenceBoard,
     settings::{SettingsCommand, SettingsController, SettingsEffect},
     ui::{BrushResizeLabel, EditorUiState, EyedropperIndicator, GuiLayer},
 };
@@ -68,6 +70,7 @@ pub struct App {
     gallery: GalleryController,
     autosave: AutosaveController,
     export: ExportController,
+    references: ReferenceBoard,
     screen: AppScreen,
     pending_gallery: bool,
     pending_new_artwork: Option<[u32; 2]>,
@@ -286,6 +289,7 @@ impl App {
             gallery,
             autosave,
             export,
+            references: ReferenceBoard::default(),
             screen: AppScreen::Gallery,
             pending_gallery: false,
             pending_new_artwork: None,
@@ -669,6 +673,7 @@ impl App {
             return;
         }
         let id = crate::artwork::ArtworkId::new();
+        self.references.clear();
         self.autosave.begin_new(id, "Untitled".to_owned());
         self.screen = AppScreen::Editor;
         self.pending_gallery = false;
@@ -706,6 +711,12 @@ impl App {
             return;
         }
         let versions = paint.document_versions();
+        self.references.load(opened.references);
+        if !opened.warnings.is_empty()
+            && let Some(gui) = self.gui.as_mut()
+        {
+            gui.show_error(opened.warnings.join("\n"));
+        }
         self.autosave
             .begin_loaded(opened.id, opened.title.clone(), versions);
         self.screen = AppScreen::Editor;
@@ -720,6 +731,7 @@ impl App {
     fn finish_gallery_navigation(&mut self) {
         self.gallery.refresh();
         self.autosave.clear();
+        self.references.clear();
         self.screen = AppScreen::Gallery;
         self.pending_gallery = false;
         self.pending_new_artwork = None;
