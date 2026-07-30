@@ -8,11 +8,13 @@ use image::imageops::FilterType;
 
 use crate::{
     artwork::{
-        ArtworkId, ArtworkStore, CompositeLayer, LayerSource, LayerWrite, RevisionWrite,
-        encode_png, flatten_premultiplied_layers,
+        ArtworkId, ArtworkStore, CompositeLayer, LayerSource, LayerWrite, ReferenceSource,
+        ReferenceWrite, RevisionWrite, encode_png, flatten_premultiplied_layers,
     },
     renderer::{DocumentVersions, LayerId, PaintRenderer},
 };
+
+use super::references::{ReferenceBoard, ReferenceId, ReferenceVersions};
 
 const AUTOSAVE_DELAY: Duration = Duration::from_secs(2);
 const THUMBNAIL_SIZE: u32 = 512;
@@ -27,17 +29,23 @@ pub(super) enum SaveStatus {
     Failed(String),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SaveVersions {
+    paint: DocumentVersions,
+    references: ReferenceVersions,
+}
+
 struct SaveCompletion {
     artwork_id: ArtworkId,
-    versions: DocumentVersions,
+    versions: SaveVersions,
     result: Result<(), String>,
 }
 
 struct ArtworkSession {
     id: ArtworkId,
     title: String,
-    saved_versions: DocumentVersions,
-    in_flight: Option<DocumentVersions>,
+    saved_versions: SaveVersions,
+    in_flight: Option<SaveVersions>,
     dirty_since: Option<Instant>,
     save_requested: bool,
     error: Option<String>,
@@ -67,10 +75,16 @@ impl AutosaveController {
         self.session = Some(ArtworkSession {
             id,
             title,
-            saved_versions: DocumentVersions {
-                generation: 0,
-                metadata: 0,
-                layers: Vec::new(),
+            saved_versions: SaveVersions {
+                paint: DocumentVersions {
+                    generation: 0,
+                    metadata: 0,
+                    layers: Vec::new(),
+                },
+                references: ReferenceVersions {
+                    generation: 0,
+                    assets: Vec::new(),
+                },
             },
             in_flight: None,
             dirty_since: Some(Instant::now()),
@@ -84,11 +98,15 @@ impl AutosaveController {
         id: ArtworkId,
         title: String,
         versions: DocumentVersions,
+        reference_versions: ReferenceVersions,
     ) {
         self.session = Some(ArtworkSession {
             id,
             title,
-            saved_versions: versions,
+            saved_versions: SaveVersions {
+                paint: versions,
+                references: reference_versions,
+            },
             in_flight: None,
             dirty_since: None,
             save_requested: false,
@@ -100,11 +118,15 @@ impl AutosaveController {
         self.session = None;
     }
 
+    pub(super) fn artwork_id(&self) -> Option<&ArtworkId> {
+        self.session.as_ref().map(|session| &session.id)
+    }
+
     pub(super) fn artwork_title(&self) -> Option<&str> {
         self.session.as_ref().map(|session| session.title.as_str())
     }
 
-    pub(super) fn status(&self, paint: &PaintRenderer) -> SaveStatus {
+    pub(super) fn status(&self, paint: &PaintRenderer, references: &ReferenceBoard) -> SaveStatus {
         let Some(session) = &self.session else {
             return SaveStatus::Clean;
         };
@@ -114,15 +136,15 @@ impl AutosaveController {
         if session.in_flight.is_some() {
             return SaveStatus::Saving;
         }
-        if paint.document_versions().generation != session.saved_versions.generation {
+        if current_versions(paint, references) != session.saved_versions {
             SaveStatus::Waiting
         } else {
             SaveStatus::Clean
         }
     }
 
-    pub(super) fn is_clean(&self, paint: &PaintRenderer) -> bool {
-        matches!(self.status(paint), SaveStatus::Clean)
+    pub(super) fn is_clean(&self, paint: &PaintRenderer, references: &ReferenceBoard) -> bool {
+        matches!(self.status(paint, references), SaveStatus::Clean)
     }
 
     pub(super) fn next_deadline(&self) -> Option<Instant> {
@@ -140,19 +162,17 @@ impl AutosaveController {
         }
     }
 
-    pub(super) fn update(&mut self, paint: &PaintRenderer) -> bool {
-        let mut changed = self.process_completions(paint);
+    pub(super) fn update(&mut self, paint: &PaintRenderer, references: &ReferenceBoard) -> bool {
+        let mut changed = self.process_completions(paint, references);
         let Some(session) = self.session.as_mut() else {
             return changed;
         };
-        let current = paint.document_versions();
-        let target_generation = session
+        let current = current_versions(paint, references);
+        let target = session
             .in_flight
             .as_ref()
-            .map_or(session.saved_versions.generation, |versions| {
-                versions.generation
-            });
-        if current.generation != target_generation && session.dirty_since.is_none() {
+            .unwrap_or(&session.saved_versions);
+        if current != *target && session.dirty_since.is_none() {
             session.dirty_since = Some(Instant::now());
             changed = true;
         }
@@ -168,7 +188,7 @@ impl AutosaveController {
         }
         session.save_requested = false;
         session.error = None;
-        match self.start_save(paint, current) {
+        match self.start_save(paint, references, current) {
             Ok(()) => true,
             Err(error) => {
                 if let Some(session) = self.session.as_mut() {
@@ -183,17 +203,26 @@ impl AutosaveController {
     fn start_save(
         &mut self,
         paint: &PaintRenderer,
-        versions: DocumentVersions,
+        references: &ReferenceBoard,
+        versions: SaveVersions,
     ) -> Result<(), String> {
         let store = self
             .store
             .clone()
             .ok_or_else(|| "The artwork data directory is unavailable".to_owned())?;
         let session = self.session.as_mut().expect("save requires a session");
-        let document = paint.document_manifest();
+        let mut document = paint.document_manifest();
+        document.references = references.manifest();
+        let reference_images: Vec<_> = references
+            .images()
+            .iter()
+            .map(|reference| (reference.id, Arc::clone(&reference.png)))
+            .collect();
         let readback = paint.begin_document_layer_readback()?;
-        let dirty_ids = changed_layer_ids(&session.saved_versions, &versions);
-        let first_revision = session.saved_versions.layers.is_empty();
+        let dirty_layer_ids = changed_layer_ids(&session.saved_versions.paint, &versions.paint);
+        let dirty_reference_ids =
+            changed_reference_ids(&session.saved_versions.references, &versions.references);
+        let first_revision = session.saved_versions.paint.layers.is_empty();
         let artwork_id = session.id.clone();
         let title = session.title.clone();
         session.in_flight = Some(versions.clone());
@@ -204,7 +233,14 @@ impl AutosaveController {
         std::thread::spawn(move || {
             let result = (|| {
                 let images = readback.finish()?;
-                let write = build_revision_write(document, images, &dirty_ids, first_revision)?;
+                let write = build_revision_write(
+                    document,
+                    images,
+                    &dirty_layer_ids,
+                    reference_images,
+                    &dirty_reference_ids,
+                    first_revision,
+                )?;
                 store
                     .commit_revision(&artwork_id, &title, write)
                     .map(|_| ())
@@ -220,7 +256,7 @@ impl AutosaveController {
         Ok(())
     }
 
-    fn process_completions(&mut self, paint: &PaintRenderer) -> bool {
+    fn process_completions(&mut self, paint: &PaintRenderer, references: &ReferenceBoard) -> bool {
         let mut changed = false;
         while let Ok(completion) = self.completion_receiver.try_recv() {
             let Some(session) = self.session.as_mut() else {
@@ -234,7 +270,7 @@ impl AutosaveController {
                 Ok(()) => {
                     session.saved_versions = completion.versions;
                     session.error = None;
-                    if paint.document_versions().generation != session.saved_versions.generation {
+                    if current_versions(paint, references) != session.saved_versions {
                         session.dirty_since = Some(Instant::now());
                     }
                 }
@@ -249,6 +285,13 @@ impl AutosaveController {
     }
 }
 
+fn current_versions(paint: &PaintRenderer, references: &ReferenceBoard) -> SaveVersions {
+    SaveVersions {
+        paint: paint.document_versions(),
+        references: references.versions(),
+    }
+}
+
 fn changed_layer_ids(saved: &DocumentVersions, current: &DocumentVersions) -> HashSet<LayerId> {
     let saved: HashMap<_, _> = saved.layers.iter().copied().collect();
     current
@@ -258,25 +301,51 @@ fn changed_layer_ids(saved: &DocumentVersions, current: &DocumentVersions) -> Ha
         .collect()
 }
 
+fn changed_reference_ids(
+    saved: &ReferenceVersions,
+    current: &ReferenceVersions,
+) -> HashSet<ReferenceId> {
+    let saved: HashMap<_, _> = saved.assets.iter().copied().collect();
+    current
+        .assets
+        .iter()
+        .filter_map(|(id, version)| (saved.get(id) != Some(version)).then_some(*id))
+        .collect()
+}
+
 fn build_revision_write(
     document: crate::artwork::DocumentManifest,
     images: Vec<(LayerId, image::RgbaImage)>,
-    dirty_ids: &HashSet<LayerId>,
+    dirty_layer_ids: &HashSet<LayerId>,
+    reference_images: Vec<(ReferenceId, Arc<Vec<u8>>)>,
+    dirty_reference_ids: &HashSet<ReferenceId>,
     first_revision: bool,
 ) -> Result<RevisionWrite, String> {
     let thumbnail_png = encode_thumbnail(&images, &document)?;
     let mut layers = Vec::with_capacity(images.len());
     for (id, image) in images {
-        let source = if first_revision || dirty_ids.contains(&id) {
+        let source = if first_revision || dirty_layer_ids.contains(&id) {
             LayerSource::Png(encode_png(&image)?)
         } else {
             LayerSource::ReuseCurrent
         };
         layers.push(LayerWrite { id: id.0, source });
     }
+    let references = reference_images
+        .into_iter()
+        .map(|(id, png)| ReferenceWrite {
+            id: id.0,
+            source: if first_revision || dirty_reference_ids.contains(&id) {
+                ReferenceSource::Png(png.as_ref().clone())
+            } else {
+                ReferenceSource::ReuseCurrent
+            },
+        })
+        .collect();
     Ok(RevisionWrite {
         document,
         layers,
+        references,
         thumbnail_png,
     })
 }
@@ -374,6 +443,7 @@ mod tests {
                 clipped: false,
                 file: "layers/1.png".to_owned(),
             }],
+            references: Vec::new(),
         }
     }
 
@@ -403,6 +473,23 @@ mod tests {
         current.generation = 5;
         current.metadata = 5;
         assert!(changed_layer_ids(&saved, &current).is_empty());
+    }
+
+    #[test]
+    fn reference_metadata_changes_reuse_assets() {
+        let saved = ReferenceVersions {
+            generation: 2,
+            assets: vec![(ReferenceId(1), 4), (ReferenceId(2), 7)],
+        };
+        let mut moved = saved.clone();
+        moved.generation = 3;
+        assert!(changed_reference_ids(&saved, &moved).is_empty());
+
+        moved.assets[1].1 = 8;
+        assert_eq!(
+            changed_reference_ids(&saved, &moved),
+            HashSet::from([ReferenceId(2)])
+        );
     }
 
     #[test]

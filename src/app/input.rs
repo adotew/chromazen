@@ -55,6 +55,10 @@ impl PaintInputController {
         self.tool
     }
 
+    pub(crate) fn cursor_position(&self) -> [f32; 2] {
+        self.cursor_pos
+    }
+
     pub fn brush_cursor_pos(&self) -> Option<[f32; 2]> {
         (self.cursor_inside
             && !self.is_panning
@@ -93,7 +97,10 @@ impl PaintInputController {
     }
 
     pub fn captures_drag_event(&self, _event: &WindowEvent) -> bool {
-        self.resize_origin.is_some() || self.eyedropper_drag.is_some()
+        self.is_drawing
+            || self.is_panning
+            || self.resize_origin.is_some()
+            || self.eyedropper_drag.is_some()
     }
 
     pub fn observe_event(&mut self, event: &WindowEvent) -> bool {
@@ -710,6 +717,23 @@ mod tests {
         assert_eq!(input.eyedropper_indicator_pos(), Some([40.0, 50.0]));
         assert!(input.is_eyedropper_active());
         assert!(!input.captures_drag_event(&WindowEvent::Focused(false)));
+    }
+
+    #[test]
+    fn active_document_interactions_capture_consumed_events() {
+        let event = WindowEvent::Focused(false);
+        let drawing = PaintInputController {
+            is_drawing: true,
+            ..PaintInputController::default()
+        };
+        let panning = PaintInputController {
+            is_panning: true,
+            ..PaintInputController::default()
+        };
+
+        assert!(drawing.captures_drag_event(&event));
+        assert!(panning.captures_drag_event(&event));
+        assert!(!PaintInputController::default().captures_drag_event(&event));
     }
 
     #[test]

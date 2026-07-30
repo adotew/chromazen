@@ -15,11 +15,15 @@ use crate::{
     paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings, StrokeSmoothingOptions},
     renderer::{
         CanvasSizeConstraints, DEFAULT_CANVAS_SIZE, DropEdge, LayerId, LayerResourceId,
-        LayerSnapshot, PaintRenderer, merge_down_target_index,
+        LayerSnapshot, PaintRenderer, PaintViewSnapshot, merge_down_target_index,
     },
 };
 
-use super::{autosave::SaveStatus, command::AppCommand};
+use super::{
+    autosave::SaveStatus,
+    command::AppCommand,
+    references::{ReferenceId, ReferenceImage},
+};
 
 #[derive(Clone, Copy)]
 pub(crate) struct BrushResizeLabel {
@@ -40,6 +44,10 @@ pub(crate) struct EditorUiState<'a> {
     pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
     pub(crate) save_status: SaveStatus,
     pub(crate) pending_navigation: Option<&'a str>,
+    pub(crate) reference_import_dialog_delay: Option<Duration>,
+    pub(crate) reference_load_dialog_delay: Option<Duration>,
+    pub(crate) references: &'a [ReferenceImage],
+    pub(crate) workspace_view: PaintViewSnapshot,
 }
 
 pub struct GuiLayer {
@@ -59,6 +67,12 @@ pub struct GuiLayer {
     layer_name_edit: Option<LayerNameEdit>,
     layer_opacity_edit: Option<LayerOpacityEdit>,
     layer_thumbnails: Vec<LayerThumbnail>,
+    reference_textures: Vec<ReferenceTexture>,
+    selected_reference: Option<ReferenceId>,
+    reference_transform_edit: Option<ReferenceTransformEdit>,
+    reference_hit_rects: Vec<egui::Rect>,
+    pointer_over_reference: bool,
+    pointer_over_selected_reference: bool,
     brush_previews: Vec<(String, egui::TextureHandle)>,
     failed_brush_previews: Vec<String>,
     sidebar_visible: bool,
@@ -81,6 +95,26 @@ struct LayerPreviewKey {
 struct LayerThumbnail {
     key: LayerPreviewKey,
     texture_id: egui::TextureId,
+}
+
+struct ReferenceTexture {
+    id: ReferenceId,
+    resource_version: u64,
+    texture: egui::TextureHandle,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReferenceDrag {
+    Move,
+    Resize,
+}
+
+#[derive(Clone, Copy)]
+struct ReferenceTransformEdit {
+    id: ReferenceId,
+    drag: ReferenceDrag,
+    position: [f32; 2],
+    size: [f32; 2],
 }
 
 struct LayerNameEdit {
@@ -156,6 +190,12 @@ impl GuiLayer {
             layer_name_edit: None,
             layer_opacity_edit: None,
             layer_thumbnails: Vec::new(),
+            reference_textures: Vec::new(),
+            selected_reference: None,
+            reference_transform_edit: None,
+            reference_hit_rects: Vec::new(),
+            pointer_over_reference: false,
+            pointer_over_selected_reference: false,
             brush_previews: Vec::new(),
             failed_brush_previews: Vec::new(),
             sidebar_visible: true,
@@ -202,6 +242,285 @@ impl GuiLayer {
                 self.layer_thumbnails
                     .push(LayerThumbnail { key, texture_id });
             }
+        }
+    }
+
+    fn sync_reference_textures(&mut self, references: &[ReferenceImage]) {
+        self.reference_textures.retain(|cached| {
+            references.iter().any(|reference| {
+                reference.id == cached.id && reference.resource_version == cached.resource_version
+            })
+        });
+        for reference in references {
+            if self.reference_texture(reference.id).is_some() {
+                continue;
+            }
+            let size = [
+                reference.pixels.width() as usize,
+                reference.pixels.height() as usize,
+            ];
+            let image = egui::ColorImage::from_rgba_unmultiplied(size, reference.pixels.as_raw());
+            let texture = self.context.load_texture(
+                format!("reference {}", reference.id.0),
+                image,
+                egui::TextureOptions::LINEAR,
+            );
+            self.reference_textures.push(ReferenceTexture {
+                id: reference.id,
+                resource_version: reference.resource_version,
+                texture,
+            });
+        }
+        if self
+            .selected_reference
+            .is_some_and(|id| references.iter().all(|reference| reference.id != id))
+        {
+            self.selected_reference = None;
+        }
+    }
+
+    fn reference_texture(&self, id: ReferenceId) -> Option<egui::TextureId> {
+        self.reference_textures
+            .iter()
+            .find(|cached| cached.id == id)
+            .map(|cached| cached.texture.id())
+    }
+
+    fn show_workspace_references(
+        &mut self,
+        context: &egui::Context,
+        references: &[ReferenceImage],
+        view: PaintViewSnapshot,
+        workspace_rect: egui::Rect,
+    ) {
+        self.reference_hit_rects.clear();
+        self.pointer_over_reference = false;
+        self.pointer_over_selected_reference = false;
+        let pointer_position = context.pointer_latest_pos();
+        let pixels_per_point = context.pixels_per_point();
+        for reference in references.iter().filter(|reference| reference.visible) {
+            let Some(texture_id) = self.reference_texture(reference.id) else {
+                continue;
+            };
+            let window_position = view.document_to_window(reference.position);
+            let position = egui::pos2(
+                window_position[0] / pixels_per_point,
+                window_position[1] / pixels_per_point,
+            );
+            let size = egui::vec2(
+                reference.size[0] * view.zoom / pixels_per_point,
+                reference.size[1] * view.zoom / pixels_per_point,
+            );
+            if size.x <= 0.5 || size.y <= 0.5 {
+                continue;
+            }
+
+            let rect = egui::Rect::from_min_size(position, size);
+            let pointer_over_image =
+                pointer_over_visible_reference(pointer_position, rect, workspace_rect);
+            let pointer_over_resize = !reference.locked
+                && self.selected_reference == Some(reference.id)
+                && pointer_position.is_some_and(|pointer| {
+                    workspace_rect.contains(pointer)
+                        && reference_resize_handle(rect).1.contains(pointer)
+                });
+            self.pointer_over_reference |= pointer_over_image || pointer_over_resize;
+            if self.selected_reference == Some(reference.id) {
+                self.pointer_over_selected_reference = pointer_over_image || pointer_over_resize;
+            }
+            let visible_rect = rect.intersect(workspace_rect);
+            if !visible_rect.is_positive() {
+                continue;
+            }
+            self.reference_hit_rects.push(visible_rect);
+            if !reference.locked && self.selected_reference == Some(reference.id) {
+                let resize_rect = reference_resize_handle(rect).1.intersect(workspace_rect);
+                if resize_rect.is_positive() {
+                    self.reference_hit_rects.push(resize_rect);
+                }
+            }
+
+            let area = egui::Area::new(egui::Id::new(("reference", reference.id.0)))
+                .order(egui::Order::Middle)
+                .fixed_pos(visible_rect.min)
+                .default_size(visible_rect.size())
+                // Keep the canvas-relative transform authoritative. The area's interactive bounds
+                // are only the visible image, while its painter clips the full image to the
+                // workspace instead of moving the reference back inside the window.
+                .constrain(false)
+                .show(context, |ui| {
+                    ui.shrink_clip_rect(workspace_rect);
+                    let sense = if reference.locked {
+                        egui::Sense::click()
+                    } else {
+                        egui::Sense::click_and_drag()
+                    };
+                    let response = ui.allocate_rect(visible_rect, sense);
+                    ui.painter().image(
+                        texture_id,
+                        rect,
+                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                    let resize = (!reference.locked
+                        && self.selected_reference == Some(reference.id))
+                    .then(|| {
+                        let (_, handle_rect) = reference_resize_handle(rect);
+                        ui.interact(
+                            handle_rect.intersect(workspace_rect),
+                            egui::Id::new(("reference resize", reference.id.0)),
+                            egui::Sense::drag(),
+                        )
+                        .on_hover_and_drag_cursor(egui::CursorIcon::ResizeNwSe)
+                    });
+                    (response, resize)
+                });
+            let (response, resize) = area.inner;
+            if response.clicked()
+                || response.secondary_clicked()
+                || resize.as_ref().is_some_and(egui::Response::drag_started)
+            {
+                self.selected_reference = Some(reference.id);
+            }
+            self.show_reference_context_menu(&response, reference);
+
+            if !reference.locked {
+                let active = if let Some(resize) = resize.as_ref().filter(|resize| resize.dragged())
+                {
+                    resize
+                        .total_drag_delta()
+                        .map(|delta| (ReferenceDrag::Resize, delta))
+                } else if response.dragged() {
+                    response
+                        .total_drag_delta()
+                        .map(|delta| (ReferenceDrag::Move, delta))
+                } else {
+                    None
+                };
+                let resize_started = resize.as_ref().is_some_and(egui::Response::drag_started);
+                let started_drag = if resize_started {
+                    Some(ReferenceDrag::Resize)
+                } else if response.drag_started() {
+                    Some(ReferenceDrag::Move)
+                } else {
+                    None
+                };
+                if let Some(drag) = started_drag {
+                    self.reference_transform_edit = Some(ReferenceTransformEdit {
+                        id: reference.id,
+                        drag,
+                        position: reference.position,
+                        size: reference.size,
+                    });
+                }
+                if let Some((drag, delta)) = active {
+                    self.update_reference_drag(reference.id, drag, delta, view, pixels_per_point);
+                }
+                let resize_stopped = resize.as_ref().is_some_and(egui::Response::drag_stopped);
+                if response.drag_stopped() || resize_stopped {
+                    self.commit_reference_drag(reference.id);
+                }
+            }
+
+            if self.selected_reference == Some(reference.id) {
+                let painter = context
+                    .layer_painter(area.response.layer_id)
+                    .with_clip_rect(workspace_rect);
+                paint_reference_selection(&painter, rect, !reference.locked);
+            }
+        }
+
+        if !context.input(|input| input.pointer.primary_down())
+            && let Some(id) = self.reference_transform_edit.as_ref().map(|edit| edit.id)
+        {
+            self.commit_reference_drag(id);
+        }
+    }
+
+    fn show_reference_context_menu(
+        &mut self,
+        response: &egui::Response,
+        reference: &ReferenceImage,
+    ) {
+        response.context_menu(|ui| {
+            ui.set_min_width(80.0);
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            if ui
+                .button(if reference.locked { "Unlock" } else { "Lock" })
+                .clicked()
+            {
+                self.commands
+                    .push(AppCommand::ToggleReferenceLocked(reference.id));
+                ui.close();
+            }
+            if ui.button("Delete").clicked() {
+                self.commands
+                    .push(AppCommand::DeleteReference(reference.id));
+                ui.close();
+            }
+        });
+    }
+
+    pub(crate) fn pointer_over_reference(&self) -> bool {
+        self.pointer_over_reference
+    }
+
+    pub(crate) fn reference_drag_active(&self) -> bool {
+        self.reference_transform_edit.is_some()
+    }
+
+    pub(crate) fn reference_resize_active(&self) -> bool {
+        self.reference_transform_edit
+            .is_some_and(|edit| edit.drag == ReferenceDrag::Resize)
+    }
+
+    pub(crate) fn window_point_over_reference(&self, point: [f32; 2]) -> bool {
+        window_point_over_rects(
+            point,
+            self.context.pixels_per_point(),
+            &self.reference_hit_rects,
+        )
+    }
+
+    fn clear_reference_selection_on_outside_press(&mut self, context: &egui::Context) {
+        let primary_pressed = context.input(|input| input.pointer.primary_pressed());
+        if should_clear_reference_selection(
+            self.selected_reference.is_some(),
+            primary_pressed,
+            self.pointer_over_selected_reference,
+            context.is_pointer_over_egui(),
+        ) {
+            self.selected_reference = None;
+        }
+    }
+
+    fn update_reference_drag(
+        &mut self,
+        id: ReferenceId,
+        drag: ReferenceDrag,
+        drag_delta: egui::Vec2,
+        view: PaintViewSnapshot,
+        pixels_per_point: f32,
+    ) {
+        let Some(origin) = self.reference_transform_edit.filter(|edit| edit.id == id) else {
+            return;
+        };
+        let delta = view.window_delta_to_document([
+            drag_delta.x * pixels_per_point,
+            drag_delta.y * pixels_per_point,
+        ]);
+        let (position, size) =
+            reference_transform_from_drag_origin(origin.position, origin.size, drag, delta);
+        self.commands
+            .push(AppCommand::SetReferenceTransform { id, position, size });
+    }
+
+    fn commit_reference_drag(&mut self, id: ReferenceId) {
+        if self
+            .reference_transform_edit
+            .is_some_and(|edit| edit.id == id)
+        {
+            self.reference_transform_edit = None;
         }
     }
 
@@ -353,14 +672,25 @@ impl GuiLayer {
             eyedropper_indicator,
             save_status,
             pending_navigation,
+            reference_import_dialog_delay,
+            reference_load_dialog_delay,
+            references,
+            workspace_view,
         } = state;
         self.tool_sizes[tool_index(tool)] = self.brush.size;
+        self.sync_reference_textures(references);
         self.load_brush_preview(&self.tool_brushes[tool_index(tool)].clone());
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
 
         context.run_ui(raw_input, |ui| {
             let background = background_color(layers.background_color);
+            if let Some(id) = self.selected_reference
+                && !ui.ctx().egui_wants_keyboard_input()
+                && ui.ctx().input(|input| input.key_pressed(egui::Key::Delete))
+            {
+                self.commands.push(AppCommand::DeleteReference(id));
+            }
 
             // egui's built-in animated panel deliberately hides its contents while resizing,
             // which makes a wide sidebar flash empty. Keep a full-width child clipped to an
@@ -714,6 +1044,12 @@ impl GuiLayer {
                     });
             }
 
+            // The canvas is rendered underneath the UI and naturally hidden by the sidebar.
+            // Give references the same visible workspace instead of allowing their middle-layer
+            // painters and interactions to extend over the panel.
+            let workspace_rect = ui.available_rect_before_wrap();
+            self.show_workspace_references(ui.ctx(), references, workspace_view, workspace_rect);
+
             let selected_tool = egui::Area::new(egui::Id::new("tool rail"))
                 .anchor(
                     egui::Align2::RIGHT_TOP,
@@ -735,7 +1071,30 @@ impl GuiLayer {
             if let Some(action) = pending_navigation {
                 show_save_blocker(ui.ctx(), action, &save_status, &mut self.commands);
             }
+            if let Some(delay) = reference_import_dialog_delay {
+                if delay.is_zero() {
+                    show_reference_loading_dialog(
+                        ui.ctx(),
+                        "reference import dialog",
+                        "Importing reference…",
+                    );
+                } else {
+                    ui.ctx().request_repaint_after(delay);
+                }
+            }
+            if let Some(delay) = reference_load_dialog_delay {
+                if delay.is_zero() {
+                    show_reference_loading_dialog(
+                        ui.ctx(),
+                        "reference load dialog",
+                        "Loading references…",
+                    );
+                } else {
+                    ui.ctx().request_repaint_after(delay);
+                }
+            }
             self.show_new_artwork_dialog(ui.ctx());
+            self.clear_reference_selection_on_outside_press(ui.ctx());
         })
     }
 
@@ -960,6 +1319,16 @@ impl GuiLayer {
 
 fn layer_preview_is_current(current: &[LayerPreviewKey], cached: LayerPreviewKey) -> bool {
     current.contains(&cached)
+}
+
+fn show_reference_loading_dialog(context: &egui::Context, id: &str, message: &str) {
+    egui::Modal::new(egui::Id::new(id)).show(context, |ui| {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(message);
+        });
+    });
+    context.request_repaint_after(Duration::from_millis(16));
 }
 
 fn show_save_blocker(
@@ -1382,6 +1751,87 @@ fn show_tool_button(
     response.on_hover_text(format!("{label} ({shortcut})"))
 }
 
+const REFERENCE_RESIZE_HANDLE_SIZE: f32 = 14.0;
+const REFERENCE_RESIZE_HANDLE_INSET: f32 = 2.0;
+const REFERENCE_RESIZE_HIT_SIZE: f32 = 28.0;
+
+fn reference_transform_from_drag_origin(
+    position: [f32; 2],
+    size: [f32; 2],
+    drag: ReferenceDrag,
+    delta: [f32; 2],
+) -> ([f32; 2], [f32; 2]) {
+    match drag {
+        ReferenceDrag::Move => ([position[0] + delta[0], position[1] + delta[1]], size),
+        ReferenceDrag::Resize => {
+            // Project the pointer delta onto the reference diagonal. This keeps the corner as
+            // close to the pointer as possible while preserving the original aspect ratio.
+            let diagonal_length_squared = size[0] * size[0] + size[1] * size[1];
+            let scale = (1.0 + (delta[0] * size[0] + delta[1] * size[1]) / diagonal_length_squared)
+                .max(40.0 / size[0].min(size[1]));
+            (position, [size[0] * scale, size[1] * scale])
+        }
+    }
+}
+
+fn reference_resize_handle(reference_rect: egui::Rect) -> (egui::Pos2, egui::Rect) {
+    let center = reference_rect.right_bottom() - egui::Vec2::splat(REFERENCE_RESIZE_HANDLE_INSET);
+    let hit_rect =
+        egui::Rect::from_center_size(center, egui::Vec2::splat(REFERENCE_RESIZE_HIT_SIZE));
+    (center, hit_rect)
+}
+
+fn paint_reference_selection(
+    painter: &egui::Painter,
+    reference_rect: egui::Rect,
+    show_resize_handle: bool,
+) {
+    let shadow = egui::Color32::from_black_alpha(160);
+    let accent = egui::Color32::from_gray(210);
+    painter.rect_stroke(
+        reference_rect,
+        0.0,
+        egui::Stroke::new(2.0_f32, shadow),
+        egui::StrokeKind::Inside,
+    );
+    painter.rect_stroke(
+        reference_rect,
+        0.0,
+        egui::Stroke::new(1.0_f32, accent),
+        egui::StrokeKind::Inside,
+    );
+    if show_resize_handle {
+        let (center, _) = reference_resize_handle(reference_rect);
+        let handle_rect =
+            egui::Rect::from_center_size(center, egui::Vec2::splat(REFERENCE_RESIZE_HANDLE_SIZE));
+        painter.rect_filled(handle_rect, 2.0, shadow);
+        painter.rect_filled(handle_rect.shrink(1.0), 1.0, accent);
+    }
+}
+
+fn window_point_over_rects(point: [f32; 2], pixels_per_point: f32, rects: &[egui::Rect]) -> bool {
+    let point = egui::pos2(point[0] / pixels_per_point, point[1] / pixels_per_point);
+    rects.iter().any(|rect| rect.contains(point))
+}
+
+fn pointer_over_visible_reference(
+    pointer: Option<egui::Pos2>,
+    reference_rect: egui::Rect,
+    workspace_rect: egui::Rect,
+) -> bool {
+    pointer
+        .is_some_and(|pointer| workspace_rect.contains(pointer) && reference_rect.contains(pointer))
+}
+
+fn should_clear_reference_selection(
+    has_selection: bool,
+    primary_pressed: bool,
+    pointer_over_selected_reference: bool,
+    pointer_over_ui: bool,
+) -> bool {
+    has_selection && primary_pressed && !pointer_over_selected_reference && !pointer_over_ui
+}
+
 fn tool_index(tool: PaintTool) -> usize {
     match tool {
         PaintTool::Brush => 0,
@@ -1510,5 +1960,71 @@ mod tests {
             resource_id: LayerResourceId(7),
         };
         assert!(layer_preview_is_current(&[cached], cached));
+    }
+
+    #[test]
+    fn reference_transform_uses_total_drag_delta_from_the_origin() {
+        let position = [10.0, 20.0];
+        let size = [100.0, 50.0];
+
+        let (_, resized) = reference_transform_from_drag_origin(
+            position,
+            size,
+            ReferenceDrag::Resize,
+            [25.0, 20.0],
+        );
+        assert!((resized[0] - 128.0).abs() < 0.0001);
+        assert!((resized[1] - 64.0).abs() < 0.0001);
+        assert!((resized[0] / resized[1] - size[0] / size[1]).abs() < 0.0001);
+        assert_eq!(
+            reference_transform_from_drag_origin(position, size, ReferenceDrag::Move, [50.0, 25.0],),
+            ([60.0, 45.0], size),
+        );
+    }
+
+    #[test]
+    fn resize_handle_overlaps_the_corner_with_a_larger_invisible_hit_target() {
+        let reference = egui::Rect::from_min_max(egui::pos2(20.0, 30.0), egui::pos2(120.0, 130.0));
+        let (center, hit_rect) = reference_resize_handle(reference);
+
+        assert_eq!(center, egui::pos2(118.0, 128.0));
+        assert_eq!(hit_rect.min, egui::pos2(104.0, 114.0));
+        assert_eq!(hit_rect.max, egui::pos2(132.0, 142.0));
+    }
+
+    #[test]
+    fn physical_window_points_hit_cached_reference_rects() {
+        let rects = [egui::Rect::from_min_max(
+            egui::pos2(20.0, 30.0),
+            egui::pos2(120.0, 130.0),
+        )];
+
+        assert!(window_point_over_rects([100.0, 120.0], 2.0, &rects));
+        assert!(!window_point_over_rects([10.0, 10.0], 2.0, &rects));
+    }
+
+    #[test]
+    fn reference_hover_is_limited_to_the_visible_workspace() {
+        let reference = egui::Rect::from_min_max(egui::pos2(80.0, 20.0), egui::pos2(140.0, 80.0));
+        let workspace = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(100.0, 100.0));
+
+        assert!(pointer_over_visible_reference(
+            Some(egui::pos2(90.0, 50.0)),
+            reference,
+            workspace,
+        ));
+        assert!(!pointer_over_visible_reference(
+            Some(egui::pos2(120.0, 50.0)),
+            reference,
+            workspace,
+        ));
+    }
+
+    #[test]
+    fn canvas_press_clears_reference_selection_without_affecting_ui_presses() {
+        assert!(should_clear_reference_selection(true, true, false, false));
+        assert!(!should_clear_reference_selection(true, true, true, false));
+        assert!(!should_clear_reference_selection(true, true, false, true));
+        assert!(!should_clear_reference_selection(false, true, false, false));
     }
 }

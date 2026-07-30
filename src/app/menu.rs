@@ -17,6 +17,7 @@ mod imp {
     const NEW_ARTWORK_ID: &str = "chromazen.file.new-artwork";
     const SAVE_ARTWORK_ID: &str = "chromazen.file.save-artwork";
     const EXPORT_PNG_ID: &str = "chromazen.file.export-png";
+    const ADD_REFERENCE_ID: &str = "chromazen.file.add-reference";
     const SHOW_GALLERY_ID: &str = "chromazen.file.show-gallery";
     const QUIT_ID: &str = "chromazen.application.quit";
     const UNDO_ID: &str = "chromazen.edit.undo";
@@ -32,6 +33,7 @@ mod imp {
         redo: MenuItem,
         save_artwork: MenuItem,
         export_png: MenuItem,
+        add_reference: MenuItem,
         show_gallery: MenuItem,
         installed: bool,
     }
@@ -44,7 +46,7 @@ mod imp {
             menu.append(&application_menu()?)
                 .map_err(|error| format!("failed to add application menu: {error}"))?;
 
-            let (file_menu, save_artwork, export_png, show_gallery) = file_menu()?;
+            let (file_menu, save_artwork, export_png, add_reference, show_gallery) = file_menu()?;
             menu.append(&file_menu)
                 .map_err(|error| format!("failed to add file menu: {error}"))?;
             let (edit_menu, undo, redo) = edit_menu()?;
@@ -59,6 +61,7 @@ mod imp {
                 redo,
                 save_artwork,
                 export_png,
+                add_reference,
                 show_gallery,
                 installed: false,
             })
@@ -82,6 +85,7 @@ mod imp {
 
         pub(crate) fn set_document_enabled(&self, in_editor: bool) {
             self.save_artwork.set_enabled(in_editor);
+            self.add_reference.set_enabled(in_editor);
             self.show_gallery.set_enabled(in_editor);
         }
 
@@ -114,7 +118,7 @@ mod imp {
         }
     }
 
-    fn file_menu() -> Result<(Submenu, MenuItem, MenuItem, MenuItem), String> {
+    fn file_menu() -> Result<(Submenu, MenuItem, MenuItem, MenuItem, MenuItem), String> {
         let new_artwork = MenuItem::with_id(
             NEW_ARTWORK_ID,
             "New Artwork",
@@ -136,14 +140,21 @@ mod imp {
                 Code::KeyE,
             )),
         );
+        let add_reference = MenuItem::with_id(ADD_REFERENCE_ID, "Add Reference…", false, None);
         let show_gallery = MenuItem::with_id(SHOW_GALLERY_ID, "Return to Gallery", false, None);
         let menu = Submenu::with_items(
             "File",
             true,
-            &[&new_artwork, &save_artwork, &export_png, &show_gallery],
+            &[
+                &new_artwork,
+                &save_artwork,
+                &export_png,
+                &add_reference,
+                &show_gallery,
+            ],
         )
         .map_err(|error| format!("failed to build file menu: {error}"))?;
-        Ok((menu, save_artwork, export_png, show_gallery))
+        Ok((menu, save_artwork, export_png, add_reference, show_gallery))
     }
 
     fn edit_menu() -> Result<(Submenu, MenuItem, MenuItem), String> {
@@ -230,6 +241,7 @@ mod imp {
             NEW_ARTWORK_ID => Some(AppCommand::NewArtwork),
             SAVE_ARTWORK_ID => Some(AppCommand::SaveArtwork),
             EXPORT_PNG_ID => Some(AppCommand::ExportPng),
+            ADD_REFERENCE_ID => Some(AppCommand::AddReferences),
             SHOW_GALLERY_ID => Some(AppCommand::ShowGallery),
             QUIT_ID => Some(AppCommand::Quit),
             UNDO_ID => Some(AppCommand::Undo),
@@ -259,6 +271,10 @@ mod imp {
             assert_eq!(
                 command_for_id(&MenuId::new(EXPORT_PNG_ID)),
                 Some(AppCommand::ExportPng)
+            );
+            assert_eq!(
+                command_for_id(&MenuId::new(ADD_REFERENCE_ID)),
+                Some(AppCommand::AddReferences)
             );
             assert_eq!(
                 command_for_id(&MenuId::new(SHOW_GALLERY_ID)),

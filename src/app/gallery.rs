@@ -1,5 +1,7 @@
+use std::path::PathBuf;
+
 use crate::{
-    artwork::{ArtworkId, ArtworkStore, ArtworkSummary, DocumentManifest},
+    artwork::{ArtworkId, ArtworkStore, ArtworkSummary, DocumentManifest, ReferenceManifest},
     renderer::CanvasSizeConstraints,
 };
 
@@ -8,6 +10,7 @@ pub(super) struct OpenedArtwork {
     pub(super) title: String,
     pub(super) document: DocumentManifest,
     pub(super) layers: Vec<image::RgbaImage>,
+    pub(super) reference_sources: Vec<(ReferenceManifest, PathBuf)>,
 }
 
 pub(super) struct GalleryController {
@@ -91,11 +94,19 @@ impl GalleryController {
             }
             layers.push(image);
         }
+        let reference_sources = loaded
+            .document
+            .references
+            .iter()
+            .cloned()
+            .zip(loaded.reference_paths)
+            .collect();
         Ok(OpenedArtwork {
             id: loaded.summary.id,
             title: loaded.summary.title,
             document: loaded.document,
             layers,
+            reference_sources,
         })
     }
 

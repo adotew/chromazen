@@ -61,9 +61,20 @@ pub(crate) struct LayerWrite {
     pub(crate) source: LayerSource,
 }
 
+pub(crate) enum ReferenceSource {
+    Png(Vec<u8>),
+    ReuseCurrent,
+}
+
+pub(crate) struct ReferenceWrite {
+    pub(crate) id: u64,
+    pub(crate) source: ReferenceSource,
+}
+
 pub(crate) struct RevisionWrite {
     pub(crate) document: DocumentManifest,
     pub(crate) layers: Vec<LayerWrite>,
+    pub(crate) references: Vec<ReferenceWrite>,
     pub(crate) thumbnail_png: Vec<u8>,
 }
 
@@ -71,6 +82,7 @@ pub(crate) struct LoadedArtwork {
     pub(crate) summary: ArtworkSummary,
     pub(crate) document: DocumentManifest,
     pub(crate) layer_paths: Vec<PathBuf>,
+    pub(crate) reference_paths: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -149,12 +161,20 @@ impl ArtworkStore {
         let document_path = revision.join(DOCUMENT_FILE);
         let source = fs::read_to_string(&document_path)
             .map_err(|error| ArtworkError::io("read", &document_path, error))?;
-        let document: DocumentManifest = toml::from_str(&source).map_err(|error| {
-            ArtworkError::new(format!(
-                "failed to parse {}: {error}",
-                document_path.display()
-            ))
-        })?;
+        let document: DocumentManifest = toml::from_str::<DocumentManifest>(&source)
+            .map_err(|error| {
+                ArtworkError::new(format!(
+                    "failed to parse {}: {error}",
+                    document_path.display()
+                ))
+            })?
+            .migrate()
+            .map_err(|error| {
+                ArtworkError::new(format!(
+                    "failed to migrate {}: {error}",
+                    document_path.display()
+                ))
+            })?;
         document.validate().map_err(|error| {
             ArtworkError::new(format!(
                 "invalid document in {}: {error}",
@@ -166,6 +186,11 @@ impl ArtworkStore {
             .iter()
             .map(|layer| revision.join(&layer.file))
             .collect();
+        let reference_paths = document
+            .references
+            .iter()
+            .map(|reference| revision.join(&reference.file))
+            .collect();
         Ok(LoadedArtwork {
             summary: ArtworkSummary {
                 id: id.clone(),
@@ -175,6 +200,7 @@ impl ArtworkStore {
             },
             document,
             layer_paths,
+            reference_paths,
         })
     }
 
@@ -202,6 +228,10 @@ impl ArtworkStore {
         let result = (|| {
             fs::create_dir_all(temporary.join("layers"))
                 .map_err(|error| ArtworkError::io("create", &temporary, error))?;
+            if !write.document.references.is_empty() {
+                fs::create_dir_all(temporary.join("references"))
+                    .map_err(|error| ArtworkError::io("create", &temporary, error))?;
+            }
             let current_revision = previous
                 .as_ref()
                 .map(|project| self.revision_path(id, project.current_revision));
@@ -224,10 +254,30 @@ impl ArtworkStore {
                                 ArtworkError::new("cannot reuse a layer in the first revision")
                             })?
                             .join(&layer.file);
-                        if fs::hard_link(&source, &destination).is_err() {
-                            fs::copy(&source, &destination)
-                                .map_err(|error| ArtworkError::io("copy", &source, error))?;
-                        }
+                        reuse_file(&source, &destination)?;
+                    }
+                }
+            }
+            for reference in &write.document.references {
+                let reference_write = write
+                    .references
+                    .iter()
+                    .find(|candidate| candidate.id == reference.id)
+                    .ok_or_else(|| {
+                        ArtworkError::new(format!("missing image for reference {}", reference.id))
+                    })?;
+                let destination = temporary.join(&reference.file);
+                match &reference_write.source {
+                    ReferenceSource::Png(contents) => fs::write(&destination, contents)
+                        .map_err(|error| ArtworkError::io("write", &destination, error))?,
+                    ReferenceSource::ReuseCurrent => {
+                        let source = current_revision
+                            .as_ref()
+                            .ok_or_else(|| {
+                                ArtworkError::new("cannot reuse a reference in the first revision")
+                            })?
+                            .join(&reference.file);
+                        reuse_file(&source, &destination)?;
                     }
                 }
             }
@@ -378,6 +428,13 @@ impl ArtworkStore {
     }
 }
 
+fn reuse_file(source: &Path, destination: &Path) -> Result<(), ArtworkError> {
+    if fs::hard_link(source, destination).is_err() {
+        fs::copy(source, destination).map_err(|error| ArtworkError::io("copy", source, error))?;
+    }
+    Ok(())
+}
+
 fn atomic_toml(path: &Path, value: &impl serde::Serialize) -> Result<(), ArtworkError> {
     let source = toml::to_string_pretty(value)
         .map_err(|error| ArtworkError::new(format!("failed to serialize metadata: {error}")))?;
@@ -425,7 +482,7 @@ impl Error for ArtworkError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artwork::format::{DOCUMENT_SCHEMA_VERSION, LayerManifest};
+    use crate::artwork::format::{DOCUMENT_SCHEMA_VERSION, LayerManifest, ReferenceManifest};
 
     fn revision(pixel: u8) -> RevisionWrite {
         RevisionWrite {
@@ -443,11 +500,13 @@ mod tests {
                     clipped: false,
                     file: "layers/1.png".to_owned(),
                 }],
+                references: Vec::new(),
             },
             layers: vec![LayerWrite {
                 id: 1,
                 source: LayerSource::Png(vec![pixel]),
             }],
+            references: Vec::new(),
             thumbnail_png: vec![pixel],
         }
     }
@@ -463,6 +522,47 @@ mod tests {
         assert_eq!(loaded.summary.title, "Untitled");
         assert_eq!(loaded.document.layers[0].id, 1);
         assert_eq!(store.catalog().artworks.len(), 1);
+    }
+
+    #[test]
+    fn reference_assets_round_trip_and_can_be_reused() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ArtworkStore::from_root(temp.path());
+        let id = ArtworkId::new();
+        let mut first = revision(1);
+        first.document.references.push(ReferenceManifest {
+            id: 7,
+            file: "references/7.png".to_owned(),
+            position: [4100.0, 20.0],
+            size: [640.0, 480.0],
+            visible: true,
+            locked: false,
+        });
+        first.references.push(ReferenceWrite {
+            id: 7,
+            source: ReferenceSource::Png(vec![4, 5, 6]),
+        });
+        store.commit_revision(&id, "Study", first).unwrap();
+
+        let mut second = revision(2);
+        second.document.references.push(ReferenceManifest {
+            id: 7,
+            file: "references/7.png".to_owned(),
+            position: [4200.0, 40.0],
+            size: [640.0, 480.0],
+            visible: true,
+            locked: true,
+        });
+        second.references.push(ReferenceWrite {
+            id: 7,
+            source: ReferenceSource::ReuseCurrent,
+        });
+        store.commit_revision(&id, "Study", second).unwrap();
+
+        let loaded = store.load(&id).unwrap();
+        assert_eq!(loaded.document.references[0].position, [4200.0, 40.0]);
+        assert!(loaded.document.references[0].locked);
+        assert_eq!(fs::read(&loaded.reference_paths[0]).unwrap(), [4, 5, 6]);
     }
 
     #[test]

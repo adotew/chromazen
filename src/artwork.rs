@@ -2,10 +2,13 @@ mod format;
 mod raster;
 mod store;
 
-pub(crate) use format::{DOCUMENT_SCHEMA_VERSION, DocumentManifest, LayerManifest};
+pub(crate) use format::{
+    DOCUMENT_SCHEMA_VERSION, DocumentManifest, LayerManifest, ReferenceManifest,
+};
 pub(crate) use raster::{CompositeLayer, encode_png, flatten_premultiplied_layers};
 pub(crate) use store::{
-    ArtworkId, ArtworkStore, ArtworkSummary, LayerSource, LayerWrite, RevisionWrite,
+    ArtworkId, ArtworkStore, ArtworkSummary, LayerSource, LayerWrite, ReferenceSource,
+    ReferenceWrite, RevisionWrite,
 };
 
 /// Resolves a clipped layer to the nearest non-clipped layer below it.
