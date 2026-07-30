@@ -44,6 +44,7 @@ pub(crate) struct EditorUiState<'a> {
     pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
     pub(crate) save_status: SaveStatus,
     pub(crate) pending_navigation: Option<&'a str>,
+    pub(crate) reference_import_dialog_delay: Option<Duration>,
     pub(crate) references: &'a [ReferenceImage],
     pub(crate) workspace_view: PaintViewSnapshot,
 }
@@ -441,6 +442,8 @@ impl GuiLayer {
         reference: &ReferenceImage,
     ) {
         response.context_menu(|ui| {
+            ui.set_min_width(80.0);
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
             if ui
                 .button(if reference.locked { "Unlock" } else { "Lock" })
                 .clicked()
@@ -668,6 +671,7 @@ impl GuiLayer {
             eyedropper_indicator,
             save_status,
             pending_navigation,
+            reference_import_dialog_delay,
             references,
             workspace_view,
         } = state;
@@ -1065,6 +1069,13 @@ impl GuiLayer {
             if let Some(action) = pending_navigation {
                 show_save_blocker(ui.ctx(), action, &save_status, &mut self.commands);
             }
+            if let Some(delay) = reference_import_dialog_delay {
+                if delay.is_zero() {
+                    show_reference_import_dialog(ui.ctx());
+                } else {
+                    ui.ctx().request_repaint_after(delay);
+                }
+            }
             self.show_new_artwork_dialog(ui.ctx());
             self.clear_reference_selection_on_outside_press(ui.ctx());
         })
@@ -1291,6 +1302,16 @@ impl GuiLayer {
 
 fn layer_preview_is_current(current: &[LayerPreviewKey], cached: LayerPreviewKey) -> bool {
     current.contains(&cached)
+}
+
+fn show_reference_import_dialog(context: &egui::Context) {
+    egui::Modal::new(egui::Id::new("reference import dialog")).show(context, |ui| {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label("Importing reference…");
+        });
+    });
+    context.request_repaint_after(Duration::from_millis(16));
 }
 
 fn show_save_blocker(

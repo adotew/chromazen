@@ -194,7 +194,9 @@ impl ApplicationHandler<AppEvent> for App {
                 let egui_response = gui.state.on_window_event(window.as_ref(), &event);
                 let mut needs_redraw = egui_response.repaint || cursor_changed;
                 let egui_consumed = egui_response.consumed;
-                let primary_press_over_reference = self.screen == AppScreen::Editor
+                let point_over_reference = self.screen == AppScreen::Editor
+                    && gui.window_point_over_reference(self.input.cursor_position());
+                let primary_press_over_reference = point_over_reference
                     && matches!(
                         &event,
                         WindowEvent::MouseInput {
@@ -202,8 +204,11 @@ impl ApplicationHandler<AppEvent> for App {
                             button: MouseButton::Left,
                             ..
                         }
-                    )
-                    && gui.window_point_over_reference(self.input.cursor_position());
+                    );
+                // Reference images consume pointer input in egui, but their scroll events should
+                // still zoom the canvas beneath them.
+                let wheel_over_reference =
+                    point_over_reference && matches!(&event, WindowEvent::MouseWheel { .. });
                 if !egui_consumed
                     && matches!(
                         &event,
@@ -227,6 +232,7 @@ impl ApplicationHandler<AppEvent> for App {
                 } else if self.screen == AppScreen::Editor
                     && !navigation_pending
                     && (self.input.captures_drag_event(&event)
+                        || wheel_over_reference
                         || (!egui_consumed && !primary_press_over_reference))
                     && let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_mut())
                 {
@@ -443,6 +449,7 @@ impl App {
                             eyedropper_indicator,
                             save_status: status,
                             pending_navigation,
+                            reference_import_dialog_delay: self.reference_import.dialog_delay(),
                             references: self.references.images(),
                             workspace_view: paint.view_snapshot(),
                         },

@@ -1,10 +1,17 @@
 use std::{fs, path::Path, sync::Arc};
 
+use image::GenericImageView;
+
 use crate::artwork::{ReferenceManifest, encode_png};
 
 const DEFAULT_REFERENCE_MAX_EDGE: f32 = 1200.0;
 const MAX_REFERENCE_DIMENSION: u32 = 8192;
 const MAX_REFERENCE_PIXELS: u64 = 32 * 1024 * 1024;
+// Source limits bound transient decoder memory while allowing ordinary oversized references to be
+// reduced to the smaller texture limits above.
+const MAX_REFERENCE_SOURCE_DIMENSION: u32 = 16_384;
+const MAX_REFERENCE_SOURCE_PIXELS: u64 = 64 * 1024 * 1024;
+const MAX_REFERENCE_DECODE_ALLOCATION: u64 = 512 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ReferenceId(pub(crate) u64);
@@ -196,9 +203,36 @@ fn decode_reference_bytes(contents: &[u8], label: &str) -> Result<DecodedReferen
         .into_dimensions()
         .map_err(|error| format!("failed to inspect reference {label}: {error}"))?;
     validate_source_dimensions(dimensions)?;
-    let image = image::load_from_memory(contents)
-        .map_err(|error| format!("failed to decode reference {label}: {error}"))?
-        .to_rgba8();
+
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(contents))
+        .with_guessed_format()
+        .map_err(|error| format!("failed to identify reference {label}: {error}"))?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_REFERENCE_SOURCE_DIMENSION);
+    limits.max_image_height = Some(MAX_REFERENCE_SOURCE_DIMENSION);
+    limits.max_alloc = Some(MAX_REFERENCE_DECODE_ALLOCATION);
+    reader.limits(limits);
+    let image = reader
+        .decode()
+        .map_err(|error| format!("failed to decode reference {label}: {error}"))?;
+    prepare_reference(image, fitted_reference_pixel_size(dimensions))
+}
+
+fn prepare_reference(
+    image: image::DynamicImage,
+    target_size: (u32, u32),
+) -> Result<DecodedReference, String> {
+    let image = if image.dimensions() == target_size {
+        image.into_rgba8()
+    } else {
+        image
+            .resize_exact(
+                target_size.0,
+                target_size.1,
+                image::imageops::FilterType::Lanczos3,
+            )
+            .into_rgba8()
+    };
     let png = encode_png(&image)?;
     Ok(DecodedReference {
         pixels: Arc::new(image),
@@ -210,18 +244,29 @@ fn validate_source_dimensions(size: (u32, u32)) -> Result<(), String> {
     if size.0 == 0 || size.1 == 0 {
         return Err("reference dimensions must be non-zero".to_owned());
     }
-    if size.0 > MAX_REFERENCE_DIMENSION || size.1 > MAX_REFERENCE_DIMENSION {
+    if size.0 > MAX_REFERENCE_SOURCE_DIMENSION || size.1 > MAX_REFERENCE_SOURCE_DIMENSION {
         return Err(format!(
-            "reference dimensions cannot exceed {MAX_REFERENCE_DIMENSION} pixels"
+            "reference source dimensions cannot exceed {MAX_REFERENCE_SOURCE_DIMENSION} pixels"
         ));
     }
-    if u64::from(size.0) * u64::from(size.1) > MAX_REFERENCE_PIXELS {
+    if u64::from(size.0) * u64::from(size.1) > MAX_REFERENCE_SOURCE_PIXELS {
         return Err(format!(
-            "reference area cannot exceed {} megapixels",
-            MAX_REFERENCE_PIXELS / 1_000_000
+            "reference source area cannot exceed {} megapixels",
+            MAX_REFERENCE_SOURCE_PIXELS / 1_000_000
         ));
     }
     Ok(())
+}
+
+fn fitted_reference_pixel_size(source: (u32, u32)) -> (u32, u32) {
+    let dimension_scale = f64::from(MAX_REFERENCE_DIMENSION) / f64::from(source.0.max(source.1));
+    let area = f64::from(source.0) * f64::from(source.1);
+    let area_scale = (MAX_REFERENCE_PIXELS as f64 / area).sqrt();
+    let scale = dimension_scale.min(area_scale).min(1.0);
+    (
+        (f64::from(source.0) * scale).floor().max(1.0) as u32,
+        (f64::from(source.1) * scale).floor().max(1.0) as u32,
+    )
 }
 
 fn fitted_display_size(source: (u32, u32), max_edge: f32) -> [f32; 2] {
@@ -286,10 +331,41 @@ mod tests {
     }
 
     #[test]
-    fn decodes_png_and_rejects_oversized_dimensions() {
+    fn decodes_png_and_rejects_unsafe_source_dimensions() {
         let source = decoded(2, 1);
         let decoded = decode_reference_bytes(source.png.as_slice(), "memory").unwrap();
         assert_eq!(decoded.pixels.dimensions(), (2, 1));
-        assert!(validate_source_dimensions((MAX_REFERENCE_DIMENSION + 1, 1)).is_err());
+        assert!(validate_source_dimensions((0, 1)).is_err());
+        assert!(validate_source_dimensions((8192, 8192)).is_ok());
+        assert!(validate_source_dimensions((MAX_REFERENCE_SOURCE_DIMENSION + 1, 1)).is_err());
+        assert!(validate_source_dimensions((MAX_REFERENCE_SOURCE_DIMENSION, 8192)).is_err());
+    }
+
+    #[test]
+    fn fitted_reference_pixels_obey_texture_limits() {
+        assert_eq!(fitted_reference_pixel_size((4000, 2000)), (4000, 2000));
+
+        for source in [(12_000, 2_000), (8_000, 8_000), (16_384, 4_096)] {
+            let fitted = fitted_reference_pixel_size(source);
+            assert!(fitted.0 <= MAX_REFERENCE_DIMENSION);
+            assert!(fitted.1 <= MAX_REFERENCE_DIMENSION);
+            assert!(u64::from(fitted.0) * u64::from(fitted.1) <= MAX_REFERENCE_PIXELS);
+            let source_ratio = f64::from(source.0) / f64::from(source.1);
+            let fitted_ratio = f64::from(fitted.0) / f64::from(fitted.1);
+            assert!((source_ratio - fitted_ratio).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn prepared_references_persist_resized_pixels() {
+        let source = image::DynamicImage::ImageRgba8(image::RgbaImage::new(4, 2));
+        let prepared = prepare_reference(source, (2, 1)).unwrap();
+        assert_eq!(prepared.pixels.dimensions(), (2, 1));
+        assert_eq!(
+            image::load_from_memory(prepared.png.as_slice())
+                .unwrap()
+                .dimensions(),
+            (2, 1)
+        );
     }
 }
