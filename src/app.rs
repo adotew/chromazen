@@ -2,7 +2,6 @@ mod autosave;
 mod command;
 mod export;
 mod gallery;
-mod history;
 mod input;
 mod menu;
 mod reference_import;
@@ -29,7 +28,6 @@ use self::{
     command::AppCommand,
     export::{ExportController, choose_export_path},
     gallery::GalleryController,
-    history::{AppHistory, AppHistoryAction},
     input::{KeyboardShortcut, PaintInputController},
     menu::NativeMenu,
     reference_import::{ReferenceImportController, choose_reference_paths},
@@ -88,7 +86,6 @@ pub struct App {
     reference_import: ReferenceImportController,
     reference_load: ReferenceLoadController,
     pending_reference_load: Option<PendingReferenceLoad>,
-    history: AppHistory,
     screen: AppScreen,
     pending_gallery: bool,
     pending_new_artwork: Option<[u32; 2]>,
@@ -170,7 +167,10 @@ impl ApplicationHandler<AppEvent> for App {
                     .paint
                     .as_ref()
                     .map(|paint| paint.window_to_document(self.input.cursor_position()));
-                self.reference_import.start(vec![path], placement);
+                if let Some(artwork_id) = self.autosave.artwork_id().cloned() {
+                    self.reference_import
+                        .start(artwork_id, vec![path], placement);
+                }
             }
             event => {
                 let navigation_pending = self.navigation_pending();
@@ -251,7 +251,6 @@ impl ApplicationHandler<AppEvent> for App {
                 {
                     let brush_size_range = gui.brush_size_range();
                     let previous_tool = self.input.tool();
-                    let generation_before = paint.document_versions().generation;
                     needs_redraw |= self.input.handle_event(
                         &event,
                         paint,
@@ -264,9 +263,6 @@ impl ApplicationHandler<AppEvent> for App {
                         gui.remember_tool_size(previous_tool);
                         self.pending_commands
                             .push(AppCommand::SelectTool(self.input.tool()));
-                    }
-                    if paint.document_versions().generation != generation_before {
-                        self.history.record_paint();
                     }
                 }
 
@@ -348,7 +344,6 @@ impl App {
             reference_import,
             reference_load,
             pending_reference_load: None,
-            history: AppHistory::default(),
             screen: AppScreen::Gallery,
             pending_gallery: false,
             pending_new_artwork: None,
@@ -511,11 +506,6 @@ impl App {
 
         let commands = std::mem::take(&mut self.pending_commands);
         for command in commands {
-            let (track_paint_history, force_paint_history) = paint_history_tracking(&command);
-            let paint_generation_before = self
-                .paint
-                .as_ref()
-                .map(|paint| paint.document_versions().generation);
             match command {
                 AppCommand::Undo => self.undo(),
                 AppCommand::Redo => self.redo(),
@@ -595,7 +585,9 @@ impl App {
                         continue;
                     }
                     let paths = choose_reference_paths();
-                    self.reference_import.start(paths, None);
+                    if let Some(artwork_id) = self.autosave.artwork_id().cloned() {
+                        self.reference_import.start(artwork_id, paths, None);
+                    }
                 }
                 AppCommand::SetReferenceTransform { id, position, size } => {
                     self.references.set_transform(id, position, size);
@@ -719,15 +711,6 @@ impl App {
                 }
                 AppCommand::Quit => self.request_exit(),
             }
-            let paint_generation_after = self
-                .paint
-                .as_ref()
-                .map(|paint| paint.document_versions().generation);
-            if track_paint_history
-                && (force_paint_history || paint_generation_before != paint_generation_after)
-            {
-                self.history.record_paint();
-            }
         }
         self.sync_history_menu();
         true
@@ -737,6 +720,9 @@ impl App {
         let mut changed = false;
         while let Some(completion) = self.reference_import.take_completion() {
             changed = true;
+            if self.autosave.artwork_id() != Some(&completion.artwork_id) {
+                continue;
+            }
             let base = completion.placement.unwrap_or_else(|| {
                 self.paint.as_ref().map_or([100.0, 100.0], |paint| {
                     [paint.document_size()[0] as f32 + 100.0, 100.0]
@@ -823,7 +809,6 @@ impl App {
         let id = crate::artwork::ArtworkId::new();
         self.references.clear();
         self.pending_reference_load = None;
-        self.history.clear();
         self.autosave.begin_new(id, "Untitled".to_owned());
         self.screen = AppScreen::Editor;
         self.pending_gallery = false;
@@ -862,7 +847,6 @@ impl App {
         }
         let versions = paint.document_versions();
         self.references.clear();
-        self.history.clear();
         self.autosave.clear();
         self.screen = AppScreen::Editor;
         self.pending_gallery = false;
@@ -894,7 +878,6 @@ impl App {
         self.autosave.clear();
         self.references.clear();
         self.pending_reference_load = None;
-        self.history.clear();
         self.screen = AppScreen::Gallery;
         self.pending_gallery = false;
         self.pending_new_artwork = None;
@@ -906,39 +889,22 @@ impl App {
     }
 
     fn undo(&mut self) {
-        while let Some(AppHistoryAction::Paint) = self.history.undo_action() {
-            let applied = self
-                .paint
-                .as_mut()
-                .is_some_and(|paint| paint.can_undo() && paint.undo());
-            // Texture-budget eviction can remove an old renderer entry before its lightweight
-            // app-level marker. Skip stale markers so older paint actions stay reachable.
-            self.history.commit_undo();
-            if applied {
-                break;
-            }
+        if let Some(paint) = self.paint.as_mut() {
+            paint.undo();
         }
     }
 
     fn redo(&mut self) {
-        while let Some(AppHistoryAction::Paint) = self.history.redo_action() {
-            let applied = self
-                .paint
-                .as_mut()
-                .is_some_and(|paint| paint.can_redo() && paint.redo());
-            self.history.commit_redo();
-            if applied {
-                break;
-            }
+        if let Some(paint) = self.paint.as_mut() {
+            paint.redo();
         }
     }
 
     fn sync_history_menu(&self) {
-        let (can_undo, can_redo) = if self.screen == AppScreen::Editor {
-            (self.history.can_undo(), self.history.can_redo())
-        } else {
-            (false, false)
-        };
+        let (can_undo, can_redo) = (self.screen == AppScreen::Editor)
+            .then_some(self.paint.as_ref())
+            .flatten()
+            .map_or((false, false), |paint| (paint.can_undo(), paint.can_redo()));
         self.native_menu.set_history_enabled(can_undo, can_redo);
         let in_editor = self.screen == AppScreen::Editor;
         self.native_menu.set_document_enabled(in_editor);
@@ -1183,21 +1149,6 @@ impl App {
         } else {
             event_loop.set_control_flow(ControlFlow::WaitUntil(next_repaint));
         }
-    }
-}
-
-fn paint_history_tracking(command: &AppCommand) -> (bool, bool) {
-    match command {
-        AppCommand::AddLayer
-        | AppCommand::DeleteSelectedLayer
-        | AppCommand::RenameLayer { .. }
-        | AppCommand::MergeLayerDown(_)
-        | AppCommand::SetLayerClipped { .. }
-        | AppCommand::SetLayerVisibility { .. }
-        | AppCommand::MoveLayer { .. } => (true, false),
-        AppCommand::CommitLayerOpacity { before, after, .. } => (true, before != after),
-        AppCommand::CommitBackgroundColor { before, after } => (true, before != after),
-        _ => (false, false),
     }
 }
 

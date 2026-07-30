@@ -1791,13 +1791,13 @@ fn paint_reference_selection(
     painter.rect_stroke(
         reference_rect,
         0.0,
-        egui::Stroke::new(2.0, shadow),
+        egui::Stroke::new(2.0_f32, shadow),
         egui::StrokeKind::Inside,
     );
     painter.rect_stroke(
         reference_rect,
         0.0,
-        egui::Stroke::new(1.0, accent),
+        egui::Stroke::new(1.0_f32, accent),
         egui::StrokeKind::Inside,
     );
     if show_resize_handle {

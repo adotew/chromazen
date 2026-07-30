@@ -4,6 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::artwork::ArtworkId;
+
 use super::references::{DecodedReference, decode_reference_file};
 
 type WakeCallback = Arc<dyn Fn() + Send + Sync>;
@@ -11,6 +13,7 @@ type WakeCallback = Arc<dyn Fn() + Send + Sync>;
 const IMPORT_DIALOG_DELAY: Duration = Duration::from_millis(200);
 
 pub(super) struct ReferenceImportCompletion {
+    pub(super) artwork_id: ArtworkId,
     pub(super) placement: Option<[f32; 2]>,
     pub(super) images: Vec<DecodedReference>,
     pub(super) errors: Vec<String>,
@@ -36,7 +39,12 @@ impl ReferenceImportController {
         }
     }
 
-    pub(super) fn start(&mut self, paths: Vec<PathBuf>, placement: Option<[f32; 2]>) {
+    pub(super) fn start(
+        &mut self,
+        artwork_id: ArtworkId,
+        paths: Vec<PathBuf>,
+        placement: Option<[f32; 2]>,
+    ) {
         if paths.is_empty() {
             return;
         }
@@ -57,6 +65,7 @@ impl ReferenceImportController {
                 }
             }
             let _ = sender.send(ReferenceImportCompletion {
+                artwork_id,
                 placement,
                 images,
                 errors,
