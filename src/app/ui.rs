@@ -45,6 +45,7 @@ pub(crate) struct EditorUiState<'a> {
     pub(crate) save_status: SaveStatus,
     pub(crate) pending_navigation: Option<&'a str>,
     pub(crate) reference_import_dialog_delay: Option<Duration>,
+    pub(crate) reference_load_dialog_delay: Option<Duration>,
     pub(crate) references: &'a [ReferenceImage],
     pub(crate) workspace_view: PaintViewSnapshot,
 }
@@ -672,6 +673,7 @@ impl GuiLayer {
             save_status,
             pending_navigation,
             reference_import_dialog_delay,
+            reference_load_dialog_delay,
             references,
             workspace_view,
         } = state;
@@ -1071,7 +1073,22 @@ impl GuiLayer {
             }
             if let Some(delay) = reference_import_dialog_delay {
                 if delay.is_zero() {
-                    show_reference_import_dialog(ui.ctx());
+                    show_reference_loading_dialog(
+                        ui.ctx(),
+                        "reference import dialog",
+                        "Importing reference…",
+                    );
+                } else {
+                    ui.ctx().request_repaint_after(delay);
+                }
+            }
+            if let Some(delay) = reference_load_dialog_delay {
+                if delay.is_zero() {
+                    show_reference_loading_dialog(
+                        ui.ctx(),
+                        "reference load dialog",
+                        "Loading references…",
+                    );
                 } else {
                     ui.ctx().request_repaint_after(delay);
                 }
@@ -1304,11 +1321,11 @@ fn layer_preview_is_current(current: &[LayerPreviewKey], cached: LayerPreviewKey
     current.contains(&cached)
 }
 
-fn show_reference_import_dialog(context: &egui::Context) {
-    egui::Modal::new(egui::Id::new("reference import dialog")).show(context, |ui| {
+fn show_reference_loading_dialog(context: &egui::Context, id: &str, message: &str) {
+    egui::Modal::new(egui::Id::new(id)).show(context, |ui| {
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.label("Importing reference…");
+            ui.label(message);
         });
     });
     context.request_repaint_after(Duration::from_millis(16));

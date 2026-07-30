@@ -7,6 +7,8 @@ use crate::artwork::{ReferenceManifest, encode_png};
 const DEFAULT_REFERENCE_MAX_EDGE: f32 = 1200.0;
 const MAX_REFERENCE_DIMENSION: u32 = 8192;
 const MAX_REFERENCE_PIXELS: u64 = 32 * 1024 * 1024;
+const MAX_REFERENCE_TEXTURE_DIMENSION: u32 = 4096;
+const MAX_REFERENCE_TEXTURE_PIXELS: u64 = 8 * 1024 * 1024;
 // Source limits bound transient decoder memory while allowing ordinary oversized references to be
 // reduced to the smaller texture limits above.
 const MAX_REFERENCE_SOURCE_DIMENSION: u32 = 16_384;
@@ -195,7 +197,20 @@ pub(crate) fn decode_reference_file(path: &Path) -> Result<DecodedReference, Str
     decode_reference_bytes(&contents, &path.display().to_string())
 }
 
+pub(crate) fn decode_stored_reference_file(path: &Path) -> Result<DecodedReference, String> {
+    let contents = fs::read(path)
+        .map_err(|error| format!("failed to read reference {}: {error}", path.display()))?;
+    let image = decode_reference_image(&contents, &path.display().to_string())?;
+    Ok(prepare_stored_reference(image, contents))
+}
+
 fn decode_reference_bytes(contents: &[u8], label: &str) -> Result<DecodedReference, String> {
+    let image = decode_reference_image(contents, label)?;
+    let target_size = fitted_reference_pixel_size(image.dimensions());
+    prepare_imported_reference(image, target_size)
+}
+
+fn decode_reference_image(contents: &[u8], label: &str) -> Result<image::DynamicImage, String> {
     let reader = image::ImageReader::new(std::io::Cursor::new(contents))
         .with_guessed_format()
         .map_err(|error| format!("failed to identify reference {label}: {error}"))?;
@@ -212,17 +227,34 @@ fn decode_reference_bytes(contents: &[u8], label: &str) -> Result<DecodedReferen
     limits.max_image_height = Some(MAX_REFERENCE_SOURCE_DIMENSION);
     limits.max_alloc = Some(MAX_REFERENCE_DECODE_ALLOCATION);
     reader.limits(limits);
-    let image = reader
+    reader
         .decode()
-        .map_err(|error| format!("failed to decode reference {label}: {error}"))?;
-    prepare_reference(image, fitted_reference_pixel_size(dimensions))
+        .map_err(|error| format!("failed to decode reference {label}: {error}"))
 }
 
-fn prepare_reference(
+fn prepare_imported_reference(
     image: image::DynamicImage,
     target_size: (u32, u32),
 ) -> Result<DecodedReference, String> {
-    let image = if image.dimensions() == target_size {
+    let image = resize_reference(image, target_size);
+    let png = encode_png(&image)?;
+    let pixels = texture_pixels(image);
+    Ok(DecodedReference {
+        pixels: Arc::new(pixels),
+        png: Arc::new(png),
+    })
+}
+
+fn prepare_stored_reference(image: image::DynamicImage, png: Vec<u8>) -> DecodedReference {
+    let texture_size = fitted_texture_pixel_size(image.dimensions());
+    DecodedReference {
+        pixels: Arc::new(resize_reference(image, texture_size)),
+        png: Arc::new(png),
+    }
+}
+
+fn resize_reference(image: image::DynamicImage, target_size: (u32, u32)) -> image::RgbaImage {
+    if image.dimensions() == target_size {
         image.into_rgba8()
     } else {
         image
@@ -232,12 +264,21 @@ fn prepare_reference(
                 image::imageops::FilterType::Lanczos3,
             )
             .into_rgba8()
-    };
-    let png = encode_png(&image)?;
-    Ok(DecodedReference {
-        pixels: Arc::new(image),
-        png: Arc::new(png),
-    })
+    }
+}
+
+fn texture_pixels(image: image::RgbaImage) -> image::RgbaImage {
+    let texture_size = fitted_texture_pixel_size(image.dimensions());
+    if image.dimensions() == texture_size {
+        image
+    } else {
+        image::imageops::resize(
+            &image,
+            texture_size.0,
+            texture_size.1,
+            image::imageops::FilterType::Lanczos3,
+        )
+    }
 }
 
 fn validate_source_dimensions(size: (u32, u32)) -> Result<(), String> {
@@ -259,9 +300,21 @@ fn validate_source_dimensions(size: (u32, u32)) -> Result<(), String> {
 }
 
 fn fitted_reference_pixel_size(source: (u32, u32)) -> (u32, u32) {
-    let dimension_scale = f64::from(MAX_REFERENCE_DIMENSION) / f64::from(source.0.max(source.1));
+    fitted_pixel_size(source, MAX_REFERENCE_DIMENSION, MAX_REFERENCE_PIXELS)
+}
+
+fn fitted_texture_pixel_size(source: (u32, u32)) -> (u32, u32) {
+    fitted_pixel_size(
+        source,
+        MAX_REFERENCE_TEXTURE_DIMENSION,
+        MAX_REFERENCE_TEXTURE_PIXELS,
+    )
+}
+
+fn fitted_pixel_size(source: (u32, u32), max_dimension: u32, max_pixels: u64) -> (u32, u32) {
+    let dimension_scale = f64::from(max_dimension) / f64::from(source.0.max(source.1));
     let area = f64::from(source.0) * f64::from(source.1);
-    let area_scale = (MAX_REFERENCE_PIXELS as f64 / area).sqrt();
+    let area_scale = (max_pixels as f64 / area).sqrt();
     let scale = dimension_scale.min(area_scale).min(1.0);
     (
         (f64::from(source.0) * scale).floor().max(1.0) as u32,
@@ -357,15 +410,29 @@ mod tests {
     }
 
     #[test]
-    fn prepared_references_persist_resized_pixels() {
+    fn imported_references_persist_resized_pixels() {
         let source = image::DynamicImage::ImageRgba8(image::RgbaImage::new(4, 2));
-        let prepared = prepare_reference(source, (2, 1)).unwrap();
+        let prepared = prepare_imported_reference(source, (2, 1)).unwrap();
         assert_eq!(prepared.pixels.dimensions(), (2, 1));
         assert_eq!(
             image::load_from_memory(prepared.png.as_slice())
                 .unwrap()
                 .dimensions(),
             (2, 1)
+        );
+    }
+
+    #[test]
+    fn stored_references_keep_png_bytes_and_fit_texture_pixels() {
+        let png = vec![1, 2, 3, 4];
+        let source = image::DynamicImage::ImageRgba8(image::RgbaImage::new(400, 200));
+        let prepared = prepare_stored_reference(source, png.clone());
+        assert_eq!(prepared.png.as_slice(), png);
+        assert_eq!(prepared.pixels.dimensions(), (400, 200));
+        assert_eq!(fitted_texture_pixel_size((8000, 4000)), (4096, 2048));
+        let area_fitted = fitted_texture_pixel_size((4096, 4096));
+        assert!(
+            u64::from(area_fitted.0) * u64::from(area_fitted.1) <= MAX_REFERENCE_TEXTURE_PIXELS
         );
     }
 }

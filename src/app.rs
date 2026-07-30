@@ -6,6 +6,7 @@ mod history;
 mod input;
 mod menu;
 mod reference_import;
+mod reference_load;
 mod references;
 mod settings;
 mod ui;
@@ -32,13 +33,14 @@ use self::{
     input::{KeyboardShortcut, PaintInputController},
     menu::NativeMenu,
     reference_import::{ReferenceImportController, choose_reference_paths},
+    reference_load::ReferenceLoadController,
     references::ReferenceBoard,
     settings::{SettingsCommand, SettingsController, SettingsEffect},
     ui::{BrushResizeLabel, EditorUiState, EyedropperIndicator, GuiLayer},
 };
 use crate::{
     platform::{MacosPressureMonitor, PressureStateHandle},
-    renderer::{BrushCursor, PaintRenderer},
+    renderer::{BrushCursor, DocumentVersions, PaintRenderer},
 };
 
 const WINDOW_TITLE: &str = "Chromazen";
@@ -48,6 +50,7 @@ enum AppEvent {
     AutosaveWake,
     ExportWake,
     ReferenceImportWake,
+    ReferenceLoadWake,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +62,12 @@ enum AppScreen {
 struct RenderOutcome {
     repaint_delay: Duration,
     canvas_needs_redraw: bool,
+}
+
+struct PendingReferenceLoad {
+    id: crate::artwork::ArtworkId,
+    title: String,
+    paint_versions: DocumentVersions,
 }
 
 pub struct App {
@@ -77,6 +86,8 @@ pub struct App {
     export: ExportController,
     references: ReferenceBoard,
     reference_import: ReferenceImportController,
+    reference_load: ReferenceLoadController,
+    pending_reference_load: Option<PendingReferenceLoad>,
     history: AppHistory,
     screen: AppScreen,
     pending_gallery: bool,
@@ -151,7 +162,9 @@ impl ApplicationHandler<AppEvent> for App {
             WindowEvent::CloseRequested => self.request_exit(),
             WindowEvent::RedrawRequested => self.render(window.as_ref(), event_loop),
             WindowEvent::DroppedFile(path)
-                if self.screen == AppScreen::Editor && !self.navigation_pending() =>
+                if self.screen == AppScreen::Editor
+                    && !self.navigation_pending()
+                    && !self.reference_load.is_loading() =>
             {
                 let placement = self
                     .paint
@@ -285,7 +298,10 @@ impl ApplicationHandler<AppEvent> for App {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
             AppEvent::Command(command) => self.pending_commands.push(command),
-            AppEvent::AutosaveWake | AppEvent::ExportWake | AppEvent::ReferenceImportWake => {}
+            AppEvent::AutosaveWake
+            | AppEvent::ExportWake
+            | AppEvent::ReferenceImportWake
+            | AppEvent::ReferenceLoadWake => {}
         }
         self.next_repaint = None;
         if let Some(window) = self.window.as_ref() {
@@ -312,6 +328,7 @@ impl App {
         autosave: AutosaveController,
         export: ExportController,
         reference_import: ReferenceImportController,
+        reference_load: ReferenceLoadController,
     ) -> Self {
         Self {
             window: None,
@@ -329,6 +346,8 @@ impl App {
             export,
             references: ReferenceBoard::default(),
             reference_import,
+            reference_load,
+            pending_reference_load: None,
             history: AppHistory::default(),
             screen: AppScreen::Gallery,
             pending_gallery: false,
@@ -368,6 +387,7 @@ impl App {
     fn render(&mut self, window: &Window, event_loop: &ActiveEventLoop) {
         let mut app_action_processed = self.process_export_completion();
         app_action_processed |= self.process_reference_import_completions();
+        app_action_processed |= self.process_reference_load_completions();
         app_action_processed |= self.process_pending_commands();
         let mut brush_switched = self.apply_pending_brush_change();
 
@@ -380,13 +400,17 @@ impl App {
         {
             app_action_processed |= self.autosave.update(paint, &self.references);
             if self.pending_exit
+                && !self.reference_load.is_loading()
                 && self.autosave.is_clean(paint, &self.references)
                 && !self.export.is_exporting()
             {
                 event_loop.exit();
                 return;
             }
-            if self.pending_gallery && self.autosave.is_clean(paint, &self.references) {
+            if self.pending_gallery
+                && !self.reference_load.is_loading()
+                && self.autosave.is_clean(paint, &self.references)
+            {
                 let new_size = self.pending_new_artwork;
                 self.finish_gallery_navigation();
                 if let Some(size) = new_size {
@@ -431,7 +455,9 @@ impl App {
                                 color: gui.brush.color,
                             });
                     let status = self.autosave.status(paint, &self.references);
-                    let pending_navigation = if self.pending_exit {
+                    let pending_navigation = if self.reference_load.is_loading() {
+                        None
+                    } else if self.pending_exit {
                         Some("Closing Chromazen")
                     } else if self.pending_new_artwork.is_some() {
                         Some("Creating New Artwork")
@@ -450,6 +476,7 @@ impl App {
                             save_status: status,
                             pending_navigation,
                             reference_import_dialog_delay: self.reference_import.dialog_delay(),
+                            reference_load_dialog_delay: self.reference_load.dialog_delay(),
                             references: self.references.images(),
                             workspace_view: paint.view_snapshot(),
                         },
@@ -564,7 +591,7 @@ impl App {
                     }
                 }
                 AppCommand::AddReferences => {
-                    if self.screen != AppScreen::Editor {
+                    if self.screen != AppScreen::Editor || self.reference_load.is_loading() {
                         continue;
                     }
                     let paths = choose_reference_paths();
@@ -732,6 +759,32 @@ impl App {
         changed
     }
 
+    fn process_reference_load_completions(&mut self) -> bool {
+        let mut changed = false;
+        while let Some(completion) = self.reference_load.take_completion() {
+            changed = true;
+            let Some(pending) = self
+                .pending_reference_load
+                .take_if(|pending| pending.id == completion.artwork_id)
+            else {
+                continue;
+            };
+            self.references.load(completion.references);
+            self.autosave.begin_loaded(
+                pending.id,
+                pending.title,
+                pending.paint_versions,
+                self.references.versions(),
+            );
+            if !completion.warnings.is_empty()
+                && let Some(gui) = self.gui.as_mut()
+            {
+                gui.show_error(completion.warnings.join("\n"));
+            }
+        }
+        changed
+    }
+
     fn process_export_completion(&mut self) -> bool {
         let Some(completion) = self.export.take_completion() else {
             return false;
@@ -769,6 +822,7 @@ impl App {
         }
         let id = crate::artwork::ArtworkId::new();
         self.references.clear();
+        self.pending_reference_load = None;
         self.history.clear();
         self.autosave.begin_new(id, "Untitled".to_owned());
         self.screen = AppScreen::Editor;
@@ -807,19 +861,9 @@ impl App {
             return;
         }
         let versions = paint.document_versions();
-        self.references.load(opened.references);
+        self.references.clear();
         self.history.clear();
-        if !opened.warnings.is_empty()
-            && let Some(gui) = self.gui.as_mut()
-        {
-            gui.show_error(opened.warnings.join("\n"));
-        }
-        self.autosave.begin_loaded(
-            opened.id,
-            opened.title.clone(),
-            versions,
-            self.references.versions(),
-        );
+        self.autosave.clear();
         self.screen = AppScreen::Editor;
         self.pending_gallery = false;
         self.pending_new_artwork = None;
@@ -827,12 +871,29 @@ impl App {
         if let Some(window) = self.window.as_ref() {
             window.set_title(&format!("{} • Chromazen", opened.title));
         }
+        if opened.reference_sources.is_empty() {
+            self.autosave.begin_loaded(
+                opened.id,
+                opened.title,
+                versions,
+                self.references.versions(),
+            );
+        } else {
+            self.pending_reference_load = Some(PendingReferenceLoad {
+                id: opened.id.clone(),
+                title: opened.title,
+                paint_versions: versions,
+            });
+            self.reference_load
+                .start(opened.id, opened.reference_sources);
+        }
     }
 
     fn finish_gallery_navigation(&mut self) {
         self.gallery.refresh();
         self.autosave.clear();
         self.references.clear();
+        self.pending_reference_load = None;
         self.history.clear();
         self.screen = AppScreen::Gallery;
         self.pending_gallery = false;
@@ -1167,6 +1228,10 @@ pub fn run() {
     let reference_import = ReferenceImportController::new(Arc::new(move || {
         let _ = reference_import_proxy.send_event(AppEvent::ReferenceImportWake);
     }));
+    let reference_load_proxy = event_loop.create_proxy();
+    let reference_load = ReferenceLoadController::new(Arc::new(move || {
+        let _ = reference_load_proxy.send_event(AppEvent::ReferenceLoadWake);
+    }));
 
     let mut app = App::new(
         SettingsController::load(),
@@ -1175,6 +1240,7 @@ pub fn run() {
         autosave,
         export,
         reference_import,
+        reference_load,
     );
     event_loop.run_app(&mut app).expect("event loop error");
 }
