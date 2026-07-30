@@ -89,7 +89,7 @@ struct LayerPreviewUniform {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
 struct ViewUniform {
     scale: [f32; 2],
     offset: [f32; 2],
@@ -182,6 +182,7 @@ pub struct PaintRenderer {
     layer_versions: HashMap<LayerId, u64>,
     clipped_layer_bind_groups: HashMap<LayerId, wgpu::BindGroup>,
     clipping_bind_groups_dirty: bool,
+    last_view_uniform: Option<ViewUniform>,
 }
 
 impl PaintRenderer {
@@ -234,6 +235,7 @@ impl PaintRenderer {
             layer_versions: HashMap::from([(LayerId(1), 0)]),
             clipped_layer_bind_groups: HashMap::new(),
             clipping_bind_groups_dirty: true,
+            last_view_uniform: None,
         };
         renderer.fit_to_screen();
         renderer.clear_canvas();
@@ -928,60 +930,45 @@ impl PaintRenderer {
             );
         }
         let needs_history_sync = self.history.layer_needs_sync(layer_id);
-        let mut encoder =
-            self.gpu
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("stroke setup encoder"),
-                });
-        if needs_history_sync {
-            self.history.ensure_layer_synced(
-                &mut encoder,
-                layer_id,
-                &self.layers[layer_index].texture,
-                self.document_size,
-            );
-        }
-        if tool == PaintTool::Smudge {
-            // Smudge samples this snapshot because the layer cannot be sampled while attached.
-            encoder.copy_texture_to_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.layers[layer_index].texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.resources.smudge_texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::Extent3d {
-                    width: self.document_size[0],
-                    height: self.document_size[1],
-                    depth_or_array_layers: 1,
-                },
-            );
-        } else {
-            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("stroke mask clear pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.resources.stroke_mask_view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
+        if needs_history_sync || tool == PaintTool::Smudge {
+            let mut encoder =
+                self.gpu
+                    .device()
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("stroke setup encoder"),
+                    });
+            if needs_history_sync {
+                self.history.ensure_layer_synced(
+                    &mut encoder,
+                    layer_id,
+                    &self.layers[layer_index].texture,
+                    self.document_size,
+                );
+            }
+            if tool == PaintTool::Smudge {
+                // Smudge samples this snapshot because the layer cannot be sampled while attached.
+                encoder.copy_texture_to_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &self.layers[layer_index].texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
                     },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &self.resources.smudge_texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width: self.document_size[0],
+                        height: self.document_size[1],
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+            self.gpu.queue().submit(std::iter::once(encoder.finish()));
         }
-        self.gpu.queue().submit(std::iter::once(encoder.finish()));
         self.stamp_queue.begin_stroke(origin);
         true
     }
@@ -1032,6 +1019,27 @@ impl PaintRenderer {
             });
             pass.set_pipeline(commit_pipeline);
             pass.set_bind_group(0, &self.resources.stroke_commit_bind_group, &[]);
+            pass.set_scissor_rect(rect.x, rect.y, rect.width, rect.height);
+            pass.draw(0..3, 0..1);
+        }
+        if active_stroke.render_path() == StrokeRenderPath::Mask {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("stroke mask dirty rect clear pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.resources.stroke_mask_view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.resources.mask_clear_pipeline);
             pass.set_scissor_rect(rect.x, rect.y, rect.width, rect.height);
             pass.draw(0..3, 0..1);
         }
@@ -1282,12 +1290,17 @@ impl PaintRenderer {
             pass.set_pipeline(&self.resources.background_pipeline);
             pass.set_bind_group(0, &self.layers[0].blit_bind_group, &[]);
             pass.draw(0..3, 0..1);
-            let clipped_flags: Vec<_> = self.layers.iter().map(|layer| layer.clipped).collect();
+            let mut last_unclipped_layer = None;
             for (layer_index, layer) in self.layers.iter().enumerate() {
+                let clipping_base = if layer.clipped {
+                    last_unclipped_layer
+                } else {
+                    last_unclipped_layer = Some(layer_index);
+                    None
+                };
                 if !layer.visible {
                     continue;
                 }
-                let clipping_base = clipping_base_index(&clipped_flags, layer_index);
                 if layer.clipped && clipping_base.is_none()
                     || clipping_base.is_some_and(|base_index| !self.layers[base_index].visible)
                 {
@@ -1616,18 +1629,23 @@ impl PaintRenderer {
         }
     }
 
-    fn write_view_uniform(&self) {
+    fn write_view_uniform(&mut self) {
+        let uniform = ViewUniform {
+            scale: [1.0 / self.view.zoom(), 1.0 / self.view.zoom()],
+            offset: self.view.offset(),
+            paint_dims: [self.document_size[0] as f32, self.document_size[1] as f32],
+            padding: [0.0, 0.0],
+            background_color: self.background_color,
+        };
+        if self.last_view_uniform == Some(uniform) {
+            return;
+        }
         self.gpu.queue().write_buffer(
             &self.resources.view_uniform_buffer,
             0,
-            bytemuck::bytes_of(&ViewUniform {
-                scale: [1.0 / self.view.zoom(), 1.0 / self.view.zoom()],
-                offset: self.view.offset(),
-                paint_dims: [self.document_size[0] as f32, self.document_size[1] as f32],
-                padding: [0.0, 0.0],
-                background_color: self.background_color,
-            }),
+            bytemuck::bytes_of(&uniform),
         );
+        self.last_view_uniform = Some(uniform);
     }
 
     fn write_brush_cursor(&self, cursor: BrushCursor) {

@@ -34,6 +34,7 @@ pub(crate) struct RenderResources {
     stroke_commit_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) stroke_commit_bind_group: wgpu::BindGroup,
     pub(crate) mask_pipeline: wgpu::RenderPipeline,
+    pub(crate) mask_clear_pipeline: wgpu::RenderPipeline,
     pub(crate) smudge_pipeline: wgpu::RenderPipeline,
     pub(crate) cursor_pipeline: wgpu::RenderPipeline,
     pub(crate) background_pipeline: wgpu::RenderPipeline,
@@ -135,6 +136,7 @@ impl RenderResources {
         let (smudge_texture, smudge_texture_view) = create_paint_texture(device, document_size);
         let (stroke_mask_texture, stroke_mask_view) =
             create_stroke_mask_texture(device, document_size);
+        clear_stroke_mask(device, queue, &stroke_mask_view);
 
         let stamp_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -498,6 +500,10 @@ impl RenderResources {
             label: Some("brush cursor shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/cursor.wgsl").into()),
         });
+        let mask_clear_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("stroke mask clear shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mask_clear.wgsl").into()),
+        });
         let blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("blit shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blit.wgsl").into()),
@@ -589,6 +595,34 @@ impl RenderResources {
                             dst_factor: wgpu::BlendFactor::One,
                         },
                     }),
+                    write_mask: wgpu::ColorWrites::RED,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let mask_clear_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("stroke mask clear pipeline"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &mask_clear_shader,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &mask_clear_shader,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: STROKE_MASK_FORMAT,
+                    blend: None,
                     write_mask: wgpu::ColorWrites::RED,
                 })],
             }),
@@ -897,6 +931,7 @@ impl RenderResources {
             stroke_commit_bind_group_layout,
             stroke_commit_bind_group,
             mask_pipeline,
+            mask_clear_pipeline,
             smudge_pipeline,
             cursor_pipeline,
             background_pipeline,
@@ -1007,6 +1042,7 @@ impl RenderResources {
         let (smudge_texture, smudge_texture_view) = create_paint_texture(device, document_size);
         let (stroke_mask_texture, stroke_mask_view) =
             create_stroke_mask_texture(device, document_size);
+        clear_stroke_mask(device, queue, &stroke_mask_view);
         let stamp_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("stamp bind group"),
             layout: &self.stamp_bind_group_layout,
@@ -1358,6 +1394,31 @@ fn create_brush_texture(
     );
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
+}
+
+fn clear_stroke_mask(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView) {
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("stroke mask initialization encoder"),
+    });
+    {
+        let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("stroke mask initialization pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+    }
+    queue.submit(std::iter::once(encoder.finish()));
 }
 
 fn create_stroke_mask_texture(
