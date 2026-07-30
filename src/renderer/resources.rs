@@ -46,8 +46,6 @@ pub(crate) struct RenderResources {
     pub(crate) clipped_brush_preview_pipeline: wgpu::RenderPipeline,
     pub(crate) clipped_eraser_preview_pipeline: wgpu::RenderPipeline,
     pub(crate) layer_thumbnail_pipeline: wgpu::RenderPipeline,
-    pub(crate) brush_thumbnail_pipeline: wgpu::RenderPipeline,
-    pub(crate) eraser_thumbnail_pipeline: wgpu::RenderPipeline,
     pub(crate) brush_commit_pipeline: wgpu::RenderPipeline,
     pub(crate) eraser_commit_pipeline: wgpu::RenderPipeline,
 }
@@ -823,10 +821,6 @@ impl RenderResources {
         };
         let layer_thumbnail_pipeline =
             create_thumbnail_pipeline("layer thumbnail pipeline", "fs_layer");
-        let brush_thumbnail_pipeline =
-            create_thumbnail_pipeline("brush thumbnail pipeline", "fs_brush");
-        let eraser_thumbnail_pipeline =
-            create_thumbnail_pipeline("eraser thumbnail pipeline", "fs_eraser");
         let create_commit_pipeline = |label, entry_point, blend| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
@@ -915,8 +909,6 @@ impl RenderResources {
             clipped_brush_preview_pipeline,
             clipped_eraser_preview_pipeline,
             layer_thumbnail_pipeline,
-            brush_thumbnail_pipeline,
-            eraser_thumbnail_pipeline,
             brush_commit_pipeline,
             eraser_commit_pipeline,
         })

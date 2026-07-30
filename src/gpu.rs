@@ -47,7 +47,8 @@ impl GpuContext {
             present_mode: wgpu::PresentMode::AutoVsync,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![surface_format],
-            desired_maximum_frame_latency: 2,
+            // Keep only one frame queued to minimize pointer-to-display latency while painting.
+            desired_maximum_frame_latency: 1,
         };
         surface.configure(&device, &config);
 

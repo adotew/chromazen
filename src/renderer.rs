@@ -1237,7 +1237,8 @@ impl PaintRenderer {
         brush_cursor: Option<BrushCursor>,
     ) {
         self.flush_stamps(encoder);
-        // egui samples these views later in this encoder, so previews include this frame's dabs.
+        // Keep the active layer's thumbnail dirty until the stroke is committed. Updating it for
+        // every dab adds a render pass to the latency-sensitive painting path.
         self.render_layer_previews(encoder);
         self.write_view_uniform();
         self.ensure_clipped_layer_bind_groups();
@@ -1266,59 +1267,74 @@ impl PaintRenderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.resources.background_pipeline);
-        pass.set_bind_group(0, &self.layers[0].blit_bind_group, &[]);
-        pass.draw(0..3, 0..1);
-        let clipped_flags: Vec<_> = self.layers.iter().map(|layer| layer.clipped).collect();
-        for (layer_index, layer) in self.layers.iter().enumerate() {
-            if !layer.visible {
-                continue;
-            }
-            let clipping_base = clipping_base_index(&clipped_flags, layer_index);
-            if layer.clipped && clipping_base.is_none()
-                || clipping_base.is_some_and(|base_index| !self.layers[base_index].visible)
-            {
-                continue;
-            }
-            let preview_tool = self
-                .active_stroke
-                .filter(|stroke| stroke.layer_id == layer.id)
-                .map(|stroke| stroke.tool);
-            match preview_tool {
-                Some(PaintTool::Brush) => {
-                    let pipeline = if clipping_base.is_some() {
-                        &self.resources.clipped_brush_preview_pipeline
-                    } else {
-                        &self.resources.brush_preview_pipeline
-                    };
-                    pass.set_pipeline(pipeline);
-                    pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
-                }
-                Some(PaintTool::Eraser) => {
-                    let pipeline = if clipping_base.is_some() {
-                        &self.resources.clipped_eraser_preview_pipeline
-                    } else {
-                        &self.resources.eraser_preview_pipeline
-                    };
-                    pass.set_pipeline(pipeline);
-                    pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
-                }
-                Some(PaintTool::Smudge) | None if clipping_base.is_some() => {
-                    pass.set_pipeline(&self.resources.clipped_layer_pipeline);
-                    let bind_group = self
-                        .clipped_layer_bind_groups
-                        .get(&layer.id)
-                        .expect("clipped layer must have a bind group");
-                    pass.set_bind_group(0, bind_group, &[]);
-                }
-                Some(PaintTool::Smudge) | None => {
-                    pass.set_pipeline(&self.resources.layer_pipeline);
-                    pass.set_bind_group(0, &layer.blit_bind_group, &[]);
-                }
-            }
+        if let Some(canvas_rect) = visible_canvas_rect(
+            self.view.snapshot(),
+            self.document_size,
+            self.surface_size(),
+        ) {
+            // Full-screen layer triangles do not need to shade workspace pixels outside the canvas.
+            pass.set_scissor_rect(
+                canvas_rect.x,
+                canvas_rect.y,
+                canvas_rect.width,
+                canvas_rect.height,
+            );
+            pass.set_pipeline(&self.resources.background_pipeline);
+            pass.set_bind_group(0, &self.layers[0].blit_bind_group, &[]);
             pass.draw(0..3, 0..1);
+            let clipped_flags: Vec<_> = self.layers.iter().map(|layer| layer.clipped).collect();
+            for (layer_index, layer) in self.layers.iter().enumerate() {
+                if !layer.visible {
+                    continue;
+                }
+                let clipping_base = clipping_base_index(&clipped_flags, layer_index);
+                if layer.clipped && clipping_base.is_none()
+                    || clipping_base.is_some_and(|base_index| !self.layers[base_index].visible)
+                {
+                    continue;
+                }
+                let preview_tool = self
+                    .active_stroke
+                    .filter(|stroke| stroke.layer_id == layer.id)
+                    .map(|stroke| stroke.tool);
+                match preview_tool {
+                    Some(PaintTool::Brush) => {
+                        let pipeline = if clipping_base.is_some() {
+                            &self.resources.clipped_brush_preview_pipeline
+                        } else {
+                            &self.resources.brush_preview_pipeline
+                        };
+                        pass.set_pipeline(pipeline);
+                        pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
+                    }
+                    Some(PaintTool::Eraser) => {
+                        let pipeline = if clipping_base.is_some() {
+                            &self.resources.clipped_eraser_preview_pipeline
+                        } else {
+                            &self.resources.eraser_preview_pipeline
+                        };
+                        pass.set_pipeline(pipeline);
+                        pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
+                    }
+                    Some(PaintTool::Smudge) | None if clipping_base.is_some() => {
+                        pass.set_pipeline(&self.resources.clipped_layer_pipeline);
+                        let bind_group = self
+                            .clipped_layer_bind_groups
+                            .get(&layer.id)
+                            .expect("clipped layer must have a bind group");
+                        pass.set_bind_group(0, bind_group, &[]);
+                    }
+                    Some(PaintTool::Smudge) | None => {
+                        pass.set_pipeline(&self.resources.layer_pipeline);
+                        pass.set_bind_group(0, &layer.blit_bind_group, &[]);
+                    }
+                }
+                pass.draw(0..3, 0..1);
+            }
         }
         if brush_cursor.is_some() {
+            let surface_size = self.surface_size();
+            pass.set_scissor_rect(0, 0, surface_size[0], surface_size[1]);
             pass.set_pipeline(&self.resources.cursor_pipeline);
             pass.set_bind_group(0, &self.resources.cursor_bind_group, &[]);
             pass.draw(0..6, 0..1);
@@ -1346,26 +1362,11 @@ impl PaintRenderer {
     }
 
     fn render_layer_previews(&mut self, encoder: &mut wgpu::CommandEncoder) {
-        let active_stroke = self.active_stroke;
+        let active_layer = self.active_stroke.map(|stroke| stroke.layer_id);
         for layer in &mut self.layers {
-            if !layer.preview_dirty {
+            if !layer.preview_dirty || active_layer == Some(layer.id) {
                 continue;
             }
-            let pipeline = match active_stroke.filter(|stroke| stroke.layer_id == layer.id) {
-                Some(ActiveStroke {
-                    tool: PaintTool::Brush,
-                    ..
-                }) => &self.resources.brush_thumbnail_pipeline,
-                Some(ActiveStroke {
-                    tool: PaintTool::Eraser,
-                    ..
-                }) => &self.resources.eraser_thumbnail_pipeline,
-                Some(ActiveStroke {
-                    tool: PaintTool::Smudge,
-                    ..
-                })
-                | None => &self.resources.layer_thumbnail_pipeline,
-            };
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("layer preview pass"),
@@ -1383,7 +1384,7 @@ impl PaintRenderer {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-                pass.set_pipeline(pipeline);
+                pass.set_pipeline(&self.resources.layer_thumbnail_pipeline);
                 pass.set_bind_group(0, &layer.preview_bind_group, &[]);
                 pass.draw(0..3, 0..1);
             }
@@ -1645,6 +1646,32 @@ impl PaintRenderer {
     }
 }
 
+fn visible_canvas_rect(
+    view: PaintViewSnapshot,
+    document_size: [u32; 2],
+    surface_size: [u32; 2],
+) -> Option<TextureRect> {
+    let min = view.document_to_window([0.0, 0.0]);
+    let max = view.document_to_window([document_size[0] as f32, document_size[1] as f32]);
+    if min.into_iter().chain(max).any(|value| !value.is_finite()) {
+        return None;
+    }
+
+    let surface_width = surface_size[0] as f32;
+    let surface_height = surface_size[1] as f32;
+    let left = min[0].floor().clamp(0.0, surface_width) as u32;
+    let top = min[1].floor().clamp(0.0, surface_height) as u32;
+    let right = max[0].ceil().clamp(0.0, surface_width) as u32;
+    let bottom = max[1].ceil().clamp(0.0, surface_height) as u32;
+
+    (right > left && bottom > top).then_some(TextureRect {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    })
+}
+
 fn effective_spacing(tool: PaintTool, spacing: BrushSpacing) -> BrushSpacing {
     BrushSpacing {
         ratio: if tool == PaintTool::Smudge {
@@ -1714,6 +1741,34 @@ fn clear_layer(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureV
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visible_canvas_rect_clips_to_the_surface() {
+        let view = PaintViewSnapshot {
+            zoom: 2.0,
+            offset: [-10.25, 20.25],
+        };
+
+        assert_eq!(
+            visible_canvas_rect(view, [100, 80], [150, 100]),
+            Some(TextureRect {
+                x: 20,
+                y: 0,
+                width: 130,
+                height: 100,
+            })
+        );
+    }
+
+    #[test]
+    fn canvas_outside_surface_has_no_scissor_rect() {
+        let view = PaintViewSnapshot {
+            zoom: 1.0,
+            offset: [200.0, 200.0],
+        };
+
+        assert_eq!(visible_canvas_rect(view, [100, 100], [100, 100]), None);
+    }
 
     #[test]
     fn persisted_layer_names_advance_the_default_number() {
