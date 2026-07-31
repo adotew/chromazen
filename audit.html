@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chromazen Audit</title>
+  <style>
+    :root {
+      --bg: #0e0e0e;
+      --fg: #c8c8c4;
+      --muted: #6e6e68;
+      --line: #222;
+      --head: #ecece8;
+      --crit: #e07060;
+      --high: #d4a060;
+      --med: #a0a080;
+      --low: #707068;
+      --code: #1a1a18;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      font-size: 16px;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+      font-weight: 400;
+      line-height: 1.55;
+      letter-spacing: 0.01em;
+    }
+
+    main {
+      max-width: 44rem;
+      margin: 0 auto;
+      padding: 4rem 1.5rem 6rem;
+    }
+
+    h1 {
+      margin: 0 0 0.35rem;
+      font-family: "IBM Plex Serif", Georgia, serif;
+      font-size: 2rem;
+      font-weight: 500;
+      color: var(--head);
+      letter-spacing: -0.02em;
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin-bottom: 2.5rem;
+    }
+
+    h2 {
+      margin: 2.75rem 0 0.85rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+      padding-top: 1.75rem;
+    }
+
+    h3 {
+      margin: 1.75rem 0 0.5rem;
+      font-size: 1.05rem;
+      font-weight: 500;
+      color: var(--head);
+    }
+
+    p { margin: 0 0 0.9rem; }
+
+    a { color: var(--head); }
+
+    ul, ol {
+      margin: 0 0 1rem;
+      padding-left: 1.2rem;
+    }
+
+    li { margin-bottom: 0.35rem; }
+
+    li::marker { color: var(--muted); }
+
+    strong { color: var(--head); font-weight: 500; }
+
+    code, .path {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.84em;
+      background: var(--code);
+      padding: 0.1em 0.35em;
+      border-radius: 2px;
+    }
+
+    pre {
+      background: var(--code);
+      border: 1px solid var(--line);
+      padding: 1rem 1.1rem;
+      overflow-x: auto;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.78rem;
+      line-height: 1.45;
+      color: var(--muted);
+      margin: 0 0 1.25rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+      margin: 0 0 1.5rem;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 0.55rem 0.5rem;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .sev {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.75rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .sev-high, .sev-critical { color: var(--crit); }
+    .sev-medium { color: var(--high); }
+    .sev-low { color: var(--low); }
+
+    .finding {
+      margin: 0 0 2rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .finding:last-child { border-bottom: none; }
+
+    .finding-id {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-right: 0.5rem;
+    }
+
+    .finding h3 {
+      display: inline;
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    .finding .tags {
+      margin: 0.4rem 0 0.75rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .risk-list { list-style: none; padding-left: 0; }
+
+    .risk-list li {
+      display: grid;
+      grid-template-columns: 2rem 1fr;
+      gap: 0.5rem;
+      margin-bottom: 0.65rem;
+    }
+
+    .risk-list .n {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    .toc {
+      margin: 0 0 0.5rem;
+      padding: 0;
+      list-style: none;
+      columns: 2;
+      column-gap: 1.5rem;
+      font-size: 0.9rem;
+    }
+
+    .toc li { break-inside: avoid; margin-bottom: 0.3rem; }
+
+    .toc a {
+      color: var(--fg);
+      text-decoration: none;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .toc a:hover { color: var(--head); border-color: var(--muted); }
+
+    .verdict {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 0.35rem 0.75rem;
+      margin: 0 0 1rem;
+      font-size: 0.92rem;
+    }
+
+    .verdict dt {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    .verdict dd { margin: 0; }
+
+    footer {
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    @media (max-width: 560px) {
+      .toc { columns: 1; }
+      main { padding: 2.5rem 1.15rem 4rem; }
+      h1 { font-size: 1.65rem; }
+    }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Serif:wght@500&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <main>
+    <h1>Chromazen Audit</h1>
+    <p class="meta">
+      Read-only systems audit · wgpu / winit / persistence · 31 Jul 2026<br />
+      Verification: 156 tests pass · clippy clean · fmt clean · release build OK<br />
+      Not run: cargo-audit, cargo-deny · Windows/Linux runtime unverified
+    </p>
+
+    <ul class="toc">
+      <li><a href="#summary">Executive summary</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#positives">Positive findings</a></li>
+      <li><a href="#risks">Top risks</a></li>
+      <li><a href="#findings">Findings</a></li>
+      <li><a href="#hypotheses">Hypothesis verdicts</a></li>
+      <li><a href="#open">Open questions</a></li>
+      <li><a href="#tests">Tests &amp; practices</a></li>
+      <li><a href="#roadmap">Roadmap</a></li>
+      <li><a href="#bench">Benchmarks</a></li>
+      <li><a href="#top5">Highest-value changes</a></li>
+    </ul>
+
+    <h2 id="summary">1. Executive summary</h2>
+    <p>
+      Chromazen is in considerably better shape than the typical AI-assisted codebase.
+      Pure logic — stroke smoothing, stamp spacing, coordinate transforms, manifest
+      validation, persistence layout — is carefully written, validated at trust
+      boundaries, and well tested. Premultiplied-alpha semantics are consistent across
+      CPU compositing, GPU paths, eyedropper sampling, thumbnails, and export.
+    </p>
+    <p>Significant risks concentrate in three areas:</p>
+    <ol>
+      <li>
+        <strong>Background-worker lifecycle.</strong> Four controllers hand-roll the same
+        detached-thread pattern. None survives a worker panic: the in-flight flag latches
+        forever, blocking navigation and (in two cases) quit — force-quit then discards
+        unsaved strokes.
+      </li>
+      <li>
+        <strong>Autosave/export peak memory.</strong> Dirty-layer tracking limits PNG
+        encoding, but every save still reads back, materializes, and thumbnail-resizes
+        every layer. Peak transient memory is roughly 2× total layer bytes (~1.3&nbsp;GiB
+        for 10×4000²; ~13&nbsp;GiB for 50 layers at 32&nbsp;Mpx).
+      </li>
+      <li>
+        <strong>GPU memory is bounded only in the middle.</strong> The 256&nbsp;MiB history
+        budget is real, but layer and reference counts are uncapped. Adding blank layers
+        spuriously evicts stroke undo history.
+      </li>
+    </ol>
+    <p>
+      Durability is good against process crashes (atomic <code>project.toml</code> via
+      fsync-on-commit) but has a power-loss window: revision payloads are never fsynced,
+      and the previous revision is deleted immediately after the pointer flips.
+    </p>
+    <p>
+      Nothing found corrupts data during normal operation. The interactive brush path is
+      well-engineered for latency.
+    </p>
+
+    <h2 id="architecture">2. Architecture and data-flow</h2>
+<pre>winit event
+  └─ App::window_event
+       ├─ PaintInputController → StrokeSmoother → StampQueue
+       ├─ egui-winit (UI / references)
+       └─ request_redraw
+App::render  [RedrawRequested]
+  ├─ drain completions (export / ref import / ref load)
+  ├─ AppCommand queue
+  ├─ AutosaveController::update
+  ├─ GuiLayer (egui + native-texture previews)
+  └─ PaintRenderer::render_to_view
+       ├─ flush_stamps ≤1024 dabs → 1 buffer write → 1 instanced mask pass
+       │     (smudge: 1 pass + 1 dab-rect copy per dab)
+       ├─ dirty layer previews (128²)
+       └─ blit: background + layers, scissored to visible canvas
+Stroke: begin → mask (Max blend) → live preview → commit + history
+History: per-stroke rect textures; structure ops retain PaintLayers; 256 MiB budget
+Persistence: version counters → readback all layers → dirty PNG encode
+  → temp dir → rename → atomic project.toml → delete previous revision</pre>
+    <p>
+      Boundaries are mostly coherent. <code>PaintRenderer</code> submodules have crisp
+      responsibilities. <code>App</code> is the orchestration object: seven controllers and
+      three interacting navigation flags.
+    </p>
+
+    <h2 id="positives">3. Positive findings</h2>
+    <ul>
+      <li>
+        <strong>Premultiplied-alpha consistency</strong> across CPU, GPU, eyedropper,
+        thumbnails, and export — including hidden-base and chained clipping via shared
+        <code>clipping_base_index</code>.
+      </li>
+      <li>
+        <strong>Input → GPU brush path</strong> designed for latency:
+        <code>desired_maximum_frame_latency: 1</code>, instanced stamping, Max-blend
+        mask accumulation, scissored commits.
+      </li>
+      <li>
+        <strong>Trust-boundary validation:</strong> pinned layer paths, brush stamp
+        containment, reference decode limits, TOML reject of NaN / unknown fields.
+      </li>
+      <li>
+        <strong>Store failure handling:</strong> temp staging, commit re-read
+        disambiguation, trash-rename deletion, corrupt artworks degrade to warnings.
+      </li>
+      <li>
+        <strong>Tests check behavior</strong> (spacing properties, premultiply
+        round-trips, injected metadata failures), not implementation mirrors.
+      </li>
+      <li>
+        History mirror + swap achieves O(rect) undo/redo with no extra steady-state
+        textures per operation.
+      </li>
+    </ul>
+
+    <h2 id="risks">4. Top risks</h2>
+    <ol class="risk-list">
+      <li><span class="n">R1</span> Worker panic permanently wedges the app (F1)</li>
+      <li><span class="n">R2</span> Autosave/export peak memory scales with total layer bytes ×2 (F2)</li>
+      <li><span class="n">R3</span> GPU memory unbounded via layer/reference count (F3)</li>
+      <li><span class="n">R4</span> Power-loss durability gap in revision commits (F4)</li>
+      <li><span class="n">R5</span> Per-dab smudge passes; may scale with canvas area (F5)</li>
+      <li><span class="n">R6</span> Main-thread stalls: open decode, gallery thumbs, eyedropper wait (F7/F10)</li>
+    </ol>
+
+    <h2 id="findings">5. Findings</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Sev</th>
+          <th>Conf</th>
+          <th>Category</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>F1</td><td class="sev sev-high">High</td><td>High</td><td>Concurrency / availability</td></tr>
+        <tr><td>F2</td><td class="sev sev-high">High</td><td>High</td><td>Performance / memory</td></tr>
+        <tr><td>F3</td><td class="sev sev-medium">Med</td><td>High</td><td>GPU memory</td></tr>
+        <tr><td>F4</td><td class="sev sev-medium">Med</td><td>High</td><td>Data safety</td></tr>
+        <tr><td>F5</td><td class="sev sev-medium">Med</td><td>Med</td><td>Performance (GPU)</td></tr>
+        <tr><td>F6</td><td class="sev sev-medium">Med</td><td>High</td><td>History accounting</td></tr>
+        <tr><td>F7</td><td class="sev sev-medium">Med</td><td>High</td><td>Responsiveness</td></tr>
+        <tr><td>F8</td><td class="sev sev-medium">Med</td><td>Med</td><td>Data safety (edge)</td></tr>
+        <tr><td>F9</td><td class="sev sev-medium">Med</td><td>Med</td><td>Autosave while minimized</td></tr>
+        <tr><td>F10</td><td class="sev sev-low">Low–Med</td><td>High</td><td>Eyedropper stall</td></tr>
+        <tr><td>F11</td><td class="sev sev-low">Low–Med</td><td>High</td><td>Navigation flags</td></tr>
+        <tr><td>F12</td><td class="sev sev-low">Low–Med</td><td>High</td><td>Worker duplication</td></tr>
+        <tr><td>F13–F20</td><td class="sev sev-low">Low</td><td>—</td><td>Surface loss, bind groups, pressure, docs, etc.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="finding">
+      <span class="finding-id">F1</span>
+      <h3>Worker panic permanently wedges navigation and quit</h3>
+      <p class="tags"><span class="sev sev-high">High</span> · Confidence High · Concurrency</p>
+      <p>
+        Each controller spawns a detached thread whose only completion signal is an mpsc
+        message. The controller also holds a sender clone, so the channel never
+        disconnects. If the worker panics, no completion arrives:
+        <code>ReferenceLoadController::is_loading()</code> stays true (blocks exit and
+        gallery); <code>ExportController::exporting</code> stays true (blocks quit from
+        gallery); autosave <code>in_flight</code> stays set (status stuck on Saving).
+      </p>
+      <p>
+        <strong>Fix:</strong> wrap worker bodies in <code>catch_unwind</code> and always
+        send a completion, or hold a <code>JoinHandle</code> and treat finished-with-no-message
+        as failure. Prefer one shared helper (see F12).
+      </p>
+    </div>
+
+    <div class="finding">
+      <span class="finding-id">F2</span>
+      <h3>Autosave/export read back every layer at full resolution</h3>
+      <p class="tags"><span class="sev sev-high">High</span> · Confidence High · Memory</p>
+      <p>
+        Dirty tracking limits PNG encoding only. <code>begin_document_layer_readback</code>
+        copies all layers; <code>finish()</code> materializes every layer as
+        <code>RgbaImage</code>; thumbnail encoding Triangle-resizes every full-res layer
+        even for metadata-only saves.
+      </p>
+      <p>
+        <strong>Cost:</strong> ~1.3&nbsp;GiB transient for 10×4000²; ~13&nbsp;GiB at
+        50×32&nbsp;Mpx. Allocation failure here is the most likely F1 trigger.
+      </p>
+      <p>
+        <strong>Low-risk fix:</strong> read back only dirty layers; stream map → encode →
+        drop per layer; build thumbnails from cached preview / last-saved PNG data.
+      </p>
+    </div>
+
+    <div class="finding">
+      <span class="finding-id">F3</span>
+      <h3>Total GPU memory bounded only in the middle</h3>
+      <p class="tags"><span class="sev sev-medium">Medium</span> · Confidence High · GPU memory</p>
+      <p>Approximate steady-state (RGBA8; history ≤256&nbsp;MiB):</p>
+      <table>
+        <thead>
+          <tr><th>Config</th><th>Layers</th><th>Fixed</th><th>Total ≈</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>4000², 1 layer</td><td>61 MiB</td><td>137 MiB</td><td>0.45 GiB</td></tr>
+          <tr><td>4000², 10 layers</td><td>610 MiB</td><td>137 MiB</td><td>1.0 GiB</td></tr>
+          <tr><td>4000², 50 layers</td><td>3.0 GiB</td><td>137 MiB</td><td>3.4 GiB</td></tr>
+          <tr><td>32 Mpx, 50 layers</td><td>6.25 GiB</td><td>288 MiB</td><td>6.8 GiB</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Layer and reference counts are uncapped. Soft caps tied to a queried memory budget
+        would bound the model.
+      </p>
+    </div>
+
+    <div class="finding">
+      <span class="finding-id">F4</span>
+      <h3>Revision payloads not fsynced; previous revision deleted immediately</h3>
+      <p class="tags"><span class="sev sev-medium">Medium</span> · Confidence High · Data safety</p>
+      <p>
+        Layer PNGs, <code>document.toml</code>, and thumbnail use plain
+        <code>fs::write</code>. <code>project.toml</code> is fsynced via
+        <code>atomic-write-file</code>. Previous revision is removed immediately after.
+        After power loss, the durable pointer can reference non-durable payload with
+        N−1 already gone.
+      </p>
+      <p>
+        <strong>Fix:</strong> sync payload files and the revision directory before the
+        pointer commit; delete N−1 lazily on the next successful commit.
+      </p>
+    </div>
+
+    <div class="finding">
+      <span class="finding-id">F5</span>
+      <h3>Smudge: one render pass + one copy per dab</h3>
+      <p class="tags"><span class="sev sev-medium">Medium</span> · Confidence Medium · Needs profiling</p>
+      <p>
+        <code>flush_smudge_stamps</code> encodes a full-attachment Load/Store pass per dab,
+        then a dab-rect copy. Dense small brushes produce hundreds of dabs per swipe.
+        Severity depends on whether Metal skips untouched tiles.
+      </p>
+      <p>
+        <strong>Low-risk fix first:</strong> batch non-overlapping consecutive dabs into
+        one pass. Confirm with GPU timestamps at fixed dab count across canvas sizes.
+      </p>
+    </div>
+
+    <div class="finding">
+      <span class="finding-id">F6</span>
+      <h3>Blank layer-adds charge full texture bytes into history budget</h3>
+      <p class="tags"><span class="sev sev-medium">Medium</span> · Confidence High · History</p>
+      <p>
+        <code>record_add</code> charges <code>layer_resource_byte_len()</code> while
+        <code>detached</code> is <code>None</code>. Four blank layers at 4000² (~244&nbsp;MiB)
+        evict essentially all stroke history; two adds do it at 32&nbsp;Mpx.
+      </p>
+      <p>
+        Rect-based stroke retention is a known limitation documented in
+        <code>docs/undo-redo-plan.md</code> — recorded as acknowledged, not a defect.
+        The blank-add overcharge is an accounting bug within the current design.
+      </p>
+    </div>
+
+    <div class="finding">
+      <span class="finding-id">F7</span>
+      <h3>Synchronous decode on the main thread</h3>
+      <p class="tags"><span class="sev sev-medium">Medium</span> · Confidence High · Responsiveness</p>
+      <p>
+        Artwork open decodes every layer PNG synchronously (seconds for 10×4000²).
+        Gallery thumbnails decode inside the egui frame. References were made async;
+        layers were not. Reuse the reference-load worker shape for layer decode.
+      </p>
+    </div>
+
+    <div class="finding">
+      <span class="finding-id">F8</span>
+      <h3><code>read_project(...).ok()</code> treats corruption as first revision</h3>
+      <p class="tags"><span class="sev sev-medium">Medium</span> · Confidence Medium · Data safety</p>
+      <p>
+        Corrupt / unreadable <code>project.toml</code> yields
+        <code>previous = None</code> → revision 1. Most paths fail safely on
+        <code>ReuseCurrent</code>; the damaging path needs all layers dirty and no
+        references. Distinguish <code>NotFound</code> from other errors.
+      </p>
+    </div>
+
+    <div class="finding">
+      <span class="finding-id">F9</span>
+      <h3>Autosave depends on RedrawRequested delivery</h3>
+      <p class="tags"><span class="sev sev-medium">Medium</span> · Confidence Medium · Needs runtime confirmation</p>
+      <p>
+        Autosave progress runs inside <code>App::render</code>. If macOS suppresses draws
+        while miniaturized, paint → minimize within the 2&nbsp;s debounce may never save.
+        Drive <code>autosave.update</code> from <code>new_events</code> /
+        <code>about_to_wait</code> if confirmed.
+      </p>
+    </div>
+
+    <div class="finding">
+      <span class="finding-id">F10</span>
+      <h3>Eyedropper blocks main thread on GPU-queue drain</h3>
+      <p class="tags"><span class="sev sev-low">Low–Med</span> · Confidence High · Responsiveness</p>
+      <p>
+        <code>device.poll(PollType::wait_indefinitely())</code> waits for all outstanding
+        GPU work. Sampling is stroke-gated and throttled to 33&nbsp;ms — acceptable, but
+        magnifies under GPU load. Persistent readback buffer + one-frame-stale results
+        would remove the wait.
+      </p>
+    </div>
+
+    <div class="finding">
+      <span class="finding-id">F11–F12</span>
+      <h3>Navigation flags and duplicated workers</h3>
+      <p class="tags"><span class="sev sev-low">Low–Med</span> · Architecture</p>
+      <p>
+        Three mutable flags encode gallery / new-artwork / exit transitions implicitly.
+        Replace with one <code>PendingNavigation</code> enum. Four controllers reimplement
+        sender+receiver+wake+spawn with three different in-flight representations — why
+        F1 exists four times. A small <code>Job&lt;T&gt;</code> helper consolidates them.
+      </p>
+    </div>
+
+    <div class="finding">
+      <span class="finding-id">F13–F20</span>
+      <h3>Lower-severity items</h3>
+      <p class="tags"><span class="sev sev-low">Low</span></p>
+      <ul>
+        <li>F13 — Surface-loss path: no redraw scheduled; egui texture frees dropped</li>
+        <li>F14 — Stamp/cursor bind-group construction triplicated</li>
+        <li>F15 — <code>NSEvent</code> accessors before type switch (undocumented AppKit)</li>
+        <li>F16 — History budget counts ideal bytes, not allocation granularity</li>
+        <li>F17 — README advertises clear/fit/100% zoom; dead shader entry points</li>
+        <li>F18 — Autosave becomes due mid-stroke and retries every 2&nbsp;s</li>
+        <li>F19 — Config vs artwork store app-name casing (<code>Chromazen</code> / <code>chromazen</code>)</li>
+        <li>F20 — Per-event menu sync, catalog clone, clipping bind-group churn</li>
+      </ul>
+    </div>
+
+    <h2 id="hypotheses">6. Hypothesis verdicts</h2>
+    <dl class="verdict">
+      <dt>H1</dt><dd>Confirmed, understated — full readback, materialization, and thumbnail resize (F2)</dd>
+      <dt>H2</dt><dd>Confirmed, mitigated — real wait, but throttled and stroke-gated (F10)</dd>
+      <dt>H3</dt><dd>Confirmed structurally; magnitude needs profiling (F5)</dd>
+      <dt>H4</dt><dd>Confirmed — uncapped layers/refs; budget accounting gaps (F3, F6, F16)</dd>
+      <dt>H5</dt><dd>Partially rejected — renderer boundaries coherent; real coupling is App navigation (F11)</dd>
+      <dt>H6</dt><dd>Confirmed (F12)</dd>
+      <dt>H7</dt><dd>Partially confirmed — <code>read_project().ok()</code> real but mostly fail-safe (F8); fsync gap is worse (F4)</dd>
+      <dt>H8</dt><dd>Confirmed — pure logic well tested; GPU / lifecycle / failure / cross-platform under-tested</dd>
+    </dl>
+
+    <h2 id="open">7. Open questions</h2>
+    <ul>
+      <li>Does macOS deliver <code>RedrawRequested</code> for miniaturized windows in winit 0.30? (F9)</li>
+      <li>Does Apple’s TBDR skip load/store for tiles untouched by geometry? (F5)</li>
+      <li>Two app instances share the store with no locking — double-launch risk</li>
+      <li>Worker-thread <code>device.poll</code> during main-thread render — Metal scheduling hiccups?</li>
+    </ul>
+
+    <h2 id="tests">8. Tests and engineering practices</h2>
+    <p>
+      Untested critical behavior: history undo/redo/eviction sequencing; autosave session
+      state machine; worker panic/cancellation; GPU-vs-CPU compositing equivalence;
+      store fsync/crash behavior.
+    </p>
+    <p>
+      Worth adding: <code>cargo-deny</code>/<code>cargo-audit</code> in CI; headless wgpu
+      harness; GPU timestamps behind a debug flag; peak-RSS assertion on save benchmarks.
+      Skip Miri. Release profile: consider <code>lto = "thin"</code>,
+      <code>codegen-units = 1</code>.
+    </p>
+
+    <h2 id="roadmap">9. Remediation roadmap</h2>
+    <h3>Immediate</h3>
+    <ul>
+      <li>F1 panic-safe workers via F12 helper</li>
+      <li>F4 fsync revision payloads + deferred previous-revision deletion</li>
+      <li>F8 <code>NotFound</code>-only fallback</li>
+      <li>F13 redraw after reconfigure</li>
+    </ul>
+    <h3>Low-risk performance</h3>
+    <ul>
+      <li>F2 dirty-only streamed readback</li>
+      <li>F7 async layer decode + incremental gallery thumbs</li>
+      <li>F6 zero-charge blank adds; F16 granularity clamp</li>
+    </ul>
+    <h3>Medium-term</h3>
+    <ul>
+      <li>F11 navigation enum; F12 controller consolidation</li>
+      <li>F3 layer/reference caps; F5 smudge batching after profiling</li>
+    </ul>
+    <h3>Long-term</h3>
+    <ul>
+      <li>Headless wgpu harness; failure-injection store tests</li>
+      <li>Tile-based history from <code>docs/undo-redo-plan.md</code></li>
+    </ul>
+
+    <h2 id="bench">10. Benchmark plan</h2>
+    <p>On 4000² and 8192×4096, with 1 / 10 / 50 layers:</p>
+    <ol>
+      <li>Brush/smudge latency — sparse vs dense, 20&nbsp;px vs 300&nbsp;px; GPU ms vs canvas area at fixed dab count</li>
+      <li>Autosave peak RSS + wall time — metadata-only, single-dirty, all-dirty</li>
+      <li>Eyedropper frame-time while option-dragging</li>
+      <li>Click-to-editor and first-gallery-frame timing</li>
+      <li>References: 10 × 16&nbsp;Mpx import / pan / zoom memory</li>
+      <li>Undo near budget with blank layer-adds interleaved</li>
+    </ol>
+
+    <h2 id="top5">11. Five highest-value changes</h2>
+    <ol>
+      <li>
+        <strong>Panic-safe shared worker helper (F1/F12).</strong>
+        Benefit: eliminates unquittable-app scenario. Risk: low.
+        Proof: injected-panic tests; app remains navigable.
+      </li>
+      <li>
+        <strong>Dirty-only streamed autosave readback (F2).</strong>
+        Benefit: ~10× peak-memory reduction; removes most likely F1 trigger. Risk: moderate.
+        Proof: peak-RSS before/after at 10/50 layers.
+      </li>
+      <li>
+        <strong>fsync revision payloads + deferred N−1 deletion (F4).</strong>
+        Benefit: closes the real data-loss window. Risk: low.
+        Proof: failure-injection + hard-poweroff VM test.
+      </li>
+      <li>
+        <strong>History accounting: zero-charge blank adds, granularity clamp (F6/F16).</strong>
+        Benefit: undo survives ordinary layer management. Risk: low.
+        Proof: unit test + Metal capture near budget.
+      </li>
+      <li>
+        <strong>Async artwork-open layer decode (F7).</strong>
+        Benefit: removes worst interactive freeze. Risk: low (proven template).
+        Proof: click-to-editor timing.
+      </li>
+    </ol>
+
+    <p>
+      The interactive painting core — smoothing, stamping, masking, preview, commit —
+      needs no architectural change. Highest-leverage work is in the lifecycle seams:
+      workers, saves, and memory bounds.
+    </p>
+
+    <footer>
+      Chromazen systems audit · read-only · no source modifications
+    </footer>
+  </main>
+</body>
+</html>
