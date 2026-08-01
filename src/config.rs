@@ -212,7 +212,6 @@ impl ConfigStore {
         discover_user_brushes(&self.brushes_path())
     }
 
-    #[allow(dead_code, reason = "connected to the brush context menu next")]
     pub(crate) fn delete_brush(&self, id: &str) -> Result<(), ConfigError> {
         validate_brush_id(id)?;
         let path = self.brushes_path().join(id);

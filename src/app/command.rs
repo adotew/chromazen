@@ -58,6 +58,7 @@ pub(super) enum AppCommand {
         id: String,
     },
     ImportBrushes,
+    DeleteBrush(String),
     SaveSettings,
     ReloadConfiguration,
     ResetBrush,

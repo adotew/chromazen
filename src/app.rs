@@ -632,6 +632,12 @@ impl App {
                     let paths = choose_abr_paths();
                     self.brush_import.start(self.input.tool(), paths);
                 }
+                AppCommand::DeleteBrush(id) => {
+                    self.process_settings_commands(vec![SettingsCommand::DeleteBrush {
+                        id,
+                        active_tool: self.input.tool(),
+                    }]);
+                }
                 AppCommand::SaveSettings => {
                     let Some((brush, tool_brushes, tool_sizes)) =
                         self.gui.as_ref().map(GuiLayer::settings_snapshot)
@@ -1135,6 +1141,9 @@ impl App {
                 let Some(gui) = self.gui.as_mut() else {
                     return true;
                 };
+                if let Some((deleted_id, replacement_id)) = &completed.deleted_brush {
+                    gui.replace_deleted_brush(deleted_id, replacement_id);
+                }
                 gui.apply_brush_preset(
                     tool,
                     self.settings.active_brush(),
