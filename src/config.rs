@@ -13,6 +13,11 @@ use serde::{Deserialize, Serialize};
 use crate::paint::PaintTool;
 mod abr;
 mod brush;
+#[allow(
+    dead_code,
+    reason = "brush import is connected to the application next"
+)]
+mod brush_import;
 
 pub(crate) use brush::{BrushCatalog, BrushSummary, LoadedBrushPreset};
 

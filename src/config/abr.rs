@@ -1,8 +1,3 @@
-#![allow(
-    dead_code,
-    reason = "the parser is connected to brush installation next"
-)]
-
 use std::{error::Error, fmt};
 
 const MAX_BRUSH_COUNT: usize = 2_048;
