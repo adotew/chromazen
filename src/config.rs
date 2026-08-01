@@ -11,6 +11,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::paint::PaintTool;
+mod abr;
 mod brush;
 
 pub(crate) use brush::{BrushCatalog, BrushSummary, LoadedBrushPreset};
