@@ -9,9 +9,9 @@ use super::{
     brush::{BrushPreset, PressureConfig, SizeConfig, SpacingConfig},
 };
 
-const MAX_ABR_FILE_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_ABR_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_IMPORTED_STAMP_DIMENSION: u32 = 4_096;
-const FALLBACK_SPACING_RATIO: f32 = 0.25;
+const FALLBACK_SPACING_RATIO: f32 = 0.05;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct BrushImportResult {
@@ -113,7 +113,7 @@ fn stage_brush(path: &Path, name: &str, brush: AbrBrush) -> Result<(), ConfigErr
         spacing: SpacingConfig {
             ratio: brush
                 .spacing_percent
-                .map_or(FALLBACK_SPACING_RATIO, |spacing| spacing as f32 / 100.0),
+                .map_or(FALLBACK_SPACING_RATIO, |spacing| spacing / 100.0),
             minimum: 1.0,
         },
         pressure: PressureConfig::default(),
@@ -263,9 +263,30 @@ mod tests {
     }
 
     #[test]
+    fn missing_abr_spacing_uses_dense_fallback() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let brush_path = temp.path().join("brush");
+        let brush = AbrBrush {
+            name: None,
+            sample_id: None,
+            width: 1,
+            height: 1,
+            mask: vec![255],
+            spacing_percent: None,
+        };
+
+        stage_brush(&brush_path, "Imported", brush).expect("staged brush");
+        let source = fs::read_to_string(brush_path.join("brush.toml")).expect("preset");
+        let preset: BrushPreset = toml::from_str(&source).expect("parsed preset");
+
+        assert_eq!(preset.spacing.ratio, 0.05);
+    }
+
+    #[test]
     fn oversized_tip_is_scaled_to_native_limit() {
         let brush = AbrBrush {
             name: None,
+            sample_id: None,
             width: MAX_IMPORTED_STAMP_DIMENSION + 1,
             height: 1,
             mask: vec![255; (MAX_IMPORTED_STAMP_DIMENSION + 1) as usize],
