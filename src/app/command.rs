@@ -57,6 +57,7 @@ pub(super) enum AppCommand {
         tool: PaintTool,
         id: String,
     },
+    ImportBrushes,
     SaveSettings,
     ReloadConfiguration,
     ResetBrush,

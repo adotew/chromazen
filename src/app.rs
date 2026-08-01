@@ -1,4 +1,5 @@
 mod autosave;
+mod brush_import;
 mod command;
 mod export;
 mod gallery;
@@ -25,6 +26,7 @@ use winit::{
 
 use self::{
     autosave::AutosaveController,
+    brush_import::{BrushImportController, choose_abr_paths},
     command::AppCommand,
     export::{ExportController, choose_export_path},
     gallery::GalleryController,
@@ -46,6 +48,7 @@ const WINDOW_TITLE: &str = "Chromazen";
 enum AppEvent {
     Command(AppCommand),
     AutosaveWake,
+    BrushImportWake,
     ExportWake,
     ReferenceImportWake,
     ReferenceLoadWake,
@@ -68,6 +71,12 @@ struct PendingReferenceLoad {
     paint_versions: DocumentVersions,
 }
 
+struct ImportControllers {
+    brush: BrushImportController,
+    reference: ReferenceImportController,
+    reference_load: ReferenceLoadController,
+}
+
 pub struct App {
     window: Option<Arc<Window>>,
     paint: Option<PaintRenderer>,
@@ -82,6 +91,7 @@ pub struct App {
     gallery: GalleryController,
     autosave: AutosaveController,
     export: ExportController,
+    brush_import: BrushImportController,
     references: ReferenceBoard,
     reference_import: ReferenceImportController,
     reference_load: ReferenceLoadController,
@@ -295,6 +305,7 @@ impl ApplicationHandler<AppEvent> for App {
         match event {
             AppEvent::Command(command) => self.pending_commands.push(command),
             AppEvent::AutosaveWake
+            | AppEvent::BrushImportWake
             | AppEvent::ExportWake
             | AppEvent::ReferenceImportWake
             | AppEvent::ReferenceLoadWake => {}
@@ -323,8 +334,7 @@ impl App {
         gallery: GalleryController,
         autosave: AutosaveController,
         export: ExportController,
-        reference_import: ReferenceImportController,
-        reference_load: ReferenceLoadController,
+        imports: ImportControllers,
     ) -> Self {
         Self {
             window: None,
@@ -340,9 +350,10 @@ impl App {
             gallery,
             autosave,
             export,
+            brush_import: imports.brush,
             references: ReferenceBoard::default(),
-            reference_import,
-            reference_load,
+            reference_import: imports.reference,
+            reference_load: imports.reference_load,
             pending_reference_load: None,
             screen: AppScreen::Gallery,
             pending_gallery: false,
@@ -381,6 +392,7 @@ impl App {
 
     fn render(&mut self, window: &Window, event_loop: &ActiveEventLoop) {
         let mut app_action_processed = self.process_export_completion();
+        app_action_processed |= self.process_brush_import_completion();
         app_action_processed |= self.process_reference_import_completions();
         app_action_processed |= self.process_reference_load_completions();
         app_action_processed |= self.process_pending_commands();
@@ -470,6 +482,7 @@ impl App {
                             eyedropper_indicator,
                             save_status: status,
                             pending_navigation,
+                            brush_import_dialog_delay: self.brush_import.dialog_delay(),
                             reference_import_dialog_delay: self.reference_import.dialog_delay(),
                             reference_load_dialog_delay: self.reference_load.dialog_delay(),
                             references: self.references.images(),
@@ -615,6 +628,10 @@ impl App {
                         reset_size: true,
                     }]);
                 }
+                AppCommand::ImportBrushes => {
+                    let paths = choose_abr_paths();
+                    self.brush_import.start(self.input.tool(), paths);
+                }
                 AppCommand::SaveSettings => {
                     let Some((brush, tool_brushes, tool_sizes)) =
                         self.gui.as_ref().map(GuiLayer::settings_snapshot)
@@ -713,6 +730,44 @@ impl App {
             }
         }
         self.sync_history_menu();
+        true
+    }
+
+    fn process_brush_import_completion(&mut self) -> bool {
+        let Some(completion) = self.brush_import.take_completion() else {
+            return false;
+        };
+        let imported_count = completion.imported_ids.len();
+        if let Some(first_id) = completion.imported_ids.first() {
+            self.process_settings_commands(vec![SettingsCommand::SwitchBrush {
+                tool: completion.tool,
+                id: first_id.clone(),
+                reset_size: true,
+            }]);
+        }
+
+        let mut details = completion.warnings;
+        details.extend(completion.errors);
+        if let Some(gui) = self.gui.as_mut() {
+            if imported_count == 0 {
+                gui.show_error(if details.is_empty() {
+                    "No brushes were imported".to_owned()
+                } else {
+                    details.join("\n")
+                });
+            } else if details.is_empty() {
+                gui.show_success(format!(
+                    "Imported {imported_count} Photoshop brush{}",
+                    if imported_count == 1 { "" } else { "es" }
+                ));
+            } else {
+                gui.show_error(format!(
+                    "Imported {imported_count} Photoshop brush{} with warnings:\n{}",
+                    if imported_count == 1 { "" } else { "es" },
+                    details.join("\n")
+                ));
+            }
+        }
         true
     }
 
@@ -1175,6 +1230,10 @@ pub fn run() {
     let export = ExportController::new(Arc::new(move || {
         let _ = export_proxy.send_event(AppEvent::ExportWake);
     }));
+    let brush_import_proxy = event_loop.create_proxy();
+    let brush_import = BrushImportController::new(Arc::new(move || {
+        let _ = brush_import_proxy.send_event(AppEvent::BrushImportWake);
+    }));
     let reference_import_proxy = event_loop.create_proxy();
     let reference_import = ReferenceImportController::new(Arc::new(move || {
         let _ = reference_import_proxy.send_event(AppEvent::ReferenceImportWake);
@@ -1190,8 +1249,11 @@ pub fn run() {
         gallery,
         autosave,
         export,
-        reference_import,
-        reference_load,
+        ImportControllers {
+            brush: brush_import,
+            reference: reference_import,
+            reference_load,
+        },
     );
     event_loop.run_app(&mut app).expect("event loop error");
 }

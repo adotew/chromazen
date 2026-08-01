@@ -44,6 +44,7 @@ pub(crate) struct EditorUiState<'a> {
     pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
     pub(crate) save_status: SaveStatus,
     pub(crate) pending_navigation: Option<&'a str>,
+    pub(crate) brush_import_dialog_delay: Option<Duration>,
     pub(crate) reference_import_dialog_delay: Option<Duration>,
     pub(crate) reference_load_dialog_delay: Option<Duration>,
     pub(crate) references: &'a [ReferenceImage],
@@ -656,6 +657,11 @@ impl GuiLayer {
                                 ui.add_space(4.0);
                             }
                         });
+                    ui.separator();
+                    if ui.button("Import Photoshop Brushes…").clicked() {
+                        self.commands.push(AppCommand::ImportBrushes);
+                        ui.close();
+                    }
                 });
             if egui::Popup::is_id_open(ui.ctx(), popup_id) {
                 self.load_next_brush_preview();
@@ -672,6 +678,7 @@ impl GuiLayer {
             eyedropper_indicator,
             save_status,
             pending_navigation,
+            brush_import_dialog_delay,
             reference_import_dialog_delay,
             reference_load_dialog_delay,
             references,
@@ -1071,9 +1078,20 @@ impl GuiLayer {
             if let Some(action) = pending_navigation {
                 show_save_blocker(ui.ctx(), action, &save_status, &mut self.commands);
             }
+            if let Some(delay) = brush_import_dialog_delay {
+                if delay.is_zero() {
+                    show_loading_dialog(
+                        ui.ctx(),
+                        "brush import dialog",
+                        "Importing Photoshop brushes…",
+                    );
+                } else {
+                    ui.ctx().request_repaint_after(delay);
+                }
+            }
             if let Some(delay) = reference_import_dialog_delay {
                 if delay.is_zero() {
-                    show_reference_loading_dialog(
+                    show_loading_dialog(
                         ui.ctx(),
                         "reference import dialog",
                         "Importing reference…",
@@ -1084,11 +1102,7 @@ impl GuiLayer {
             }
             if let Some(delay) = reference_load_dialog_delay {
                 if delay.is_zero() {
-                    show_reference_loading_dialog(
-                        ui.ctx(),
-                        "reference load dialog",
-                        "Loading references…",
-                    );
+                    show_loading_dialog(ui.ctx(), "reference load dialog", "Loading references…");
                 } else {
                     ui.ctx().request_repaint_after(delay);
                 }
@@ -1321,7 +1335,7 @@ fn layer_preview_is_current(current: &[LayerPreviewKey], cached: LayerPreviewKey
     current.contains(&cached)
 }
 
-fn show_reference_loading_dialog(context: &egui::Context, id: &str, message: &str) {
+fn show_loading_dialog(context: &egui::Context, id: &str, message: &str) {
     egui::Modal::new(egui::Id::new(id)).show(context, |ui| {
         ui.horizontal(|ui| {
             ui.spinner();
