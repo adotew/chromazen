@@ -169,6 +169,7 @@ impl LoadedBrushPreset {
 pub(crate) struct BrushSummary {
     pub(crate) id: String,
     pub(crate) name: String,
+    pub(crate) deletable: bool,
     pub(crate) preview: BrushPreviewSpec,
 }
 
@@ -185,6 +186,7 @@ impl BrushSummary {
         Self {
             id,
             name: preset.name,
+            deletable: stamp_path.is_some(),
             preview: BrushPreviewSpec {
                 stamp_path,
                 size: preset.size,
@@ -364,7 +366,7 @@ pub(super) fn discover_user_brushes(brushes_root: &Path) -> BrushCatalog {
     catalog
 }
 
-fn validate_brush_id(id: &str) -> Result<(), ConfigError> {
+pub(super) fn validate_brush_id(id: &str) -> Result<(), ConfigError> {
     let mut components = Path::new(id).components();
     if id.trim().is_empty()
         || !matches!(components.next(), Some(std::path::Component::Normal(_)))

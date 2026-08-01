@@ -6,7 +6,9 @@ use std::{
 };
 
 use atomic_write_file::AtomicWriteFile;
-use brush::{DEFAULT_BRUSH_ID, SKETCH_ID, discover_user_brushes, load_user_brush};
+use brush::{
+    DEFAULT_BRUSH_ID, SKETCH_ID, discover_user_brushes, load_user_brush, validate_brush_id,
+};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
@@ -208,6 +210,28 @@ impl ConfigStore {
 
     pub(crate) fn discover_brushes(&self) -> BrushCatalog {
         discover_user_brushes(&self.brushes_path())
+    }
+
+    #[allow(dead_code, reason = "connected to the brush context menu next")]
+    pub(crate) fn delete_brush(&self, id: &str) -> Result<(), ConfigError> {
+        validate_brush_id(id)?;
+        let path = self.brushes_path().join(id);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(ConfigError::new(format!(
+                    "brush {id:?} is bundled or is not installed"
+                )));
+            }
+            Err(error) => return Err(ConfigError::io("inspect", &path, error)),
+        };
+        if !metadata.file_type().is_dir() {
+            return Err(ConfigError::new(format!(
+                "brush path {} is not a removable preset directory",
+                path.display()
+            )));
+        }
+        fs::remove_dir_all(&path).map_err(|error| ConfigError::io("delete brush", &path, error))
     }
 
     pub(crate) fn load_app_config(&self) -> Result<AppConfig, ConfigError> {
@@ -439,6 +463,45 @@ mod tests {
         assert_eq!(sketch.preset.pressure.opacity_gamma, 2.4);
         assert!(charcoal.stamp_image.is_none());
         assert!(sketch.stamp_image.is_none());
+    }
+
+    #[test]
+    fn only_installed_brushes_can_be_deleted() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+        write_test_brush(&store, "pencil", "name = \"Pencil\"\nstamp = \"tip.png\"\n");
+
+        let catalog = store.discover_brushes();
+        assert!(
+            !catalog
+                .brushes
+                .iter()
+                .find(|brush| brush.id == "charcoal")
+                .expect("bundled brush")
+                .deletable
+        );
+        assert!(
+            catalog
+                .brushes
+                .iter()
+                .find(|brush| brush.id == "pencil")
+                .expect("installed brush")
+                .deletable
+        );
+
+        store
+            .delete_brush("pencil")
+            .expect("delete installed brush");
+        assert!(!store.brushes_path().join("pencil").exists());
+        assert!(store.delete_brush("charcoal").is_err());
+    }
+
+    #[test]
+    fn delete_brush_rejects_unsafe_ids() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+
+        assert!(store.delete_brush("../outside").is_err());
     }
 
     #[test]
