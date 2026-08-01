@@ -75,6 +75,17 @@ and Smudge selections are stored as `eraser_brush` and `smudge_brush`. The
 preset's `stamp` path is resolved relative to `brush.toml`; invalid presets
 fall back to the bundled charcoal brush.
 
+Photoshop `.abr` files can be imported from **Import Photoshop Brushes…** at
+the bottom of the brush library. Importing is a one-time conversion into the
+same native `brush.toml` and `tip.png` layout, so ABR parsing never affects
+painting or startup performance. Chromazen imports sampled tips from ABR
+versions 1, 2, 6, and 10, including soft alpha, rectangular tip shape, legacy
+names and spacing, PackBits compression, and 8- or 16-bit modern tips. Modern
+packs whose names live only in Photoshop descriptor metadata use the ABR file
+name plus an index. Computed tips and Photoshop-only dynamics such as dual
+brushes, textures, scattering, and color dynamics are skipped or replaced by
+Chromazen's pressure and spacing defaults.
+
 Controls:
 
 - Left drag: use the selected tool on the selected paint layer
@@ -93,6 +104,8 @@ Controls:
 - `Shift-Tab`: cycle through Brush, Eraser, and Smudge
 - Click an inactive tool button to select it; click the active tool again to
   open the shared floating brush library. Each tool remembers its own brush.
+- Use **Import Photoshop Brushes…** at the bottom of that library to import one
+  or more `.abr` files; the first imported brush is selected automatically.
 - `Tab`: show or hide the sidebar
 - Hold `Shift` and left-drag vertically on the canvas to resize the brush; drag
   up to increase its size or down to decrease it

@@ -263,6 +263,21 @@ mod tests {
     }
 
     #[test]
+    fn oversized_tip_is_scaled_to_native_limit() {
+        let brush = AbrBrush {
+            name: None,
+            width: MAX_IMPORTED_STAMP_DIMENSION + 1,
+            height: 1,
+            mask: vec![255; (MAX_IMPORTED_STAMP_DIMENSION + 1) as usize],
+            spacing_percent: None,
+        };
+
+        let image = stamp_image(&brush).expect("scaled stamp");
+
+        assert_eq!(image.dimensions(), (MAX_IMPORTED_STAMP_DIMENSION, 1));
+    }
+
+    #[test]
     fn slug_is_safe_and_bounded() {
         assert_eq!(slug("  My Ink / 02  "), "my-ink-02");
         assert_eq!(slug("画筆"), "abr-imported-brush");

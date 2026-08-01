@@ -437,6 +437,15 @@ mod tests {
     }
 
     #[test]
+    fn parses_subversion_two_16_bit_sample() {
+        let abr = modern_abr(2, modern_block_with_prefix(301, 1, 1, 16, 0, &[0, 128]));
+
+        let parsed = parse_abr(&abr).expect("modern 16-bit ABR");
+
+        assert_eq!(parsed.brushes[0].mask, vec![128]);
+    }
+
+    #[test]
     fn parses_packbits_rows() {
         // Two row lengths followed by one repeated row and one literal row.
         let encoded = [0, 2, 0, 4, 0xfe, 7, 2, 1, 2, 3];
@@ -505,7 +514,18 @@ mod tests {
     }
 
     fn modern_block(height: i32, width: i32, depth: u16, compression: u8, data: &[u8]) -> Vec<u8> {
-        let mut payload = vec![0; 47];
+        modern_block_with_prefix(47, height, width, depth, compression, data)
+    }
+
+    fn modern_block_with_prefix(
+        prefix_size: usize,
+        height: i32,
+        width: i32,
+        depth: u16,
+        compression: u8,
+        data: &[u8],
+    ) -> Vec<u8> {
+        let mut payload = vec![0; prefix_size];
         add_bounds(&mut payload, height, width);
         payload.extend_from_slice(&depth.to_be_bytes());
         payload.push(compression);
