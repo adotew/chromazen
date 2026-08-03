@@ -655,15 +655,6 @@ impl GuiLayer {
                                     }
                                     ui.close();
                                 }
-                                if brush.deletable {
-                                    response.context_menu(|ui| {
-                                        if ui.button("Delete Brush").clicked() {
-                                            self.commands
-                                                .push(AppCommand::DeleteBrush(brush.id.clone()));
-                                            ui.close();
-                                        }
-                                    });
-                                }
                                 ui.add_space(4.0);
                             }
                         });
@@ -1251,16 +1242,6 @@ impl GuiLayer {
 
     pub(crate) fn remember_tool_size(&mut self, tool: PaintTool) {
         self.tool_sizes[tool_index(tool)] = self.brush.size;
-    }
-
-    pub(crate) fn replace_deleted_brush(&mut self, deleted_id: &str, replacement_id: &str) {
-        for selected_id in &mut self.tool_brushes {
-            if selected_id == deleted_id {
-                *selected_id = replacement_id.to_owned();
-            }
-        }
-        self.brush_previews.retain(|(id, _)| id != deleted_id);
-        self.failed_brush_previews.retain(|id| id != deleted_id);
     }
 
     pub(crate) fn reset_brush(&mut self) {

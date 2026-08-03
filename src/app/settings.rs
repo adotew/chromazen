@@ -17,10 +17,6 @@ pub(super) enum SettingsCommand {
         reset_size: bool,
     },
     ReloadFromDisk(PaintTool),
-    DeleteBrush {
-        id: String,
-        active_tool: PaintTool,
-    },
     OpenConfigDirectory,
 }
 
@@ -35,7 +31,6 @@ pub(super) struct PendingBrushChange {
     pub(super) reset_size: bool,
     reloaded_config: Option<AppConfig>,
     warning: Option<String>,
-    deleted_brush: Option<(String, String)>,
 }
 
 impl PendingBrushChange {
@@ -46,7 +41,6 @@ impl PendingBrushChange {
             reset_size,
             reloaded_config: None,
             warning: None,
-            deleted_brush: None,
         }
     }
 
@@ -63,23 +57,6 @@ impl PendingBrushChange {
             reset_size: false,
             reloaded_config: Some(config),
             warning,
-            deleted_brush: None,
-        }
-    }
-
-    fn delete(
-        tool: PaintTool,
-        brush: LoadedBrushPreset,
-        deleted_id: String,
-        replacement_id: String,
-    ) -> Self {
-        Self {
-            brush,
-            tool,
-            reset_size: false,
-            reloaded_config: None,
-            warning: None,
-            deleted_brush: Some((deleted_id, replacement_id)),
         }
     }
 }
@@ -88,7 +65,6 @@ pub(super) struct CompletedBrushChange {
     pub(super) catalog: BrushCatalog,
     pub(super) reloaded: bool,
     pub(super) warnings: Vec<String>,
-    pub(super) deleted_brush: Option<(String, String)>,
 }
 
 pub(super) struct SettingsController {
@@ -240,30 +216,6 @@ impl SettingsController {
                     Err(error) => Some(command_error("brush preset action failed", error)),
                 }
             }
-            SettingsCommand::DeleteBrush { id, active_tool } => {
-                if let Err(error) = self.store().and_then(|store| store.delete_brush(&id)) {
-                    return Some(command_error("failed to delete brush", error));
-                }
-
-                let replacement_id = LoadedBrushPreset::bundled_charcoal().id;
-                replace_deleted_brush(&mut self.config, &id, &replacement_id);
-                let selected_id = self.config.brush_for_tool(active_tool).to_owned();
-                match self
-                    .store()
-                    .and_then(|store| store.load_brush(&selected_id))
-                {
-                    Ok(brush) => {
-                        self.pending_brush_change = Some(PendingBrushChange::delete(
-                            active_tool,
-                            brush,
-                            id,
-                            replacement_id,
-                        ));
-                        Some(SettingsEffect::Success("Deleted brush preset".to_owned()))
-                    }
-                    Err(error) => Some(command_error("failed to refresh brushes", error)),
-                }
-            }
             SettingsCommand::OpenConfigDirectory => {
                 let result = self.store().and_then(ConfigStore::open_config_directory);
                 Some(match result {
@@ -292,7 +244,6 @@ impl SettingsController {
             reset_size: _,
             reloaded_config,
             warning,
-            deleted_brush,
         } = change;
         let catalog = self
             .store
@@ -319,7 +270,6 @@ impl SettingsController {
             catalog,
             reloaded,
             warnings,
-            deleted_brush,
         }
     }
 
@@ -337,14 +287,6 @@ fn normalize_active_brush(config: &mut AppConfig, brush: &LoadedBrushPreset) {
     config.active_brush.clone_from(&brush.id);
 }
 
-fn replace_deleted_brush(config: &mut AppConfig, deleted_id: &str, replacement_id: &str) {
-    for tool in [PaintTool::Brush, PaintTool::Eraser, PaintTool::Smudge] {
-        if config.brush_for_tool(tool) == deleted_id {
-            config.set_brush_for_tool(tool, replacement_id.to_owned());
-        }
-    }
-}
-
 fn append_message(existing: &mut Option<String>, message: String) {
     *existing = Some(match existing.take() {
         Some(existing) => format!("{existing}\n{message}"),
@@ -355,22 +297,6 @@ fn append_message(existing: &mut Option<String>, message: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn deleting_a_selected_brush_replaces_every_tool_assignment() {
-        let mut config = AppConfig {
-            active_brush: "pencil".to_owned(),
-            eraser_brush: "pencil".to_owned(),
-            smudge_brush: "charcoal".to_owned(),
-            ..AppConfig::default()
-        };
-
-        replace_deleted_brush(&mut config, "pencil", "charcoal");
-
-        assert_eq!(config.active_brush, "charcoal");
-        assert_eq!(config.eraser_brush, "charcoal");
-        assert_eq!(config.smudge_brush, "charcoal");
-    }
 
     #[test]
     fn reload_normalizes_missing_brush_to_effective_fallback() {

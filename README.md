@@ -107,8 +107,6 @@ Controls:
   open the shared floating brush library. Each tool remembers its own brush.
 - Use **Import Photoshop Brushes…** at the bottom of that library to import one
   or more `.abr` files; the first imported brush is selected automatically.
-- Right-click an installed or imported brush and choose **Delete Brush** to
-  remove it. Bundled brushes cannot be deleted.
 - `Tab`: show or hide the sidebar
 - Hold `Shift` and left-drag vertically on the canvas to resize the brush; drag
   up to increase its size or down to decrease it
