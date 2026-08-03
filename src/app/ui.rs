@@ -756,31 +756,6 @@ impl GuiLayer {
                                         self.commands.push(AppCommand::AddLayer);
                                     }
 
-                                    let selected_index = layers
-                                        .layers
-                                        .iter()
-                                        .position(|layer| layer.id == layers.selection);
-                                    let can_delete = layers.layers.len() > 1
-                                        && selected_index.is_some_and(|index| {
-                                            index != 0 || !layers.layers[1].clipped
-                                        });
-                                    let delete_icon = egui::Image::new(egui::include_image!(
-                                        "../../assets/icons/trash-2.svg"
-                                    ))
-                                    .fit_to_exact_size(egui::Vec2::splat(16.0))
-                                    .alt_text("Delete layer");
-                                    let delete_button = egui::Button::image(delete_icon)
-                                        .image_tint_follows_text_color(true)
-                                        .min_size(egui::Vec2::splat(28.0))
-                                        .corner_radius(8);
-                                    if ui
-                                        .add_enabled(can_delete, delete_button)
-                                        .on_hover_text("Delete layer")
-                                        .clicked()
-                                    {
-                                        self.commands.push(AppCommand::DeleteSelectedLayer);
-                                    }
-
                                     if let Some(layer) = layers
                                         .layers
                                         .iter()
@@ -917,6 +892,8 @@ impl GuiLayer {
                                             .layers
                                             .get(layer_index + 1)
                                             .is_some_and(|upper| upper.clipped);
+                                    let can_delete = layers.layers.len() > 1
+                                        && (layer_index != 0 || !layers.layers[1].clipped);
                                     row.row.context_menu(|ui| {
                                         if ui.button("Rename").clicked() {
                                             start_rename = true;
@@ -949,6 +926,20 @@ impl GuiLayer {
                                                 id: layer.id,
                                                 clipped: !layer.clipped,
                                             });
+                                            ui.close();
+                                        }
+                                        ui.separator();
+                                        if ui
+                                            .add_enabled(
+                                                can_delete,
+                                                egui::Button::new(
+                                                    egui::RichText::new("Delete")
+                                                        .color(egui::Color32::LIGHT_RED),
+                                                ),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.commands.push(AppCommand::DeleteSelectedLayer);
                                             ui.close();
                                         }
                                     });
