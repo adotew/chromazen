@@ -1,9 +1,4 @@
-use std::{collections::HashMap, error::Error, fmt};
-
-use ag_psd::{
-    descriptor::{Descriptor, DescriptorValue, read_version_and_descriptor},
-    reader::PsdReader,
-};
+use std::{error::Error, fmt};
 
 const MAX_BRUSH_COUNT: usize = 2_048;
 const MAX_BRUSH_DIMENSION: u32 = 16_384;
@@ -12,7 +7,6 @@ const MAX_BRUSH_PIXELS: usize = 64 * 1024 * 1024;
 #[derive(Debug, PartialEq)]
 pub(crate) struct AbrBrush {
     pub(crate) name: Option<String>,
-    pub(super) sample_id: Option<String>,
     pub(crate) width: u32,
     pub(crate) height: u32,
     /// One byte of coverage per pixel, from transparent (0) to opaque (255).
@@ -126,7 +120,6 @@ fn parse_legacy_sample(input: &mut Reader<'_>, version: u16) -> Result<AbrBrush,
     debug_assert_eq!(mask.len(), pixel_count);
     Ok(AbrBrush {
         name,
-        sample_id: None,
         width,
         height,
         mask,
@@ -136,8 +129,6 @@ fn parse_legacy_sample(input: &mut Reader<'_>, version: u16) -> Result<AbrBrush,
 
 fn parse_tagged(input: &mut Reader<'_>, subversion: u16) -> Result<ParsedAbr, AbrError> {
     let mut parsed = None;
-    let mut metadata = Vec::new();
-    let mut descriptor_warning = None;
     while input.remaining() >= 12 {
         let signature = input.read_array::<4>()?;
         if &signature != b"8BIM" {
@@ -146,13 +137,8 @@ fn parse_tagged(input: &mut Reader<'_>, subversion: u16) -> Result<ParsedAbr, Ab
         let tag = input.read_array::<4>()?;
         let section_size = input.read_u32()? as usize;
         let mut section = input.take(section_size)?;
-        match &tag {
-            b"samp" => parsed = Some(parse_sample_section(&mut section, subversion)?),
-            b"desc" => match parse_descriptor_metadata(section.remaining_bytes()) {
-                Ok(found) => metadata = found,
-                Err(error) => descriptor_warning = Some(error.to_string()),
-            },
-            _ => {}
+        if &tag == b"samp" {
+            parsed = Some(parse_sample_section(&mut section, subversion)?);
         }
         let padding = (4 - section_size % 4) % 4;
         if input.remaining() >= padding {
@@ -165,15 +151,7 @@ fn parse_tagged(input: &mut Reader<'_>, subversion: u16) -> Result<ParsedAbr, Ab
         return Err(AbrError::new("truncated ABR section header"));
     }
 
-    let mut parsed =
-        parsed.ok_or_else(|| AbrError::new("ABR does not contain a sampled-brush section"))?;
-    apply_descriptor_metadata(&mut parsed.brushes, metadata);
-    if let Some(warning) = descriptor_warning {
-        parsed.warnings.push(format!(
-            "Brush spacing metadata could not be decoded: {warning}"
-        ));
-    }
-    Ok(parsed)
+    parsed.ok_or_else(|| AbrError::new("ABR does not contain a sampled-brush section"))
 }
 
 fn parse_sample_section(section: &mut Reader<'_>, subversion: u16) -> Result<ParsedAbr, AbrError> {
@@ -209,13 +187,7 @@ fn parse_sample_section(section: &mut Reader<'_>, subversion: u16) -> Result<Par
 }
 
 fn parse_tagged_sample(input: &mut Reader<'_>, subversion: u16) -> Result<AbrBrush, AbrError> {
-    let prefix_size = if subversion == 1 { 47 } else { 301 };
-    let id_length = input.read_u8()? as usize;
-    if id_length + 1 > prefix_size {
-        return Err(AbrError::new("ABR brush sample ID is too long"));
-    }
-    let sample_id = String::from_utf8_lossy(input.read_bytes(id_length)?).into_owned();
-    input.skip(prefix_size - id_length - 1)?;
+    input.skip(if subversion == 1 { 47 } else { 301 })?;
     let top = input.read_i32()?;
     let left = input.read_i32()?;
     let bottom = input.read_i32()?;
@@ -247,97 +219,11 @@ fn parse_tagged_sample(input: &mut Reader<'_>, subversion: u16) -> Result<AbrBru
 
     Ok(AbrBrush {
         name: None,
-        sample_id: (!sample_id.is_empty()).then_some(sample_id),
         width,
         height,
         mask,
-        // Modern spacing lives in the descriptor section, which is deliberately
-        // optional for the first compatibility tier.
         spacing_percent: None,
     })
-}
-
-#[derive(Debug)]
-struct AbrBrushMetadata {
-    sample_id: String,
-    name: Option<String>,
-    spacing_percent: Option<f64>,
-}
-
-fn parse_descriptor_metadata(bytes: &[u8]) -> Result<Vec<AbrBrushMetadata>, AbrError> {
-    let mut reader = PsdReader::new(bytes, None, None);
-    let root = read_version_and_descriptor(&mut reader)
-        .map_err(|error| AbrError::new(format!("invalid ABR descriptor: {error}")))?;
-    let Some(DescriptorValue::List(brushes)) = root.get("Brsh") else {
-        return Ok(Vec::new());
-    };
-
-    Ok(brushes
-        .iter()
-        .filter_map(|value| {
-            let DescriptorValue::Descriptor(brush) = value else {
-                return None;
-            };
-            descriptor_brush_metadata(brush)
-        })
-        .collect())
-}
-
-fn descriptor_brush_metadata(brush: &Descriptor) -> Option<AbrBrushMetadata> {
-    let DescriptorValue::Descriptor(shape) = brush.get("Brsh")? else {
-        return None;
-    };
-    let DescriptorValue::Text(sample_id) = shape.get("sampledData")? else {
-        return None;
-    };
-    let name = match brush.get("Nm  ") {
-        Some(DescriptorValue::Text(name)) if !name.trim().is_empty() => {
-            Some(name.trim().to_owned())
-        }
-        _ => match shape.get("Nm  ") {
-            Some(DescriptorValue::Text(name)) if !name.trim().is_empty() => {
-                Some(name.trim().to_owned())
-            }
-            _ => None,
-        },
-    };
-    let spacing_percent = match shape.get("Spcn") {
-        Some(DescriptorValue::UnitDouble(spacing))
-            if spacing.units == "Percent" && spacing.value.is_finite() && spacing.value >= 0.0 =>
-        {
-            Some(spacing.value)
-        }
-        Some(DescriptorValue::Double(spacing)) if spacing.is_finite() && *spacing >= 0.0 => {
-            Some(*spacing)
-        }
-        _ => None,
-    };
-    Some(AbrBrushMetadata {
-        sample_id: sample_id.clone(),
-        name,
-        spacing_percent,
-    })
-}
-
-fn apply_descriptor_metadata(brushes: &mut [AbrBrush], metadata: Vec<AbrBrushMetadata>) {
-    let metadata = metadata
-        .into_iter()
-        .map(|metadata| (metadata.sample_id.clone(), metadata))
-        .collect::<HashMap<_, _>>();
-    for brush in brushes {
-        let Some(sample_id) = brush.sample_id.as_deref() else {
-            continue;
-        };
-        let Some(metadata) = metadata.get(sample_id) else {
-            continue;
-        };
-        if metadata.name.is_some() {
-            brush.name.clone_from(&metadata.name);
-        }
-        if let Some(spacing) = metadata.spacing_percent {
-            brush.spacing_percent = Some(spacing.clamp(0.0, f32::MAX as f64) as f32);
-        }
-    }
 }
 
 fn decode_mask(
@@ -538,19 +424,10 @@ impl<'a> Reader<'a> {
     fn take(&mut self, count: usize) -> Result<Reader<'a>, AbrError> {
         self.read_bytes(count).map(Reader::new)
     }
-
-    fn remaining_bytes(self) -> &'a [u8] {
-        &self.bytes[self.position..]
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use ag_psd::{
-        descriptor::{UnitDoubleValue, write_version_and_descriptor},
-        writer::{create_writer_default, get_writer_buffer},
-    };
-
     use super::*;
 
     #[test]
@@ -586,23 +463,22 @@ mod tests {
     }
 
     #[test]
-    fn applies_modern_descriptor_name_and_spacing() {
-        let mut sample = modern_block(1, 1, 8, 0, &[255]);
-        sample[4] = 6;
-        sample[5..11].copy_from_slice(b"tip-id");
-        let mut abr = modern_abr(1, sample);
-        let descriptor = brush_descriptor("tip-id", "Fine Ink", 3.0);
+    fn ignores_descriptor_sections() {
+        let mut abr = modern_abr(1, modern_block(1, 1, 8, 0, &[255]));
+        let descriptor = [
+            0, 0, 0, 16, // descriptor version
+            0, 0, 0, 0, // empty Unicode class name
+            0xff, 0xff, 0xff, 0xff, // invalid signed class ID length
+        ];
         abr.extend_from_slice(b"8BIMdesc");
         abr.extend_from_slice(&(descriptor.len() as u32).to_be_bytes());
         abr.extend_from_slice(&descriptor);
-        while !abr.len().is_multiple_of(4) {
-            abr.push(0);
-        }
 
-        let parsed = parse_abr(&abr).expect("ABR descriptors");
+        let parsed = parse_abr(&abr).expect("sampled brush with ignored descriptor");
 
-        assert_eq!(parsed.brushes[0].name.as_deref(), Some("Fine Ink"));
-        assert_eq!(parsed.brushes[0].spacing_percent, Some(3.0));
+        assert_eq!(parsed.brushes.len(), 1);
+        assert_eq!(parsed.brushes[0].name, None);
+        assert_eq!(parsed.brushes[0].spacing_percent, None);
     }
 
     #[test]
@@ -661,29 +537,6 @@ mod tests {
     fn rejects_truncated_and_unknown_files() {
         assert!(parse_abr(&[0, 6, 0]).is_err());
         assert!(parse_abr(&[0, 9, 0, 1]).is_err());
-    }
-
-    fn brush_descriptor(sample_id: &str, name: &str, spacing: f64) -> Vec<u8> {
-        let mut shape = Descriptor::new("sampledBrush", "sampledBrush");
-        shape.set("sampledData", DescriptorValue::Text(sample_id.to_owned()));
-        shape.set(
-            "Spcn",
-            DescriptorValue::UnitDouble(UnitDoubleValue {
-                units: "Percent".to_owned(),
-                value: spacing,
-            }),
-        );
-        let mut brush = Descriptor::new("brushPreset", "brushPreset");
-        brush.set("Nm  ", DescriptorValue::Text(name.to_owned()));
-        brush.set("Brsh", DescriptorValue::Descriptor(shape));
-        let mut root = Descriptor::new("", "null");
-        root.set(
-            "Brsh",
-            DescriptorValue::List(vec![DescriptorValue::Descriptor(brush)]),
-        );
-        let mut writer = create_writer_default();
-        write_version_and_descriptor(&mut writer, &root);
-        get_writer_buffer(&writer)
     }
 
     fn modern_abr(subversion: u16, section: Vec<u8>) -> Vec<u8> {

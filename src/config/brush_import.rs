@@ -268,7 +268,6 @@ mod tests {
         let brush_path = temp.path().join("brush");
         let brush = AbrBrush {
             name: None,
-            sample_id: None,
             width: 1,
             height: 1,
             mask: vec![255],
@@ -286,7 +285,6 @@ mod tests {
     fn oversized_tip_is_scaled_to_native_limit() {
         let brush = AbrBrush {
             name: None,
-            sample_id: None,
             width: MAX_IMPORTED_STAMP_DIMENSION + 1,
             height: 1,
             mask: vec![255; (MAX_IMPORTED_STAMP_DIMENSION + 1) as usize],

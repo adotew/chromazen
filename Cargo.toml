@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ag-psd = "0.1.0"
 atomic-write-file = "0.3.0"
 bytemuck = { version = "1.16", features = ["derive"] }
 directories = "6.0.0"

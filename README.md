@@ -79,11 +79,10 @@ Photoshop `.abr` files can be imported from **Import Photoshop Brushes…** at
 the bottom of the brush library. Importing is a one-time conversion into the
 same native `brush.toml` and `tip.png` layout, so ABR parsing never affects
 painting or startup performance. Chromazen imports sampled tips from ABR
-versions 1, 2, 6, 7, 9, and 10, including soft alpha, rectangular tip shape, legacy
-names and spacing, PackBits compression, and 8- or 16-bit modern tips. Modern
-brush names and spacing are recovered from Photoshop descriptor metadata when
-present; otherwise imports use the file name plus an index and 5% spacing.
-Computed tips and Photoshop-only dynamics such as dual
+versions 1, 2, 6, 7, 9, and 10, including soft alpha, rectangular tip shape,
+legacy names and spacing, PackBits compression, and 8- or 16-bit modern tips.
+Modern imports use the file name plus an index and 5% spacing. Computed tips and
+Photoshop-only dynamics such as dual
 brushes, textures, scattering, and color dynamics are skipped or replaced by
 Chromazen's pressure and spacing defaults.
 
