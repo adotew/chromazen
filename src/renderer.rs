@@ -381,6 +381,7 @@ impl PaintRenderer {
             width: self.document_size[0],
             height: self.document_size[1],
             background: rgb8(self.background_color),
+            brush_color: [170, 187, 204, 255],
             selected_layer: self.selection.0,
             layers: self
                 .layers

@@ -33,6 +33,7 @@ pub(super) enum SaveStatus {
 struct SaveVersions {
     paint: DocumentVersions,
     references: ReferenceVersions,
+    brush_color: [u8; 4],
 }
 
 struct SaveCompletion {
@@ -54,6 +55,7 @@ struct ArtworkSession {
 pub(super) struct AutosaveController {
     store: Option<ArtworkStore>,
     session: Option<ArtworkSession>,
+    brush_color: [u8; 4],
     completion_sender: mpsc::Sender<SaveCompletion>,
     completion_receiver: mpsc::Receiver<SaveCompletion>,
     wake: WakeCallback,
@@ -65,13 +67,15 @@ impl AutosaveController {
         Self {
             store,
             session: None,
+            brush_color: [170, 187, 204, 255],
             completion_sender,
             completion_receiver,
             wake,
         }
     }
 
-    pub(super) fn begin_new(&mut self, id: ArtworkId, title: String) {
+    pub(super) fn begin_new(&mut self, id: ArtworkId, title: String, brush_color: [u8; 4]) {
+        self.brush_color = brush_color;
         self.session = Some(ArtworkSession {
             id,
             title,
@@ -85,6 +89,7 @@ impl AutosaveController {
                     generation: 0,
                     assets: Vec::new(),
                 },
+                brush_color,
             },
             in_flight: None,
             dirty_since: Some(Instant::now()),
@@ -99,13 +104,16 @@ impl AutosaveController {
         title: String,
         versions: DocumentVersions,
         reference_versions: ReferenceVersions,
+        brush_color: [u8; 4],
     ) {
+        self.brush_color = brush_color;
         self.session = Some(ArtworkSession {
             id,
             title,
             saved_versions: SaveVersions {
                 paint: versions,
                 references: reference_versions,
+                brush_color,
             },
             in_flight: None,
             dirty_since: None,
@@ -116,6 +124,10 @@ impl AutosaveController {
 
     pub(super) fn clear(&mut self) {
         self.session = None;
+    }
+
+    pub(super) fn set_brush_color(&mut self, color: [u8; 4]) {
+        self.brush_color = color;
     }
 
     pub(super) fn artwork_id(&self) -> Option<&ArtworkId> {
@@ -136,7 +148,7 @@ impl AutosaveController {
         if session.in_flight.is_some() {
             return SaveStatus::Saving;
         }
-        if current_versions(paint, references) != session.saved_versions {
+        if current_versions(paint, references, self.brush_color) != session.saved_versions {
             SaveStatus::Waiting
         } else {
             SaveStatus::Clean
@@ -167,7 +179,7 @@ impl AutosaveController {
         let Some(session) = self.session.as_mut() else {
             return changed;
         };
-        let current = current_versions(paint, references);
+        let current = current_versions(paint, references, self.brush_color);
         let target = session
             .in_flight
             .as_ref()
@@ -212,6 +224,7 @@ impl AutosaveController {
             .ok_or_else(|| "The artwork data directory is unavailable".to_owned())?;
         let session = self.session.as_mut().expect("save requires a session");
         let mut document = paint.document_manifest();
+        document.brush_color = self.brush_color;
         document.references = references.manifest();
         let reference_images: Vec<_> = references
             .images()
@@ -270,7 +283,9 @@ impl AutosaveController {
                 Ok(()) => {
                     session.saved_versions = completion.versions;
                     session.error = None;
-                    if current_versions(paint, references) != session.saved_versions {
+                    if current_versions(paint, references, self.brush_color)
+                        != session.saved_versions
+                    {
                         session.dirty_since = Some(Instant::now());
                     }
                 }
@@ -285,10 +300,15 @@ impl AutosaveController {
     }
 }
 
-fn current_versions(paint: &PaintRenderer, references: &ReferenceBoard) -> SaveVersions {
+fn current_versions(
+    paint: &PaintRenderer,
+    references: &ReferenceBoard,
+    brush_color: [u8; 4],
+) -> SaveVersions {
     SaveVersions {
         paint: paint.document_versions(),
         references: references.versions(),
+        brush_color,
     }
 }
 
@@ -434,6 +454,7 @@ mod tests {
             width: size.0,
             height: size.1,
             background,
+            brush_color: [170, 187, 204, 255],
             selected_layer: 1,
             layers: vec![crate::artwork::LayerManifest {
                 id: 1,

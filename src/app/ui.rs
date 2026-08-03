@@ -582,7 +582,10 @@ impl GuiLayer {
     }
 
     fn show_brush_controls(&mut self, ui: &mut egui::Ui) {
-        color_picker::show(ui, &mut self.brush.color);
+        if color_picker::show(ui, &mut self.brush.color) {
+            self.commands
+                .push(AppCommand::SetBrushColor(self.brush.color.to_array()));
+        }
         ui.add_space(8.0);
     }
 
@@ -1228,6 +1231,11 @@ impl GuiLayer {
 
     pub(crate) fn remember_tool_size(&mut self, tool: PaintTool) {
         self.tool_sizes[tool_index(tool)] = self.brush.size;
+    }
+
+    pub(crate) fn set_brush_color(&mut self, color: [u8; 4]) {
+        self.brush.color =
+            egui::Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3]);
     }
 
     pub(crate) fn reset_brush(&mut self) {

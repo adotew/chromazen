@@ -4,6 +4,10 @@ pub(crate) const PROJECT_SCHEMA_VERSION: u32 = 1;
 pub(crate) const DOCUMENT_SCHEMA_VERSION: u32 = 3;
 const LEGACY_DOCUMENT_SCHEMA_VERSION: u32 = 2;
 
+fn default_brush_color() -> [u8; 4] {
+    [170, 187, 204, 255]
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ProjectManifest {
@@ -21,6 +25,8 @@ pub(crate) struct DocumentManifest {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) background: [u8; 3],
+    #[serde(default = "default_brush_color")]
+    pub(crate) brush_color: [u8; 4],
     pub(crate) selected_layer: u64,
     pub(crate) layers: Vec<LayerManifest>,
     #[serde(default)]
@@ -151,6 +157,7 @@ mod tests {
             width: 4000,
             height: 4000,
             background: [255; 3],
+            brush_color: default_brush_color(),
             selected_layer: 1,
             layers: vec![LayerManifest {
                 id: 1,
@@ -188,6 +195,14 @@ mod tests {
         let mut document = document();
         document.layers[0].opacity = 101;
         assert!(document.validate().is_err());
+    }
+
+    #[test]
+    fn brush_color_defaults_for_existing_documents() {
+        let source = toml::to_string(&document()).unwrap();
+        let without_color = source.replace("brush_color = [170, 187, 204, 255]\n", "");
+        let decoded: DocumentManifest = toml::from_str(&without_color).unwrap();
+        assert_eq!(decoded.brush_color, default_brush_color());
     }
 
     #[test]

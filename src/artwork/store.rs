@@ -491,6 +491,7 @@ mod tests {
                 width: 1,
                 height: 1,
                 background: [255; 3],
+                brush_color: [170, 187, 204, 255],
                 selected_layer: 1,
                 layers: vec![LayerManifest {
                     id: 1,

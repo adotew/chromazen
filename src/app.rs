@@ -69,6 +69,7 @@ struct PendingReferenceLoad {
     id: crate::artwork::ArtworkId,
     title: String,
     paint_versions: DocumentVersions,
+    brush_color: [u8; 4],
 }
 
 struct ImportControllers {
@@ -611,6 +612,9 @@ impl App {
                 AppCommand::DeleteReference(id) => {
                     self.references.remove(id);
                 }
+                AppCommand::SetBrushColor(color) => {
+                    self.autosave.set_brush_color(color);
+                }
                 AppCommand::SetBackgroundColor(color) => {
                     if let Some(paint) = self.paint.as_mut() {
                         paint.set_background_color(color);
@@ -819,6 +823,7 @@ impl App {
                 pending.title,
                 pending.paint_versions,
                 self.references.versions(),
+                pending.brush_color,
             );
             if !completion.warnings.is_empty()
                 && let Some(gui) = self.gui.as_mut()
@@ -867,7 +872,13 @@ impl App {
         let id = crate::artwork::ArtworkId::new();
         self.references.clear();
         self.pending_reference_load = None;
-        self.autosave.begin_new(id, "Untitled".to_owned());
+        let brush_color = self
+            .gui
+            .as_ref()
+            .map(|gui| gui.brush.color.to_array())
+            .unwrap_or([170, 187, 204, 255]);
+        self.autosave
+            .begin_new(id, "Untitled".to_owned(), brush_color);
         self.screen = AppScreen::Editor;
         self.pending_gallery = false;
         self.pending_new_artwork = None;
@@ -904,6 +915,9 @@ impl App {
             return;
         }
         let versions = paint.document_versions();
+        if let Some(gui) = self.gui.as_mut() {
+            gui.set_brush_color(opened.document.brush_color);
+        }
         self.references.clear();
         self.autosave.clear();
         self.screen = AppScreen::Editor;
@@ -919,12 +933,14 @@ impl App {
                 opened.title,
                 versions,
                 self.references.versions(),
+                opened.document.brush_color,
             );
         } else {
             self.pending_reference_load = Some(PendingReferenceLoad {
                 id: opened.id.clone(),
                 title: opened.title,
                 paint_versions: versions,
+                brush_color: opened.document.brush_color,
             });
             self.reference_load
                 .start(opened.id, opened.reference_sources);
