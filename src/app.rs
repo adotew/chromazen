@@ -629,6 +629,9 @@ impl App {
                     }]);
                 }
                 AppCommand::ImportBrushes => {
+                    if self.screen != AppScreen::Editor {
+                        continue;
+                    }
                     let paths = choose_abr_paths();
                     self.brush_import.start(self.input.tool(), paths);
                 }

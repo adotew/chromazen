@@ -3,6 +3,7 @@ use std::{error::Error, fmt};
 const MAX_BRUSH_COUNT: usize = 2_048;
 const MAX_BRUSH_DIMENSION: u32 = 16_384;
 const MAX_BRUSH_PIXELS: usize = 64 * 1024 * 1024;
+const MAX_TOTAL_BRUSH_PIXELS: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct AbrBrush {
@@ -71,6 +72,7 @@ fn parse_legacy(
     }
 
     let mut parsed = ParsedAbr::default();
+    let mut decoded_pixels = 0usize;
     for index in 0..brush_count {
         let brush_type = input.read_u16()?;
         let block_size = input.read_u32()? as usize;
@@ -84,7 +86,7 @@ fn parse_legacy(
         }
 
         match parse_legacy_sample(&mut block, version) {
-            Ok(brush) => parsed.brushes.push(brush),
+            Ok(brush) => store_decoded_brush(&mut parsed, &mut decoded_pixels, brush)?,
             Err(error) => parsed
                 .warnings
                 .push(format!("Brush {} could not be decoded: {error}", index + 1)),
@@ -129,6 +131,7 @@ fn parse_legacy_sample(input: &mut Reader<'_>, version: u16) -> Result<AbrBrush,
 
 fn parse_tagged(input: &mut Reader<'_>, subversion: u16) -> Result<ParsedAbr, AbrError> {
     let mut parsed = None;
+    let mut decoded_pixels = 0usize;
     while input.remaining() >= 12 {
         let signature = input.read_array::<4>()?;
         if &signature != b"8BIM" {
@@ -138,7 +141,11 @@ fn parse_tagged(input: &mut Reader<'_>, subversion: u16) -> Result<ParsedAbr, Ab
         let section_size = input.read_u32()? as usize;
         let mut section = input.take(section_size)?;
         if &tag == b"samp" {
-            parsed = Some(parse_sample_section(&mut section, subversion)?);
+            parsed = Some(parse_sample_section(
+                &mut section,
+                subversion,
+                &mut decoded_pixels,
+            )?);
         }
         let padding = (4 - section_size % 4) % 4;
         if input.remaining() >= padding {
@@ -154,7 +161,11 @@ fn parse_tagged(input: &mut Reader<'_>, subversion: u16) -> Result<ParsedAbr, Ab
     parsed.ok_or_else(|| AbrError::new("ABR does not contain a sampled-brush section"))
 }
 
-fn parse_sample_section(section: &mut Reader<'_>, subversion: u16) -> Result<ParsedAbr, AbrError> {
+fn parse_sample_section(
+    section: &mut Reader<'_>,
+    subversion: u16,
+    decoded_pixels: &mut usize,
+) -> Result<ParsedAbr, AbrError> {
     let mut parsed = ParsedAbr::default();
     let mut index = 0usize;
     while section.remaining() >= 4 {
@@ -171,7 +182,7 @@ fn parse_sample_section(section: &mut Reader<'_>, subversion: u16) -> Result<Par
         }
         let mut block = section.take(block_size)?;
         match parse_tagged_sample(&mut block, subversion) {
-            Ok(brush) => parsed.brushes.push(brush),
+            Ok(brush) => store_decoded_brush(&mut parsed, decoded_pixels, brush)?,
             Err(error) => parsed
                 .warnings
                 .push(format!("Brush {index} could not be decoded: {error}")),
@@ -246,8 +257,7 @@ fn decode_mask(
             let source = input.read_bytes(byte_count)?;
             Ok(source
                 .chunks_exact(2)
-                // Version 6/10 sampled tips store their 16-bit values little-endian.
-                .map(|sample| (u16::from_le_bytes([sample[0], sample[1]]) >> 8) as u8)
+                .map(|sample| (u16::from_be_bytes([sample[0], sample[1]]) >> 8) as u8)
                 .collect())
         }
         (1, 1) => decode_packbits_rows(input, width, height),
@@ -355,6 +365,24 @@ fn read_ucs2_name(input: &mut Reader<'_>) -> Result<Option<String>, AbrError> {
     Ok((!name.is_empty()).then(|| name.to_owned()))
 }
 
+fn store_decoded_brush(
+    parsed: &mut ParsedAbr,
+    decoded_pixels: &mut usize,
+    brush: AbrBrush,
+) -> Result<(), AbrError> {
+    *decoded_pixels = (*decoded_pixels)
+        .checked_add(brush.mask.len())
+        .filter(|total| *total <= MAX_TOTAL_BRUSH_PIXELS)
+        .ok_or_else(|| {
+            AbrError::new(format!(
+                "decoded brush data exceeds {} MiB",
+                MAX_TOTAL_BRUSH_PIXELS / 1024 / 1024
+            ))
+        })?;
+    parsed.brushes.push(brush);
+    Ok(())
+}
+
 fn ensure_has_brushes(parsed: ParsedAbr) -> Result<ParsedAbr, AbrError> {
     if parsed.brushes.is_empty() {
         let details = parsed
@@ -455,7 +483,7 @@ mod tests {
 
     #[test]
     fn parses_subversion_two_16_bit_sample() {
-        let abr = modern_abr(2, modern_block_with_prefix(301, 1, 1, 16, 0, &[0, 128]));
+        let abr = modern_abr(2, modern_block_with_prefix(301, 1, 1, 16, 0, &[128, 0]));
 
         let parsed = parse_abr(&abr).expect("modern 16-bit ABR");
 
@@ -537,6 +565,25 @@ mod tests {
     fn rejects_truncated_and_unknown_files() {
         assert!(parse_abr(&[0, 6, 0]).is_err());
         assert!(parse_abr(&[0, 9, 0, 1]).is_err());
+    }
+
+    #[test]
+    fn rejects_cumulative_decoded_data_over_limit() {
+        let mut parsed = ParsedAbr::default();
+        let mut decoded_pixels = MAX_TOTAL_BRUSH_PIXELS;
+        let brush = AbrBrush {
+            name: None,
+            width: 1,
+            height: 1,
+            mask: vec![255],
+            spacing_percent: None,
+        };
+
+        let error = store_decoded_brush(&mut parsed, &mut decoded_pixels, brush)
+            .expect_err("decoded data over limit");
+
+        assert!(error.to_string().contains("decoded brush data exceeds"));
+        assert!(parsed.brushes.is_empty());
     }
 
     fn modern_abr(subversion: u16, section: Vec<u8>) -> Vec<u8> {

@@ -658,11 +658,6 @@ impl GuiLayer {
                                 ui.add_space(4.0);
                             }
                         });
-                    ui.separator();
-                    if ui.button("Import Photoshop Brushes…").clicked() {
-                        self.commands.push(AppCommand::ImportBrushes);
-                        ui.close();
-                    }
                 });
             if egui::Popup::is_id_open(ui.ctx(), popup_id) {
                 self.load_next_brush_preview();

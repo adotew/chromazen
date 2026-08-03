@@ -75,9 +75,9 @@ and Smudge selections are stored as `eraser_brush` and `smudge_brush`. The
 preset's `stamp` path is resolved relative to `brush.toml`; invalid presets
 fall back to the bundled charcoal brush.
 
-Photoshop `.abr` files can be imported from **Import Photoshop Brushes…** at
-the bottom of the brush library. Importing is a one-time conversion into the
-same native `brush.toml` and `tip.png` layout, so ABR parsing never affects
+On macOS and Windows, Photoshop `.abr` files can be imported from
+**File → Import Photoshop Brushes…**. Importing is a one-time conversion into
+the same native `brush.toml` and `tip.png` layout, so ABR parsing never affects
 painting or startup performance. Chromazen imports sampled tips from ABR
 versions 1, 2, 6, 7, 9, and 10, including soft alpha, rectangular tip shape,
 legacy names and spacing, PackBits compression, and 8- or 16-bit modern tips.
@@ -104,7 +104,7 @@ Controls:
 - `Shift-Tab`: cycle through Brush, Eraser, and Smudge
 - Click an inactive tool button to select it; click the active tool again to
   open the shared floating brush library. Each tool remembers its own brush.
-- Use **Import Photoshop Brushes…** at the bottom of that library to import one
+- On macOS and Windows, use **File → Import Photoshop Brushes…** to import one
   or more `.abr` files; the first imported brush is selected automatically.
 - `Tab`: show or hide the sidebar
 - Hold `Shift` and left-drag vertically on the canvas to resize the brush; drag
@@ -118,9 +118,9 @@ Controls:
 - Undo: `Command-Z` on macOS; `Control-Z` on Windows and Linux
 - Redo: `Command-Shift-Z` on macOS; `Control-Y` on Windows;
   `Control-Shift-Z` or `Control-Y` on Linux
-- On macOS and Windows, create, save, export, reference import, and gallery
-  actions are available from the native **File** menu; Undo and Redo are
-  available from **Edit**
+- On macOS and Windows, create, save, export, reference and Photoshop brush
+  import, and gallery actions are available from the native **File** menu; Undo
+  and Redo are available from **Edit**
 - Use the minimal egui panels for brush controls and adding, selecting, or
   deleting layers
 - Click a layer's eye to show or hide it; hidden selected layers cannot be painted on

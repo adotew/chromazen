@@ -9,7 +9,7 @@ use super::{
     brush::{BrushPreset, PressureConfig, SizeConfig, SpacingConfig},
 };
 
-const MAX_ABR_FILE_BYTES: u64 = 1024 * 1024 * 1024;
+const MAX_ABR_FILE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_IMPORTED_STAMP_DIMENSION: u32 = 4_096;
 const FALLBACK_SPACING_RATIO: f32 = 0.05;
 
