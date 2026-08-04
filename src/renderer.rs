@@ -488,16 +488,30 @@ impl PaintRenderer {
     }
 
     pub(crate) fn resize_canvas_centered(&mut self, size: [u32; 2]) -> Result<bool, String> {
+        let (source, destination) = centered_canvas_copy(self.document_size, size);
+        let origin = [
+            source.x as i64 - i64::from(destination[0]),
+            source.y as i64 - i64::from(destination[1]),
+        ];
+        let origin = origin.map(|value| i32::try_from(value).expect("canvas origin fits in i32"));
+        self.resize_canvas(size, origin)
+    }
+
+    pub(crate) fn resize_canvas(
+        &mut self,
+        size: [u32; 2],
+        origin: [i32; 2],
+    ) -> Result<bool, String> {
         if !self.can_replace_document() {
             return Err("the current document is busy".to_owned());
         }
         self.canvas_size_constraints().validate(size)?;
-        if size == self.document_size {
+        if size == self.document_size && origin == [0, 0] {
             return Ok(false);
         }
 
         let before_size = self.document_size;
-        let (source_rect, destination_origin) = centered_canvas_copy(before_size, size);
+        let copy = canvas_copy_for_resize(before_size, size, origin);
         let mut replacement_layers = Vec::with_capacity(self.layers.len());
         for index in 0..self.layers.len() {
             let resource_id = self.allocate_layer_resource_id();
@@ -541,33 +555,35 @@ impl PaintRenderer {
                     multiview_mask: None,
                 });
             }
-            encoder.copy_texture_to_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &source.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: source_rect.x,
-                        y: source_rect.y,
-                        z: 0,
+            if let Some(copy) = copy {
+                encoder.copy_texture_to_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &source.texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d {
+                            x: copy.source.x,
+                            y: copy.source.y,
+                            z: 0,
+                        },
+                        aspect: wgpu::TextureAspect::All,
                     },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: &destination.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: destination_origin[0],
-                        y: destination_origin[1],
-                        z: 0,
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &destination.texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d {
+                            x: copy.destination[0],
+                            y: copy.destination[1],
+                            z: 0,
+                        },
+                        aspect: wgpu::TextureAspect::All,
                     },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::Extent3d {
-                    width: source_rect.width,
-                    height: source_rect.height,
-                    depth_or_array_layers: 1,
-                },
-            );
+                    wgpu::Extent3d {
+                        width: copy.source.width,
+                        height: copy.source.height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
         }
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
 
@@ -1846,6 +1862,41 @@ impl PaintRenderer {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CanvasResizeCopy {
+    source: TextureRect,
+    destination: [u32; 2],
+}
+
+fn canvas_copy_for_resize(
+    before: [u32; 2],
+    after: [u32; 2],
+    origin: [i32; 2],
+) -> Option<CanvasResizeCopy> {
+    let old_right = i64::from(before[0]);
+    let old_bottom = i64::from(before[1]);
+    let new_left = i64::from(origin[0]);
+    let new_top = i64::from(origin[1]);
+    let new_right = new_left + i64::from(after[0]);
+    let new_bottom = new_top + i64::from(after[1]);
+    let left = new_left.max(0);
+    let top = new_top.max(0);
+    let right = new_right.min(old_right);
+    let bottom = new_bottom.min(old_bottom);
+    if right <= left || bottom <= top {
+        return None;
+    }
+    Some(CanvasResizeCopy {
+        source: TextureRect {
+            x: left as u32,
+            y: top as u32,
+            width: (right - left) as u32,
+            height: (bottom - top) as u32,
+        },
+        destination: [(left - new_left) as u32, (top - new_top) as u32],
+    })
+}
+
 fn centered_canvas_copy(before: [u32; 2], after: [u32; 2]) -> (TextureRect, [u32; 2]) {
     let width = before[0].min(after[0]);
     let height = before[1].min(after[1]);
@@ -1972,6 +2023,39 @@ fn clear_layer(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureV
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arbitrary_canvas_resize_maps_the_intersection_into_the_new_canvas() {
+        assert_eq!(
+            canvas_copy_for_resize([100, 80], [60, 50], [25, 10]),
+            Some(CanvasResizeCopy {
+                source: TextureRect {
+                    x: 25,
+                    y: 10,
+                    width: 60,
+                    height: 50,
+                },
+                destination: [0, 0],
+            })
+        );
+        assert_eq!(
+            canvas_copy_for_resize([100, 80], [140, 120], [-20, -30]),
+            Some(CanvasResizeCopy {
+                source: TextureRect {
+                    x: 0,
+                    y: 0,
+                    width: 100,
+                    height: 80,
+                },
+                destination: [20, 30],
+            })
+        );
+    }
+
+    #[test]
+    fn canvas_resize_can_create_a_blank_canvas_outside_the_old_bounds() {
+        assert_eq!(canvas_copy_for_resize([100, 80], [20, 20], [120, 90]), None);
+    }
 
     #[test]
     fn centered_canvas_growth_puts_odd_extra_pixels_on_right_and_bottom() {
