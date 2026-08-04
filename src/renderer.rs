@@ -325,24 +325,42 @@ impl PaintRenderer {
         self.view.snapshot().rotation()
     }
 
+    pub(crate) fn canvas_center_in_window(&self) -> [f32; 2] {
+        self.view
+            .snapshot()
+            .document_to_window(self.document_center())
+    }
+
     pub(crate) fn set_canvas_rotation(&mut self, radians: f32) -> bool {
-        self.view.set_rotation(radians)
+        let center = self.document_center();
+        self.view.set_rotation_around(radians, center)
     }
 
     pub(crate) fn rotate_canvas_view(&mut self, radians: f32) -> bool {
-        self.view.rotate_by(radians)
+        let center = self.document_center();
+        self.view.rotate_by_around(radians, center)
     }
 
     pub(crate) fn reset_canvas_rotation(&mut self) -> bool {
-        self.view.reset_rotation()
+        let center = self.document_center();
+        self.view.reset_rotation_around(center)
     }
 
     pub(crate) fn toggle_canvas_flip_horizontal(&mut self) {
-        self.view.toggle_flip_horizontal();
+        let center = self.document_center();
+        self.view.toggle_flip_horizontal_around(center);
     }
 
     pub(crate) fn toggle_canvas_flip_vertical(&mut self) {
-        self.view.toggle_flip_vertical();
+        let center = self.document_center();
+        self.view.toggle_flip_vertical_around(center);
+    }
+
+    fn document_center(&self) -> [f32; 2] {
+        [
+            self.document_size[0] as f32 * 0.5,
+            self.document_size[1] as f32 * 0.5,
+        ]
     }
 
     pub fn pan_by_window_delta(&mut self, delta: [f32; 2]) {

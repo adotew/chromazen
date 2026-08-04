@@ -60,6 +60,7 @@ struct BrushResizeDrag {
 
 #[derive(Debug, Clone, Copy)]
 struct RotationDrag {
+    anchor: [f32; 2],
     start_rotation: f32,
     start_pointer_angle: f32,
     snapped_to: Option<f32>,
@@ -241,8 +242,7 @@ impl PaintInputController {
                 let next = [position.x as f32, position.y as f32];
 
                 if let Some(mut drag) = self.rotation_drag {
-                    let center = paint.view_snapshot().viewport_center();
-                    let current_angle = pointer_angle(center, next);
+                    let current_angle = pointer_angle(drag.anchor, next);
                     let raw_rotation =
                         drag.start_rotation + angle_delta(current_angle, drag.start_pointer_angle);
                     let (rotation, snapped_to) = snapped_rotation(raw_rotation, drag.snapped_to);
@@ -315,10 +315,11 @@ impl PaintInputController {
             }
             WindowEvent::MouseInput { state, button, .. } => match (state, button) {
                 (ElementState::Pressed, MouseButton::Left) if self.is_rotation_key_down => {
-                    let center = paint.view_snapshot().viewport_center();
+                    let anchor = paint.canvas_center_in_window();
                     self.rotation_drag = Some(RotationDrag {
+                        anchor,
                         start_rotation: paint.canvas_rotation(),
-                        start_pointer_angle: pointer_angle(center, self.cursor_pos),
+                        start_pointer_angle: pointer_angle(anchor, self.cursor_pos),
                         snapped_to: None,
                     });
                     true

@@ -45,10 +45,6 @@ impl PaintViewSnapshot {
         self.rotation
     }
 
-    pub(crate) fn viewport_center(self) -> [f32; 2] {
-        self.viewport_center
-    }
-
     pub(crate) fn document_axes_in_window(self) -> ([f32; 2], [f32; 2]) {
         (
             orient([1.0, 0.0], self.rotation, self.flip),
@@ -150,29 +146,48 @@ impl PaintView {
         self.snapshot().window_to_document(point)
     }
 
-    pub(crate) fn set_rotation(&mut self, radians: f32) -> bool {
+    pub(crate) fn set_rotation_around(&mut self, radians: f32, anchor: [f32; 2]) -> bool {
         let radians = normalize_angle(radians);
         if (self.rotation - radians).abs() <= f32::EPSILON {
             return false;
         }
+        let anchor_in_window = self.snapshot().document_to_window(anchor);
         self.rotation = radians;
+        self.keep_anchor_at_window_point(anchor, anchor_in_window);
         true
     }
 
-    pub(crate) fn rotate_by(&mut self, radians: f32) -> bool {
-        self.set_rotation(self.rotation + radians)
+    pub(crate) fn rotate_by_around(&mut self, radians: f32, anchor: [f32; 2]) -> bool {
+        self.set_rotation_around(self.rotation + radians, anchor)
     }
 
-    pub(crate) fn reset_rotation(&mut self) -> bool {
-        self.set_rotation(0.0)
+    pub(crate) fn reset_rotation_around(&mut self, anchor: [f32; 2]) -> bool {
+        self.set_rotation_around(0.0, anchor)
     }
 
-    pub(crate) fn toggle_flip_horizontal(&mut self) {
+    pub(crate) fn toggle_flip_horizontal_around(&mut self, anchor: [f32; 2]) {
+        let anchor_in_window = self.snapshot().document_to_window(anchor);
         self.flip[0] = -self.flip[0];
+        self.keep_anchor_at_window_point(anchor, anchor_in_window);
     }
 
-    pub(crate) fn toggle_flip_vertical(&mut self) {
+    pub(crate) fn toggle_flip_vertical_around(&mut self, anchor: [f32; 2]) {
+        let anchor_in_window = self.snapshot().document_to_window(anchor);
         self.flip[1] = -self.flip[1];
+        self.keep_anchor_at_window_point(anchor, anchor_in_window);
+    }
+
+    fn keep_anchor_at_window_point(&mut self, anchor: [f32; 2], window_point: [f32; 2]) {
+        let viewport_center = [self.surface_size[0] * 0.5, self.surface_size[1] * 0.5];
+        let screen_delta = [
+            window_point[0] - viewport_center[0],
+            window_point[1] - viewport_center[1],
+        ];
+        let document_delta = inverse_orient(screen_delta, self.rotation, self.flip);
+        self.center = [
+            anchor[0] - document_delta[0] / self.zoom,
+            anchor[1] - document_delta[1] / self.zoom,
+        ];
     }
 
     pub(crate) fn reset_orientation(&mut self) {
@@ -261,6 +276,44 @@ mod tests {
         view.fit_to_screen([800, 400], [200, 100]);
         assert_eq!(view.zoom, 2.0);
         assert_eq!(view.center, [100.0, 50.0]);
+    }
+
+    #[test]
+    fn rotation_keeps_the_requested_document_anchor_stationary() {
+        let mut view = PaintView {
+            zoom: 1.7,
+            center: [30.0, 20.0],
+            surface_size: [800.0, 600.0],
+            ..PaintView::default()
+        };
+        let canvas_center = [100.0, 50.0];
+        let before = view.snapshot().document_to_window(canvas_center);
+
+        assert!(view.set_rotation_around(0.73, canvas_center));
+
+        let after = view.snapshot().document_to_window(canvas_center);
+        assert!((before[0] - after[0]).abs() < 0.0001);
+        assert!((before[1] - after[1]).abs() < 0.0001);
+    }
+
+    #[test]
+    fn flipping_keeps_the_requested_document_anchor_stationary() {
+        let mut view = PaintView {
+            zoom: 0.8,
+            center: [-40.0, 120.0],
+            surface_size: [900.0, 500.0],
+            rotation: 0.4,
+            ..PaintView::default()
+        };
+        let canvas_center = [200.0, 150.0];
+        let before = view.snapshot().document_to_window(canvas_center);
+
+        view.toggle_flip_horizontal_around(canvas_center);
+        view.toggle_flip_vertical_around(canvas_center);
+
+        let after = view.snapshot().document_to_window(canvas_center);
+        assert!((before[0] - after[0]).abs() < 0.0001);
+        assert!((before[1] - after[1]).abs() < 0.0001);
     }
 
     #[test]
