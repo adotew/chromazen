@@ -1,19 +1,53 @@
 use std::time::{Duration, Instant};
 
 use winit::{
-    event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
+    dpi::PhysicalPosition,
+    event::{DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent},
     keyboard::{KeyCode, ModifiersState, PhysicalKey},
 };
 
 use crate::{
     paint::{BrushSettings, PaintTool, StrokePoint, StrokeSmoother, StrokeSmoothingOptions},
-    platform::PressureStateHandle,
+    platform::{PenEvent, PressureStateHandle},
     renderer::PaintRenderer,
 };
 
 use super::command::AppCommand;
 
 const EYEDROPPER_DRAG_SAMPLE_INTERVAL: Duration = Duration::from_millis(33);
+
+/// Converts tablet input to the same physical-coordinate events used by mouse input.
+pub(crate) fn window_events_for_pen(event: PenEvent, scale_factor: f64) -> Vec<WindowEvent> {
+    fn cursor_moved(position: [f32; 2], scale_factor: f64) -> WindowEvent {
+        WindowEvent::CursorMoved {
+            device_id: DeviceId::dummy(),
+            position: PhysicalPosition::new(
+                f64::from(position[0]) * scale_factor,
+                f64::from(position[1]) * scale_factor,
+            ),
+        }
+    }
+
+    match event {
+        PenEvent::Motion { position, .. } => vec![cursor_moved(position, scale_factor)],
+        PenEvent::Down { position, .. } => vec![
+            cursor_moved(position, scale_factor),
+            WindowEvent::MouseInput {
+                device_id: DeviceId::dummy(),
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+            },
+        ],
+        PenEvent::Up => vec![WindowEvent::MouseInput {
+            device_id: DeviceId::dummy(),
+            state: ElementState::Released,
+            button: MouseButton::Left,
+        }],
+        PenEvent::Leave => vec![WindowEvent::CursorLeft {
+            device_id: DeviceId::dummy(),
+        }],
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 struct BrushResizeDrag {
@@ -810,6 +844,55 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn pen_events_map_to_scaled_pointer_events() {
+        let down = window_events_for_pen(
+            PenEvent::Down {
+                position: [10.0, 20.0],
+                pressure: 0.5,
+            },
+            2.0,
+        );
+        assert!(matches!(
+            down.as_slice(),
+            [
+                WindowEvent::CursorMoved { position, .. },
+                WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    button: MouseButton::Left,
+                    ..
+                }
+            ] if position.x == 20.0 && position.y == 40.0
+        ));
+
+        let motion = window_events_for_pen(
+            PenEvent::Motion {
+                position: [3.5, 7.25],
+                pressure: 0.0,
+                contact: false,
+            },
+            1.0,
+        );
+        assert!(matches!(
+            motion.as_slice(),
+            [WindowEvent::CursorMoved { position, .. }]
+                if position.x == 3.5 && position.y == 7.25
+        ));
+
+        assert!(matches!(
+            window_events_for_pen(PenEvent::Up, 1.0).as_slice(),
+            [WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
+            }]
+        ));
+        assert!(matches!(
+            window_events_for_pen(PenEvent::Leave, 1.0).as_slice(),
+            [WindowEvent::CursorLeft { .. }]
+        ));
     }
 
     #[test]

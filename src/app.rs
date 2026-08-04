@@ -20,7 +20,7 @@ use egui_wgpu::ScreenDescriptor;
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, MouseButton, StartCause, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     window::{CursorIcon, Window, WindowAttributes},
 };
 
@@ -39,7 +39,7 @@ use self::{
     ui::{BrushResizeLabel, EditorUiState, EyedropperIndicator, GuiLayer},
 };
 use crate::{
-    platform::{MacosPressureMonitor, PressureStateHandle},
+    platform::{MacosPressureMonitor, PenEvent, PressureStateHandle, WaylandTabletMonitor},
     renderer::{BrushCursor, DocumentVersions, PaintRenderer},
 };
 
@@ -47,6 +47,8 @@ const WINDOW_TITLE: &str = "Chromazen";
 
 enum AppEvent {
     Command(AppCommand),
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Pen(PenEvent),
     AutosaveWake,
     BrushImportWake,
     ExportWake,
@@ -85,6 +87,8 @@ pub struct App {
     input: PaintInputController,
     pressure_state: PressureStateHandle,
     _pressure_monitor: Option<MacosPressureMonitor>,
+    tablet_monitor: Option<WaylandTabletMonitor>,
+    pen_proxy: EventLoopProxy<AppEvent>,
     next_repaint: Option<Instant>,
     pending_commands: Vec<AppCommand>,
     settings: SettingsController,
@@ -101,6 +105,13 @@ pub struct App {
     pending_gallery: bool,
     pending_new_artwork: Option<[u32; 2]>,
     pending_exit: bool,
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        // The tablet thread borrows winit's Wayland display and must stop first.
+        self.tablet_monitor.take();
+    }
 }
 
 impl ApplicationHandler<AppEvent> for App {
@@ -128,6 +139,16 @@ impl ApplicationHandler<AppEvent> for App {
         let pressure_monitor =
             MacosPressureMonitor::install(window.clone(), pressure_state.clone())
                 .expect("failed to initialize pressure monitor");
+        let pen_proxy = self.pen_proxy.clone();
+        let tablet_monitor = WaylandTabletMonitor::install(window.clone(), move |event| {
+            if pen_proxy.send_event(AppEvent::Pen(event)).is_err() {
+                log::debug!("tablet event ignored after event loop shutdown");
+            }
+        })
+        .unwrap_or_else(|error| {
+            log::warn!("Wayland tablet input unavailable: {error}");
+            None
+        });
         let catalog = self.settings.take_startup_catalog();
         let startup_error = self.settings.take_startup_error();
         let paint = pollster::block_on(PaintRenderer::new(
@@ -149,6 +170,7 @@ impl ApplicationHandler<AppEvent> for App {
         self.gui = Some(gui);
         self.pressure_state = pressure_state;
         self._pressure_monitor = pressure_monitor;
+        self.tablet_monitor = tablet_monitor;
         self.sync_history_menu();
         window.request_redraw();
     }
@@ -302,9 +324,13 @@ impl ApplicationHandler<AppEvent> for App {
         }
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
             AppEvent::Command(command) => self.pending_commands.push(command),
+            AppEvent::Pen(event) => {
+                self.handle_pen_event(event_loop, event);
+                return;
+            }
             AppEvent::AutosaveWake
             | AppEvent::BrushImportWake
             | AppEvent::ExportWake
@@ -329,6 +355,37 @@ impl ApplicationHandler<AppEvent> for App {
 }
 
 impl App {
+    fn handle_pen_event(&mut self, event_loop: &ActiveEventLoop, event: PenEvent) {
+        let Some(window) = self.window.as_ref().cloned() else {
+            return;
+        };
+        match event {
+            PenEvent::Down { pressure, .. } => {
+                self.pressure_state.note_pen_pressure(pressure, true, true);
+            }
+            PenEvent::Motion {
+                pressure, contact, ..
+            } => {
+                self.pressure_state
+                    .note_pen_pressure(pressure, contact, true);
+            }
+            PenEvent::Up => {}
+            PenEvent::Leave => {}
+        }
+        for window_event in input::window_events_for_pen(event, window.scale_factor()) {
+            self.window_event(event_loop, window.id(), window_event);
+        }
+        match event {
+            PenEvent::Up => {
+                self.pressure_state.end_pen_contact(true);
+            }
+            PenEvent::Leave => {
+                self.pressure_state.clear_pen();
+            }
+            PenEvent::Down { .. } | PenEvent::Motion { .. } => {}
+        }
+    }
+
     fn new(
         settings: SettingsController,
         native_menu: NativeMenu,
@@ -336,6 +393,7 @@ impl App {
         autosave: AutosaveController,
         export: ExportController,
         imports: ImportControllers,
+        pen_proxy: EventLoopProxy<AppEvent>,
     ) -> Self {
         Self {
             window: None,
@@ -344,6 +402,8 @@ impl App {
             input: PaintInputController::default(),
             pressure_state: PressureStateHandle::default(),
             _pressure_monitor: None,
+            tablet_monitor: None,
+            pen_proxy,
             next_repaint: None,
             pending_commands: Vec::new(),
             settings,
@@ -1244,6 +1304,7 @@ pub fn run() {
     let wake = Arc::new(move || {
         let _ = proxy.send_event(AppEvent::AutosaveWake);
     });
+    let pen_proxy = event_loop.create_proxy();
     let autosave = AutosaveController::new(autosave_store, wake);
     let export_proxy = event_loop.create_proxy();
     let export = ExportController::new(Arc::new(move || {
@@ -1273,6 +1334,7 @@ pub fn run() {
             reference: reference_import,
             reference_load,
         },
+        pen_proxy,
     );
     event_loop.run_app(&mut app).expect("event loop error");
 }
