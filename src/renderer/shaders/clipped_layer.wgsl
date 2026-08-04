@@ -10,8 +10,8 @@ struct LayerSettings {
 };
 
 struct View {
-  scale: vec2f,
-  offset: vec2f,
+  documentFromWindowX: vec4f,
+  documentFromWindowY: vec4f,
   paintDims: vec2f,
   padding: vec2f,
   backgroundColor: vec4f,
@@ -33,7 +33,12 @@ fn vs_merge(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec4f
 
 @fragment
 fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let uv = (pos.xy * view.scale + view.offset) / view.paintDims;
+  let window = vec3f(pos.xy, 1.0);
+  let document = vec2f(
+    dot(view.documentFromWindowX.xyz, window),
+    dot(view.documentFromWindowY.xyz, window),
+  );
+  let uv = document / view.paintDims;
   if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) {
     return vec4f(0.0);
   }

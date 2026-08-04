@@ -8,8 +8,8 @@ struct LayerSettings {
 };
 
 struct View {
-  scale: vec2f,
-  offset: vec2f,
+  documentFromWindowX: vec4f,
+  documentFromWindowY: vec4f,
   paintDims: vec2f,
   padding: vec2f,
   backgroundColor: vec4f,
@@ -23,7 +23,12 @@ fn vs(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4f {
 }
 
 fn paintUv(pos: vec4f) -> vec2f {
-  return (pos.xy * view.scale + view.offset) / view.paintDims;
+  let window = vec3f(pos.xy, 1.0);
+  let document = vec2f(
+    dot(view.documentFromWindowX.xyz, window),
+    dot(view.documentFromWindowY.xyz, window),
+  );
+  return document / view.paintDims;
 }
 
 fn outsideCanvas(uv: vec2f) -> bool {

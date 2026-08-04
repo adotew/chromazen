@@ -82,8 +82,8 @@ impl RenderResources {
         let view_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("view uniform buffer"),
             contents: bytemuck::bytes_of(&ViewUniform {
-                scale: [1.0, 1.0],
-                offset: [0.0, 0.0],
+                document_from_window_x: [1.0, 0.0, 0.0, 0.0],
+                document_from_window_y: [0.0, 1.0, 0.0, 0.0],
                 paint_dims: [document_size[0] as f32, document_size[1] as f32],
                 padding: [0.0, 0.0],
                 background_color: [1.0; 4],

@@ -91,8 +91,8 @@ struct LayerPreviewUniform {
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
 struct ViewUniform {
-    scale: [f32; 2],
-    offset: [f32; 2],
+    document_from_window_x: [f32; 4],
+    document_from_window_y: [f32; 4],
     paint_dims: [f32; 2],
     padding: [f32; 2],
     background_color: [f32; 4],
@@ -116,6 +116,8 @@ struct LayerSettingsUniform {
 struct CursorRaw {
     center: [f32; 2],
     half_size: [f32; 2],
+    axis_x: [f32; 2],
+    axis_y: [f32; 2],
     surface_size: [f32; 2],
     padding: [f32; 2],
 }
@@ -1634,9 +1636,11 @@ impl PaintRenderer {
     }
 
     fn write_view_uniform(&mut self) {
+        let snapshot = self.view.snapshot();
+        let (document_from_window_x, document_from_window_y) = snapshot.window_to_document_rows();
         let uniform = ViewUniform {
-            scale: [1.0 / self.view.zoom(), 1.0 / self.view.zoom()],
-            offset: self.view.offset(),
+            document_from_window_x,
+            document_from_window_y,
             paint_dims: [self.document_size[0] as f32, self.document_size[1] as f32],
             padding: [0.0, 0.0],
             background_color: self.background_color,
@@ -1654,6 +1658,7 @@ impl PaintRenderer {
 
     fn write_brush_cursor(&self, cursor: BrushCursor) {
         let half_size = self.brush_outline_half_size(cursor.diameter);
+        let (axis_x, axis_y) = self.view.snapshot().document_axes_in_window();
         let surface_size = self.surface_size();
         self.gpu.queue().write_buffer(
             &self.resources.cursor_buffer,
@@ -1661,6 +1666,8 @@ impl PaintRenderer {
             bytemuck::bytes_of(&CursorRaw {
                 center: cursor.center,
                 half_size,
+                axis_x,
+                axis_y,
                 surface_size: [surface_size[0] as f32, surface_size[1] as f32],
                 padding: [0.0; 2],
             }),
@@ -1673,11 +1680,22 @@ fn visible_canvas_rect(
     document_size: [u32; 2],
     surface_size: [u32; 2],
 ) -> Option<TextureRect> {
-    let min = view.document_to_window([0.0, 0.0]);
-    let max = view.document_to_window([document_size[0] as f32, document_size[1] as f32]);
-    if min.into_iter().chain(max).any(|value| !value.is_finite()) {
+    let [width, height] = document_size.map(|dimension| dimension as f32);
+    let corners = [
+        view.document_to_window([0.0, 0.0]),
+        view.document_to_window([width, 0.0]),
+        view.document_to_window([0.0, height]),
+        view.document_to_window([width, height]),
+    ];
+    if corners.iter().flatten().any(|value| !value.is_finite()) {
         return None;
     }
+    let min = corners.iter().fold([f32::INFINITY; 2], |min, corner| {
+        [min[0].min(corner[0]), min[1].min(corner[1])]
+    });
+    let max = corners.iter().fold([f32::NEG_INFINITY; 2], |max, corner| {
+        [max[0].max(corner[0]), max[1].max(corner[1])]
+    });
 
     let surface_width = surface_size[0] as f32;
     let surface_height = surface_size[1] as f32;

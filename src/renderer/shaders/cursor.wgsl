@@ -5,6 +5,8 @@
 struct Cursor {
   center: vec2f,
   halfSize: vec2f,
+  axisX: vec2f,
+  axisY: vec2f,
   surfaceSize: vec2f,
   padding: vec2f,
 };
@@ -31,7 +33,8 @@ fn quadCorner(vertexIndex: u32) -> vec2f {
 fn vs(@builtin(vertex_index) vertexIndex: u32) -> VertexOut {
   let corner = quadCorner(vertexIndex);
   let halfSize = max(cursor.halfSize, vec2f(0.5));
-  let pixelOffset = corner * (halfSize + vec2f(2.0));
+  let localOffset = corner * (halfSize + vec2f(2.0));
+  let pixelOffset = cursor.axisX * localOffset.x + cursor.axisY * localOffset.y;
   let screenPosition = cursor.center + pixelOffset;
 
   var out: VertexOut;
@@ -41,7 +44,7 @@ fn vs(@builtin(vertex_index) vertexIndex: u32) -> VertexOut {
     0.0,
     1.0,
   );
-  out.uv = pixelOffset / (halfSize * 2.0) + vec2f(0.5);
+  out.uv = localOffset / (halfSize * 2.0) + vec2f(0.5);
   out.uvPerPixel = vec2f(0.5) / halfSize;
   return out;
 }

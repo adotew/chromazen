@@ -64,6 +64,23 @@ impl PaintViewSnapshot {
     pub(crate) fn viewport_center(self) -> [f32; 2] {
         self.viewport_center
     }
+
+    pub(crate) fn document_axes_in_window(self) -> ([f32; 2], [f32; 2]) {
+        (
+            orient([1.0, 0.0], self.rotation, self.flip),
+            orient([0.0, 1.0], self.rotation, self.flip),
+        )
+    }
+
+    pub(crate) fn window_to_document_rows(self) -> ([f32; 4], [f32; 4]) {
+        let origin = self.window_to_document([0.0, 0.0]);
+        let x_step = self.window_delta_to_document([1.0, 0.0]);
+        let y_step = self.window_delta_to_document([0.0, 1.0]);
+        (
+            [x_step[0], y_step[0], origin[0], 0.0],
+            [x_step[1], y_step[1], origin[1], 0.0],
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
