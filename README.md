@@ -12,9 +12,9 @@ Implemented:
 - custom canvas dimensions up to the renderer's safe texture and pixel limits
 - per-artwork reference images arranged in the workspace outside or over the canvas
 - bundled charcoal brush using the original stamp PNG
-- pressure-sensitive brush size/opacity on macOS via AppKit tablet and
-  pressure events
-- mouse/fallback input remains full-size and fully opaque
+- pressure-sensitive brush size/opacity on macOS via AppKit events and on
+  Linux Wayland via the tablet-v2 protocol
+- X11 and mouse fallback input remain full-size and fully opaque
 - instanced GPU brush stamping with dedicated paint and eraser blend pipelines
 - ordered GPU smudging within the selected paint layer
 - always-on centripetal Catmull–Rom stroke smoothing for fast, sparse input
@@ -89,6 +89,9 @@ Chromazen's pressure and spacing defaults.
 Controls:
 
 - Left drag: use the selected tool on the selected paint layer
+- Pressure-sensitive pens are supported on macOS and Linux Wayland. Linux X11
+  sessions rely on the tablet driver's pointer emulation and do not expose
+  pressure to Chromazen.
 - Use **File → Add Reference…** to import PNG and JPEG reference images where
   the native File menu is available; image files can also be dropped into the editor
 - Drag an unlocked reference to move it; drag its lower-right handle to resize
