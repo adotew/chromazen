@@ -23,6 +23,8 @@ Implemented:
 - chronological GPU undo/redo for strokes, layer changes, and Background
   color changes with a bounded 256 MiB history
 - wheel zoom, pan, clear, fit, 100% zoom
+- non-destructive freehand canvas rotation with 90° snapping and view flipping
+- centered, undoable canvas resizing without scaling paint
 
 The app opens to the gallery. Use **New Artwork** to create a 4000 × 4000
 artwork named `Untitled`, or select an existing thumbnail to continue editing
@@ -118,6 +120,15 @@ Controls:
   left-click or drag on the canvas to sample its visible composited color
 - Wheel: zoom around cursor
 - Middle/right drag or Space + left drag: pan
+- Hold `R` and left-drag to rotate the canvas view freely; rotation snaps near each 90° increment
+- `Shift-R`: reset canvas rotation
+- Rotate the view left/right 90°: `Command-Option-Left/Right` on macOS;
+  `Control-Alt-Left/Right` on Windows and Linux
+- Flip the view horizontally/vertically: `Command-Option-H/V` on macOS;
+  `Control-Alt-H/V` on Windows and Linux
+- Resize the canvas: `Command-Option-C` on macOS; `Control-Alt-C` on Windows
+  and Linux. Existing paint remains centered, growing areas are transparent, and
+  shrinking crops the edges; paint is not scaled.
 - Save artwork immediately: `Command-S` on macOS; `Control-S` on Windows and Linux
 - Export PNG: `Command-Shift-E` on macOS; `Control-Shift-E` on Windows and Linux
 - Undo: `Command-Z` on macOS; `Control-Z` on Windows and Linux
