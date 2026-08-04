@@ -648,10 +648,15 @@ impl App {
                     }
                 }
                 AppCommand::RequestCanvasResize => {
-                    if self.screen == AppScreen::Editor
-                        && let Some(size) = self.paint.as_ref().map(PaintRenderer::document_size)
-                        && let Some(gui) = self.gui.as_mut()
-                    {
+                    if self.screen != AppScreen::Editor {
+                        continue;
+                    }
+                    self.finish_editor_interaction();
+                    let size = self.paint.as_mut().map(|paint| {
+                        paint.prepare_canvas_crop_view();
+                        paint.document_size()
+                    });
+                    if let (Some(size), Some(gui)) = (size, self.gui.as_mut()) {
                         gui.open_canvas_crop(size);
                     }
                 }

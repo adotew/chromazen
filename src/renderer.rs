@@ -317,6 +317,13 @@ impl PaintRenderer {
             .fit_to_screen(self.surface_size(), self.document_size);
     }
 
+    pub(crate) fn prepare_canvas_crop_view(&mut self) {
+        self.fit_to_screen();
+        let [width, height] = self.surface_size();
+        self.view
+            .apply_zoom_at(0.8, [width as f32 * 0.5, height as f32 * 0.5]);
+    }
+
     pub fn apply_zoom_at(&mut self, factor: f32, cursor: [f32; 2]) {
         self.view.apply_zoom_at(factor, cursor);
     }
