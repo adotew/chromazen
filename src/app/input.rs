@@ -623,10 +623,18 @@ fn paint_tool_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<PaintTo
 }
 
 fn canvas_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<AppCommand> {
-    match (key, modifiers) {
-        (KeyCode::KeyR, ModifiersState::SHIFT) => Some(AppCommand::ResetCanvasRotation),
-        _ => None,
+    if key == KeyCode::KeyR && modifiers == ModifiersState::SHIFT {
+        return Some(AppCommand::ResetCanvasRotation);
     }
+    if key == KeyCode::KeyC
+        && modifiers.control_key()
+        && modifiers.alt_key()
+        && !modifiers.shift_key()
+        && !modifiers.super_key()
+    {
+        return Some(AppCommand::RequestCanvasResize);
+    }
+    None
 }
 
 fn document_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<AppCommand> {
@@ -952,6 +960,10 @@ mod tests {
         assert_eq!(
             canvas_command_for_key(KeyCode::KeyR, ModifiersState::empty()),
             None
+        );
+        assert_eq!(
+            canvas_command_for_key(KeyCode::KeyC, ModifiersState::CONTROL | ModifiersState::ALT),
+            Some(AppCommand::RequestCanvasResize)
         );
     }
 

@@ -81,6 +81,7 @@ pub struct GuiLayer {
     layers_window_open: bool,
     canvas_size_constraints: CanvasSizeConstraints,
     new_artwork_dialog: Option<NewArtworkDialog>,
+    canvas_resize_dialog: Option<NewArtworkDialog>,
     gallery: gallery::GalleryUi,
 }
 
@@ -206,6 +207,7 @@ impl GuiLayer {
             layers_window_open: false,
             canvas_size_constraints: paint.canvas_size_constraints(),
             new_artwork_dialog: None,
+            canvas_resize_dialog: None,
             gallery: gallery::GalleryUi::default(),
         }
     }
@@ -1157,6 +1159,7 @@ impl GuiLayer {
                 }
             }
             self.show_new_artwork_dialog(ui.ctx());
+            self.show_canvas_resize_dialog(ui.ctx());
             self.clear_reference_selection_on_outside_press(ui.ctx());
         })
     }
@@ -1188,6 +1191,7 @@ impl GuiLayer {
     }
 
     pub(crate) fn open_new_artwork_dialog(&mut self) {
+        self.canvas_resize_dialog = None;
         self.new_artwork_dialog = Some(NewArtworkDialog {
             width: DEFAULT_CANVAS_SIZE[0],
             height: DEFAULT_CANVAS_SIZE[1],
@@ -1257,6 +1261,83 @@ impl GuiLayer {
         }
         if close {
             self.new_artwork_dialog = None;
+        }
+    }
+
+    pub(crate) fn open_canvas_resize_dialog(&mut self, size: [u32; 2]) {
+        self.new_artwork_dialog = None;
+        self.canvas_resize_dialog = Some(NewArtworkDialog {
+            width: size[0],
+            height: size[1],
+        });
+        self.context.request_repaint();
+    }
+
+    pub(crate) fn close_canvas_resize_dialog(&mut self) {
+        self.canvas_resize_dialog = None;
+    }
+
+    fn show_canvas_resize_dialog(&mut self, context: &egui::Context) {
+        let Some(dialog) = self.canvas_resize_dialog.as_mut() else {
+            return;
+        };
+        let mut close = false;
+        let mut resize = None;
+        let response =
+            egui::Modal::new(egui::Id::new("canvas resize dialog")).show(context, |ui| {
+                ui.heading("Resize Canvas");
+                ui.label("Paint remains centered and is not scaled.");
+                ui.add_space(8.0);
+                egui::Grid::new("canvas resize dimensions")
+                    .num_columns(3)
+                    .spacing([10.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Width");
+                        ui.add(
+                            egui::DragValue::new(&mut dialog.width)
+                                .range(1..=self.canvas_size_constraints.max_dimension)
+                                .speed(1),
+                        );
+                        ui.label("px");
+                        ui.end_row();
+
+                        ui.label("Height");
+                        ui.add(
+                            egui::DragValue::new(&mut dialog.height)
+                                .range(1..=self.canvas_size_constraints.max_dimension)
+                                .speed(1),
+                        );
+                        ui.label("px");
+                        ui.end_row();
+                    });
+                let validation = self
+                    .canvas_size_constraints
+                    .validate([dialog.width, dialog.height]);
+                if let Err(error) = &validation {
+                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                }
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                    let submit = ui.add_enabled(validation.is_ok(), egui::Button::new("Resize"));
+                    if submit.clicked()
+                        || (validation.is_ok()
+                            && ui.input(|input| input.key_pressed(egui::Key::Enter)))
+                    {
+                        resize = Some((dialog.width, dialog.height));
+                    }
+                });
+            });
+        close |= response.should_close();
+        if let Some((width, height)) = resize {
+            self.commands
+                .push(AppCommand::ResizeCanvas { width, height });
+            close = true;
+        }
+        if close {
+            self.canvas_resize_dialog = None;
         }
     }
 

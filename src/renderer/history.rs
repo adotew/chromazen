@@ -108,6 +108,12 @@ enum HistoryAction {
         before: usize,
         after: usize,
     },
+    CanvasResize {
+        before_size: [u32; 2],
+        after_size: [u32; 2],
+        alternate_layers: Vec<PaintLayer>,
+        bytes: u64,
+    },
     MergeDown {
         upper_id: LayerId,
         lower_id: LayerId,
@@ -133,6 +139,7 @@ pub(crate) enum StructureEffect {
     LayerRemoved(LayerId),
     LayersMerged { result: LayerId, removed: LayerId },
     MergeUndone { lower: LayerId, upper: LayerId },
+    CanvasResized { size: [u32; 2] },
 }
 
 impl HistoryAction {
@@ -141,6 +148,7 @@ impl HistoryAction {
             Self::Stroke(entry) => entry.bytes,
             Self::AddLayer { bytes, .. }
             | Self::DeleteLayer { bytes, .. }
+            | Self::CanvasResize { bytes, .. }
             | Self::MergeDown { bytes, .. } => *bytes,
             Self::BackgroundColor { .. }
             | Self::RenameLayer { .. }
@@ -162,6 +170,7 @@ impl HistoryAction {
             | Self::LayerClipping { .. }
             | Self::LayerOpacity { .. }
             | Self::MoveLayer { .. }
+            | Self::CanvasResize { .. }
             | Self::MergeDown { .. } => HistoryTarget::Structure,
         }
     }
@@ -184,6 +193,12 @@ impl PaintHistory {
             mirrored_layer: None,
             active_stroke: None,
         }
+    }
+
+    pub(crate) fn resize_mirror(&mut self, device: &wgpu::Device, document_size: [u32; 2]) {
+        self.mirror = create_texture(device, "paint history mirror", document_size);
+        self.mirrored_layer = None;
+        self.active_stroke = None;
     }
 
     pub(crate) fn begin_stroke(&mut self, layer_id: LayerId) -> bool {
@@ -327,6 +342,24 @@ impl PaintHistory {
             selection_after,
             detached: Some(layer),
             bytes: layer_bytes,
+        });
+        self.cursor = self.actions.len();
+        self.evict_to_budget();
+    }
+
+    pub(crate) fn record_canvas_resize(
+        &mut self,
+        before_size: [u32; 2],
+        after_size: [u32; 2],
+        previous_layers: Vec<PaintLayer>,
+        bytes: u64,
+    ) {
+        self.discard_redo();
+        self.actions.push(HistoryAction::CanvasResize {
+            before_size,
+            after_size,
+            alternate_layers: previous_layers,
+            bytes,
         });
         self.cursor = self.actions.len();
         self.evict_to_budget();
@@ -527,6 +560,14 @@ impl PaintHistory {
                 move_layer_to_index(layers, *layer_id, *before);
                 StructureEffect::MetadataOnly
             }
+            HistoryAction::CanvasResize {
+                before_size,
+                alternate_layers,
+                ..
+            } => {
+                std::mem::swap(layers, alternate_layers);
+                StructureEffect::CanvasResized { size: *before_size }
+            }
             HistoryAction::MergeDown {
                 upper_id,
                 lower_id,
@@ -629,6 +670,14 @@ impl PaintHistory {
             } => {
                 move_layer_to_index(layers, *layer_id, *after);
                 StructureEffect::MetadataOnly
+            }
+            HistoryAction::CanvasResize {
+                after_size,
+                alternate_layers,
+                ..
+            } => {
+                std::mem::swap(layers, alternate_layers);
+                StructureEffect::CanvasResized { size: *after_size }
             }
             HistoryAction::MergeDown {
                 upper_id,

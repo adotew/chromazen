@@ -28,6 +28,7 @@ mod imp {
     const RESET_CANVAS_ROTATION_ID: &str = "chromazen.canvas.reset-rotation";
     const FLIP_CANVAS_HORIZONTAL_ID: &str = "chromazen.canvas.flip-horizontal";
     const FLIP_CANVAS_VERTICAL_ID: &str = "chromazen.canvas.flip-vertical";
+    const RESIZE_CANVAS_ID: &str = "chromazen.canvas.resize";
     const SAVE_SETTINGS_ID: &str = "chromazen.settings.save";
     const RELOAD_CONFIGURATION_ID: &str = "chromazen.settings.reload";
     const RESET_BRUSH_ID: &str = "chromazen.settings.reset-brush";
@@ -42,7 +43,7 @@ mod imp {
         add_reference: MenuItem,
         import_brushes: MenuItem,
         show_gallery: MenuItem,
-        canvas_actions: [MenuItem; 5],
+        canvas_actions: [MenuItem; 6],
         installed: bool,
     }
 
@@ -202,7 +203,7 @@ mod imp {
         Ok((menu, undo, redo))
     }
 
-    fn canvas_menu() -> Result<(Submenu, [MenuItem; 5]), String> {
+    fn canvas_menu() -> Result<(Submenu, [MenuItem; 6]), String> {
         let rotate_left = MenuItem::with_id(ROTATE_CANVAS_LEFT_ID, "Rotate Left 90°", false, None);
         let rotate_right =
             MenuItem::with_id(ROTATE_CANVAS_RIGHT_ID, "Rotate Right 90°", false, None);
@@ -216,13 +217,24 @@ mod imp {
             MenuItem::with_id(FLIP_CANVAS_HORIZONTAL_ID, "Flip Horizontally", false, None);
         let flip_vertical =
             MenuItem::with_id(FLIP_CANVAS_VERTICAL_ID, "Flip Vertically", false, None);
+        let resize = MenuItem::with_id(
+            RESIZE_CANVAS_ID,
+            "Resize Canvas…",
+            false,
+            Some(Accelerator::new(
+                Some(CMD_OR_CTRL | Modifiers::ALT),
+                Code::KeyC,
+            )),
+        );
         let separator = PredefinedMenuItem::separator();
+        let resize_separator = PredefinedMenuItem::separator();
         let actions = [
             rotate_left,
             rotate_right,
             reset_rotation,
             flip_horizontal,
             flip_vertical,
+            resize,
         ];
         let menu = Submenu::with_items(
             "Canvas",
@@ -234,6 +246,8 @@ mod imp {
                 &separator,
                 &actions[3],
                 &actions[4],
+                &resize_separator,
+                &actions[5],
             ],
         )
         .map_err(|error| format!("failed to build canvas menu: {error}"))?;
@@ -318,6 +332,7 @@ mod imp {
             RESET_CANVAS_ROTATION_ID => Some(AppCommand::ResetCanvasRotation),
             FLIP_CANVAS_HORIZONTAL_ID => Some(AppCommand::ToggleCanvasFlipHorizontal),
             FLIP_CANVAS_VERTICAL_ID => Some(AppCommand::ToggleCanvasFlipVertical),
+            RESIZE_CANVAS_ID => Some(AppCommand::RequestCanvasResize),
             SAVE_SETTINGS_ID => Some(AppCommand::SaveSettings),
             RELOAD_CONFIGURATION_ID => Some(AppCommand::ReloadConfiguration),
             RESET_BRUSH_ID => Some(AppCommand::ResetBrush),
@@ -387,6 +402,10 @@ mod imp {
             assert_eq!(
                 command_for_id(&MenuId::new(FLIP_CANVAS_VERTICAL_ID)),
                 Some(AppCommand::ToggleCanvasFlipVertical)
+            );
+            assert_eq!(
+                command_for_id(&MenuId::new(RESIZE_CANVAS_ID)),
+                Some(AppCommand::RequestCanvasResize)
             );
             assert_eq!(
                 command_for_id(&MenuId::new(SAVE_SETTINGS_ID)),

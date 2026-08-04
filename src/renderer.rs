@@ -469,6 +469,105 @@ impl PaintRenderer {
         Ok(())
     }
 
+    pub(crate) fn resize_canvas_centered(&mut self, size: [u32; 2]) -> Result<bool, String> {
+        if !self.can_replace_document() {
+            return Err("the current document is busy".to_owned());
+        }
+        self.canvas_size_constraints().validate(size)?;
+        if size == self.document_size {
+            return Ok(false);
+        }
+
+        let before_size = self.document_size;
+        let (source_rect, destination_origin) = centered_canvas_copy(before_size, size);
+        let mut replacement_layers = Vec::with_capacity(self.layers.len());
+        for index in 0..self.layers.len() {
+            let resource_id = self.allocate_layer_resource_id();
+            let layer = &self.layers[index];
+            replacement_layers.push(self.resources.create_paint_layer(
+                self.gpu.device(),
+                size,
+                layer.id,
+                resource_id,
+                LayerProperties {
+                    name: layer.name.clone(),
+                    visible: layer.visible,
+                    opacity: layer.opacity,
+                    clipped: layer.clipped,
+                },
+            ));
+        }
+
+        let mut encoder =
+            self.gpu
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("canvas resize encoder"),
+                });
+        for (source, destination) in self.layers.iter().zip(&replacement_layers) {
+            {
+                let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("canvas resize clear pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &destination.view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+            }
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &source.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: source_rect.x,
+                        y: source_rect.y,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &destination.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: destination_origin[0],
+                        y: destination_origin[1],
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: source_rect.width,
+                    height: source_rect.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+
+        let previous_layers = std::mem::replace(&mut self.layers, replacement_layers);
+        let retained_bytes = layer_set_byte_len(before_size, previous_layers.len())
+            .max(layer_set_byte_len(size, self.layers.len()));
+        self.resources
+            .resize_document(self.gpu.device(), self.gpu.queue(), size);
+        self.history.resize_mirror(self.gpu.device(), size);
+        self.document_size = size;
+        self.history
+            .record_canvas_resize(before_size, size, previous_layers, retained_bytes);
+        self.clipping_bind_groups_dirty = true;
+        self.fit_to_screen();
+        self.mark_entire_document_changed();
+        Ok(true)
+    }
+
     pub(crate) fn load_document(
         &mut self,
         document: &DocumentManifest,
@@ -1613,6 +1712,19 @@ impl PaintRenderer {
         self.document_generation
     }
 
+    fn mark_entire_document_changed(&mut self) {
+        let version = self.next_document_generation();
+        self.metadata_version = version;
+        self.layer_versions = self
+            .layers
+            .iter()
+            .map(|layer| (layer.id, version))
+            .collect();
+        for layer in &mut self.layers {
+            layer.preview_dirty = true;
+        }
+    }
+
     fn mark_metadata_changed(&mut self) {
         self.metadata_version = self.next_document_generation();
         self.clipping_bind_groups_dirty = true;
@@ -1628,6 +1740,13 @@ impl PaintRenderer {
 
     fn apply_structure_effect(&mut self, effect: StructureEffect) {
         self.clipping_bind_groups_dirty = true;
+        if let StructureEffect::CanvasResized { size } = effect {
+            self.resources
+                .resize_document(self.gpu.device(), self.gpu.queue(), size);
+            self.history.resize_mirror(self.gpu.device(), size);
+            self.document_size = size;
+            self.fit_to_screen();
+        }
         let version = self.next_document_generation();
         self.metadata_version = version;
         match effect {
@@ -1645,6 +1764,16 @@ impl PaintRenderer {
             StructureEffect::MergeUndone { lower, upper } => {
                 self.layer_versions.insert(lower, version);
                 self.layer_versions.insert(upper, version);
+            }
+            StructureEffect::CanvasResized { .. } => {
+                self.layer_versions = self
+                    .layers
+                    .iter()
+                    .map(|layer| (layer.id, version))
+                    .collect();
+                for layer in &mut self.layers {
+                    layer.preview_dirty = true;
+                }
             }
         }
         for layer in &self.layers {
@@ -1697,6 +1826,26 @@ impl PaintRenderer {
             }),
         );
     }
+}
+
+fn centered_canvas_copy(before: [u32; 2], after: [u32; 2]) -> (TextureRect, [u32; 2]) {
+    let width = before[0].min(after[0]);
+    let height = before[1].min(after[1]);
+    (
+        TextureRect {
+            x: (before[0] - width) / 2,
+            y: (before[1] - height) / 2,
+            width,
+            height,
+        },
+        [(after[0] - width) / 2, (after[1] - height) / 2],
+    )
+}
+
+fn layer_set_byte_len(size: [u32; 2], layer_count: usize) -> u64 {
+    let canvas = u64::from(size[0]) * u64::from(size[1]) * 4;
+    let preview = u64::from(LAYER_PREVIEW_SIZE) * u64::from(LAYER_PREVIEW_SIZE) * 4;
+    (canvas + preview).saturating_mul(layer_count as u64)
 }
 
 fn visible_canvas_rect(
@@ -1805,6 +1954,38 @@ fn clear_layer(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureV
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn centered_canvas_growth_puts_odd_extra_pixels_on_right_and_bottom() {
+        assert_eq!(
+            centered_canvas_copy([4, 2], [7, 5]),
+            (
+                TextureRect {
+                    x: 0,
+                    y: 0,
+                    width: 4,
+                    height: 2,
+                },
+                [1, 1]
+            )
+        );
+    }
+
+    #[test]
+    fn centered_canvas_shrink_crops_odd_extra_pixels_from_right_and_bottom() {
+        assert_eq!(
+            centered_canvas_copy([7, 5], [4, 2]),
+            (
+                TextureRect {
+                    x: 1,
+                    y: 1,
+                    width: 4,
+                    height: 2,
+                },
+                [0, 0]
+            )
+        );
+    }
 
     #[test]
     fn visible_canvas_rect_clips_to_the_surface() {

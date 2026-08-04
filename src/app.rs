@@ -636,6 +636,29 @@ impl App {
                         paint.toggle_canvas_flip_vertical();
                     }
                 }
+                AppCommand::RequestCanvasResize => {
+                    if self.screen == AppScreen::Editor
+                        && let Some(size) = self.paint.as_ref().map(PaintRenderer::document_size)
+                        && let Some(gui) = self.gui.as_mut()
+                    {
+                        gui.open_canvas_resize_dialog(size);
+                    }
+                }
+                AppCommand::ResizeCanvas { width, height } => {
+                    if let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_ref()) {
+                        self.input.finish_document_interaction(paint, gui.brush);
+                    }
+                    let result = self
+                        .paint
+                        .as_mut()
+                        .ok_or_else(|| "the paint renderer is unavailable".to_owned())
+                        .and_then(|paint| paint.resize_canvas_centered([width, height]));
+                    if let Err(error) = result
+                        && let Some(gui) = self.gui.as_mut()
+                    {
+                        gui.show_error(error);
+                    }
+                }
                 AppCommand::SelectTool(tool) => {
                     self.input.select_tool(tool);
                     if self.input.tool() != tool {
@@ -821,6 +844,7 @@ impl App {
                     if self.screen == AppScreen::Editor {
                         if let Some(gui) = self.gui.as_mut() {
                             gui.close_new_artwork_dialog();
+                            gui.close_canvas_resize_dialog();
                         }
                         self.pending_gallery = true;
                         self.pending_new_artwork = None;

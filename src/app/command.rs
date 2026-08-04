@@ -15,6 +15,11 @@ pub(super) enum AppCommand {
     ResetCanvasRotation,
     ToggleCanvasFlipHorizontal,
     ToggleCanvasFlipVertical,
+    RequestCanvasResize,
+    ResizeCanvas {
+        width: u32,
+        height: u32,
+    },
     SelectTool(PaintTool),
     SelectLayer(LayerId),
     AddLayer,
