@@ -321,6 +321,14 @@ impl PaintRenderer {
         self.view.apply_zoom_at(factor, cursor);
     }
 
+    pub(crate) fn canvas_rotation(&self) -> f32 {
+        self.view.snapshot().rotation()
+    }
+
+    pub(crate) fn set_canvas_rotation(&mut self, radians: f32) -> bool {
+        self.view.set_rotation(radians)
+    }
+
     pub fn pan_by_window_delta(&mut self, delta: [f32; 2]) {
         self.view.pan_by_window_delta(delta);
     }

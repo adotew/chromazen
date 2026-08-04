@@ -15,6 +15,9 @@ use crate::{
 use super::command::AppCommand;
 
 const EYEDROPPER_DRAG_SAMPLE_INTERVAL: Duration = Duration::from_millis(33);
+const ROTATION_SNAP_INTERVAL: f32 = std::f32::consts::FRAC_PI_2;
+const ROTATION_SNAP_ENTER: f32 = 5.0_f32.to_radians();
+const ROTATION_SNAP_EXIT: f32 = 8.0_f32.to_radians();
 
 /// Converts tablet input to the same physical-coordinate events used by mouse input.
 pub(crate) fn window_events_for_pen(event: PenEvent, scale_factor: f64) -> Vec<WindowEvent> {
@@ -55,6 +58,13 @@ struct BrushResizeDrag {
     start_size: f32,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RotationDrag {
+    start_rotation: f32,
+    start_pointer_angle: f32,
+    snapped_to: Option<f32>,
+}
+
 #[derive(Debug, Default)]
 struct EyedropperDrag {
     last_sample: Option<(Instant, [f32; 2])>,
@@ -73,6 +83,8 @@ pub struct PaintInputController {
     is_drawing: bool,
     is_panning: bool,
     is_space_down: bool,
+    is_rotation_key_down: bool,
+    rotation_drag: Option<RotationDrag>,
     resize_origin: Option<[f32; 2]>,
     resize_drag: Option<BrushResizeDrag>,
     eyedropper_drag: Option<EyedropperDrag>,
@@ -97,6 +109,7 @@ impl PaintInputController {
         (self.cursor_inside
             && !self.is_panning
             && !self.is_space_down
+            && !self.is_rotation_key_down
             && self.resize_origin.is_none()
             && !self.is_eyedropper_active())
         .then_some(self.cursor_pos)
@@ -118,6 +131,10 @@ impl PaintInputController {
         self.is_panning
     }
 
+    pub(crate) fn is_rotating_canvas(&self) -> bool {
+        self.rotation_drag.is_some()
+    }
+
     pub fn is_pan_modifier_active(&self) -> bool {
         self.is_space_down
     }
@@ -134,6 +151,7 @@ impl PaintInputController {
         self.is_drawing
             || self.is_panning
             || self.resize_origin.is_some()
+            || self.rotation_drag.is_some()
             || self.eyedropper_drag.is_some()
     }
 
@@ -221,6 +239,16 @@ impl PaintInputController {
             WindowEvent::CursorMoved { position, .. } => {
                 let next = [position.x as f32, position.y as f32];
 
+                if let Some(mut drag) = self.rotation_drag {
+                    let center = paint.view_snapshot().viewport_center();
+                    let current_angle = pointer_angle(center, next);
+                    let raw_rotation =
+                        drag.start_rotation + angle_delta(current_angle, drag.start_pointer_angle);
+                    let (rotation, snapped_to) = snapped_rotation(raw_rotation, drag.snapped_to);
+                    drag.snapped_to = snapped_to;
+                    self.rotation_drag = Some(drag);
+                    return paint.set_canvas_rotation(rotation);
+                }
                 if let Some(drag) = &self.eyedropper_drag {
                     let now = Instant::now();
                     let last_sample = drag.last_sample.map(|sample| sample.0);
@@ -264,6 +292,14 @@ impl PaintInputController {
                 state: ElementState::Released,
                 button: MouseButton::Left,
                 ..
+            } if self.rotation_drag.is_some() => {
+                self.rotation_drag = None;
+                true
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
             } if self.eyedropper_drag.is_some() => {
                 self.finish_color_sampling(paint, brush);
                 true
@@ -277,6 +313,15 @@ impl PaintInputController {
                 true
             }
             WindowEvent::MouseInput { state, button, .. } => match (state, button) {
+                (ElementState::Pressed, MouseButton::Left) if self.is_rotation_key_down => {
+                    let center = paint.view_snapshot().viewport_center();
+                    self.rotation_drag = Some(RotationDrag {
+                        start_rotation: paint.canvas_rotation(),
+                        start_pointer_angle: pointer_angle(center, self.cursor_pos),
+                        snapped_to: None,
+                    });
+                    true
+                }
                 (ElementState::Pressed, MouseButton::Left) if self.is_eyedropper_active() => {
                     let started = self.eyedropper_drag.is_none();
                     self.eyedropper_drag.get_or_insert_default();
@@ -348,6 +393,19 @@ impl PaintInputController {
                 true
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                if event.physical_key == PhysicalKey::Code(KeyCode::KeyR) {
+                    let pressed = event.state == ElementState::Pressed;
+                    let active = pressed && self.modifiers.is_empty();
+                    let changed = self.is_rotation_key_down != active;
+                    self.is_rotation_key_down = active;
+                    if !active {
+                        self.rotation_drag = None;
+                    }
+                    if changed {
+                        self.end_stroke(paint, *brush);
+                        return true;
+                    }
+                }
                 if event.state == ElementState::Pressed
                     && !event.repeat
                     && let PhysicalKey::Code(key) = event.physical_key
@@ -369,8 +427,10 @@ impl PaintInputController {
             WindowEvent::CursorLeft { .. } | WindowEvent::Focused(false) => {
                 self.resize_origin = None;
                 self.resize_drag = None;
+                self.is_rotation_key_down = false;
+                let was_rotating = self.rotation_drag.take().is_some();
                 let was_sampling = self.eyedropper_drag.take().is_some();
-                self.end_stroke(paint, *brush) || was_sampling
+                self.end_stroke(paint, *brush) || was_sampling || was_rotating
             }
             _ => false,
         }
@@ -383,6 +443,8 @@ impl PaintInputController {
     ) -> bool {
         self.resize_origin = None;
         self.resize_drag = None;
+        self.is_rotation_key_down = false;
+        self.rotation_drag = None;
         self.eyedropper_drag = None;
         self.end_stroke(paint, brush)
     }
@@ -483,6 +545,28 @@ impl PaintInputController {
     }
 }
 
+fn pointer_angle(center: [f32; 2], point: [f32; 2]) -> f32 {
+    (point[1] - center[1]).atan2(point[0] - center[0])
+}
+
+fn angle_delta(angle: f32, origin: f32) -> f32 {
+    (angle - origin + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+}
+
+fn snapped_rotation(raw: f32, current_snap: Option<f32>) -> (f32, Option<f32>) {
+    if let Some(snap) = current_snap
+        && angle_delta(raw, snap).abs() <= ROTATION_SNAP_EXIT
+    {
+        return (snap, Some(snap));
+    }
+    let nearest = (raw / ROTATION_SNAP_INTERVAL).round() * ROTATION_SNAP_INTERVAL;
+    if angle_delta(raw, nearest).abs() <= ROTATION_SNAP_ENTER {
+        (nearest, Some(nearest))
+    } else {
+        (raw, None)
+    }
+}
+
 fn keyboard_shortcut_for_key(
     key: KeyCode,
     state: ElementState,
@@ -562,6 +646,33 @@ fn history_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<Ap
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rotation_snaps_to_quarter_turns_with_hysteresis() {
+        let near_ninety = 87.0_f32.to_radians();
+        let (rotation, snap) = snapped_rotation(near_ninety, None);
+        assert_eq!(rotation, std::f32::consts::FRAC_PI_2);
+        assert_eq!(snap, Some(std::f32::consts::FRAC_PI_2));
+
+        let still_close = 96.0_f32.to_radians();
+        assert_eq!(
+            snapped_rotation(still_close, snap),
+            (
+                std::f32::consts::FRAC_PI_2,
+                Some(std::f32::consts::FRAC_PI_2)
+            )
+        );
+
+        let released = 99.0_f32.to_radians();
+        assert_eq!(snapped_rotation(released, snap), (released, None));
+    }
+
+    #[test]
+    fn angular_drag_crosses_the_signed_angle_boundary() {
+        let origin = 179.0_f32.to_radians();
+        let current = -179.0_f32.to_radians();
+        assert!((angle_delta(current, origin) - 2.0_f32.to_radians()).abs() < 0.0001);
+    }
 
     #[test]
     fn maps_tab_shortcuts() {

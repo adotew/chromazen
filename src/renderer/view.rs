@@ -57,10 +57,6 @@ impl PaintViewSnapshot {
         self.rotation
     }
 
-    pub(crate) fn flip(self) -> [f32; 2] {
-        self.flip
-    }
-
     pub(crate) fn viewport_center(self) -> [f32; 2] {
         self.viewport_center
     }
@@ -119,10 +115,6 @@ impl PaintView {
         }
     }
 
-    pub(crate) fn offset(&self) -> [f32; 2] {
-        self.snapshot().window_to_document([0.0, 0.0])
-    }
-
     pub(crate) fn set_surface_size(&mut self, surface_size: [u32; 2]) {
         self.surface_size = [surface_size[0] as f32, surface_size[1] as f32];
     }
@@ -177,22 +169,6 @@ impl PaintView {
         }
         self.rotation = radians;
         true
-    }
-
-    pub(crate) fn rotate_by(&mut self, radians: f32) -> bool {
-        self.set_rotation(self.rotation + radians)
-    }
-
-    pub(crate) fn reset_rotation(&mut self) -> bool {
-        self.set_rotation(0.0)
-    }
-
-    pub(crate) fn toggle_flip_horizontal(&mut self) {
-        self.flip[0] = -self.flip[0];
-    }
-
-    pub(crate) fn toggle_flip_vertical(&mut self) {
-        self.flip[1] = -self.flip[1];
     }
 
     pub(crate) fn reset_orientation(&mut self) {
@@ -274,8 +250,10 @@ mod tests {
 
     #[test]
     fn fit_accounts_for_rotated_document_bounds() {
-        let mut view = PaintView::default();
-        view.rotation = std::f32::consts::FRAC_PI_2;
+        let mut view = PaintView {
+            rotation: std::f32::consts::FRAC_PI_2,
+            ..PaintView::default()
+        };
         view.fit_to_screen([800, 400], [200, 100]);
         assert_eq!(view.zoom, 2.0);
         assert_eq!(view.center, [100.0, 50.0]);
