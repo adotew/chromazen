@@ -655,7 +655,6 @@ impl GuiLayer {
         layers: &LayerSnapshot,
         background: egui::Color32,
     ) {
-        ui.separator();
         egui::Panel::bottom("layer controls")
             .show_separator_line(false)
             .show_inside(ui, |ui| {
