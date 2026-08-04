@@ -119,3 +119,255 @@ mod tests {
         );
     }
 }
+
+#[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
+mod imp {
+    use std::sync::Arc;
+
+    use winit::{event_loop::EventLoopBuilder, window::Window};
+
+    use crate::platform::PenEvent;
+
+    #[derive(Clone, Default)]
+    pub struct WindowsPenRouter;
+
+    impl WindowsPenRouter {
+        pub fn install_hook<T: 'static>(&self, _builder: &mut EventLoopBuilder<T>) {}
+    }
+
+    pub struct WindowsPenMonitor;
+
+    impl WindowsPenMonitor {
+        pub fn install(
+            _window: Arc<Window>,
+            _router: WindowsPenRouter,
+            _sink: impl Fn(PenEvent) + 'static,
+        ) -> Result<Option<Self>, String> {
+            Ok(None)
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod imp {
+    use std::{
+        cell::RefCell,
+        panic::{AssertUnwindSafe, catch_unwind},
+        ptr,
+        rc::Rc,
+        sync::Arc,
+    };
+
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::{
+        Foundation::HWND,
+        Graphics::Gdi::ScreenToClient,
+        UI::{
+            HiDpi::GetDpiForWindow,
+            Input::Pointer::{
+                GetPointerPenInfo, GetPointerPenInfoHistory, GetPointerType, POINTER_FLAG_CANCELED,
+                POINTER_FLAG_CAPTURECHANGED, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT,
+                POINTER_FLAG_UP, POINTER_PEN_INFO, SkipPointerFrameMessages,
+            },
+            WindowsAndMessaging::{
+                MSG, PEN_MASK_PRESSURE, PT_PEN, WM_POINTERCAPTURECHANGED, WM_POINTERDOWN,
+                WM_POINTERENTER, WM_POINTERLEAVE, WM_POINTERUP, WM_POINTERUPDATE,
+            },
+        },
+    };
+    use winit::{
+        event_loop::EventLoopBuilder, platform::windows::EventLoopBuilderExtWindows, window::Window,
+    };
+
+    use super::{WindowsPenAction, WindowsPenSample, events_for_sample, normalize_pressure};
+    use crate::platform::PenEvent;
+
+    type PenSink = Box<dyn Fn(PenEvent)>;
+
+    #[derive(Clone, Default)]
+    pub struct WindowsPenRouter {
+        state: Rc<RefCell<RouterState>>,
+    }
+
+    #[derive(Default)]
+    struct RouterState {
+        target_hwnd: Option<usize>,
+        active_pointer: Option<u32>,
+        sink: Option<PenSink>,
+    }
+
+    pub struct WindowsPenMonitor {
+        router: WindowsPenRouter,
+        hwnd: usize,
+    }
+
+    impl WindowsPenRouter {
+        pub fn install_hook<T: 'static>(&self, builder: &mut EventLoopBuilder<T>) {
+            let state = Rc::clone(&self.state);
+            builder.with_msg_hook(move |message| {
+                catch_unwind(AssertUnwindSafe(|| {
+                    // Safety: winit passes a valid MSG pointer for the duration of this callback.
+                    let message = unsafe { &*(message.cast::<MSG>()) };
+                    state.borrow_mut().handle_message(message)
+                }))
+                .unwrap_or_else(|_| {
+                    log::error!("Windows pen message handler panicked");
+                    false
+                })
+            });
+        }
+    }
+
+    impl WindowsPenMonitor {
+        pub fn install(
+            window: Arc<Window>,
+            router: WindowsPenRouter,
+            sink: impl Fn(PenEvent) + 'static,
+        ) -> Result<Option<Self>, String> {
+            let window_handle = window
+                .window_handle()
+                .map_err(|error| format!("failed to get window handle: {error}"))?;
+            let RawWindowHandle::Win32(handle) = window_handle.as_raw() else {
+                return Err("expected a Win32 window handle on Windows".into());
+            };
+            let hwnd = handle.hwnd.get() as usize;
+            let mut state = router.state.borrow_mut();
+            state.target_hwnd = Some(hwnd);
+            state.active_pointer = None;
+            state.sink = Some(Box::new(sink));
+            drop(state);
+            Ok(Some(Self { router, hwnd }))
+        }
+    }
+
+    impl Drop for WindowsPenMonitor {
+        fn drop(&mut self) {
+            let mut state = self.router.state.borrow_mut();
+            if state.target_hwnd == Some(self.hwnd) {
+                state.target_hwnd = None;
+                state.active_pointer = None;
+                state.sink = None;
+            }
+        }
+    }
+
+    impl RouterState {
+        fn handle_message(&mut self, message: &MSG) -> bool {
+            if self.target_hwnd != Some(message.hwnd as usize) {
+                return false;
+            }
+
+            let pointer_id = loword(message.wParam);
+            match message.message {
+                WM_POINTERDOWN | WM_POINTERUPDATE | WM_POINTERUP | WM_POINTERENTER => {
+                    if !is_pen(pointer_id) {
+                        return false;
+                    }
+                    self.active_pointer = Some(pointer_id);
+                    let infos = pen_history(pointer_id);
+                    for info in infos.iter().rev() {
+                        self.emit_info(message.hwnd, info);
+                    }
+                    // Prevent queued frame messages from replaying samples we emitted from history.
+                    unsafe {
+                        SkipPointerFrameMessages(pointer_id);
+                    }
+                    true
+                }
+                WM_POINTERLEAVE if self.active_pointer == Some(pointer_id) => {
+                    self.emit_event(PenEvent::Leave);
+                    self.active_pointer = None;
+                    true
+                }
+                WM_POINTERCAPTURECHANGED if self.active_pointer == Some(pointer_id) => {
+                    self.emit_sample(WindowsPenSample {
+                        action: WindowsPenAction::Cancel,
+                        position: [0.0; 2],
+                        pressure: None,
+                        contact: false,
+                    });
+                    self.active_pointer = None;
+                    true
+                }
+                _ => false,
+            }
+        }
+
+        fn emit_info(&self, hwnd: HWND, info: &POINTER_PEN_INFO) {
+            let flags = info.pointerInfo.pointerFlags;
+            let action = if flags & (POINTER_FLAG_CANCELED | POINTER_FLAG_CAPTURECHANGED) != 0 {
+                WindowsPenAction::Cancel
+            } else if flags & POINTER_FLAG_DOWN != 0 {
+                WindowsPenAction::Down
+            } else if flags & POINTER_FLAG_UP != 0 {
+                WindowsPenAction::Up
+            } else {
+                WindowsPenAction::Motion
+            };
+            let mut point = info.pointerInfo.ptPixelLocation;
+            if unsafe { ScreenToClient(hwnd, &mut point) } == 0 {
+                return;
+            }
+            let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
+            let logical_scale = 96.0 / dpi as f32;
+            self.emit_sample(WindowsPenSample {
+                action,
+                position: [
+                    point.x as f32 * logical_scale,
+                    point.y as f32 * logical_scale,
+                ],
+                pressure: normalize_pressure(info.pressure, info.penMask & PEN_MASK_PRESSURE != 0),
+                contact: flags & POINTER_FLAG_INCONTACT != 0,
+            });
+        }
+
+        fn emit_sample(&self, sample: WindowsPenSample) {
+            for event in events_for_sample(sample) {
+                self.emit_event(event);
+            }
+        }
+
+        fn emit_event(&self, event: PenEvent) {
+            if let Some(sink) = self.sink.as_ref() {
+                sink(event);
+            }
+        }
+    }
+
+    fn loword(value: usize) -> u32 {
+        (value & 0xffff) as u32
+    }
+
+    fn is_pen(pointer_id: u32) -> bool {
+        let mut pointer_type = 0;
+        unsafe { GetPointerType(pointer_id, &mut pointer_type) != 0 && pointer_type == PT_PEN }
+    }
+
+    fn pen_history(pointer_id: u32) -> Vec<POINTER_PEN_INFO> {
+        const MAX_HISTORY: u32 = 4096;
+
+        let mut count = 0;
+        if unsafe { GetPointerPenInfoHistory(pointer_id, &mut count, ptr::null_mut()) } != 0
+            && count > 0
+            && count <= MAX_HISTORY
+        {
+            let mut infos = vec![POINTER_PEN_INFO::default(); count as usize];
+            if unsafe { GetPointerPenInfoHistory(pointer_id, &mut count, infos.as_mut_ptr()) } != 0
+            {
+                infos.truncate(count as usize);
+                return infos;
+            }
+        }
+
+        let mut info = POINTER_PEN_INFO::default();
+        if unsafe { GetPointerPenInfo(pointer_id, &mut info) } != 0 {
+            vec![info]
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+#[allow(unused_imports)]
+pub(crate) use imp::{WindowsPenMonitor, WindowsPenRouter};
