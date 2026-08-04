@@ -1396,16 +1396,16 @@ impl GuiLayer {
                 painter.add(egui::Shape::convex_polygon(
                     screen_corners.to_vec(),
                     egui::Color32::from_white_alpha(8),
-                    egui::Stroke::new(2.0, egui::Color32::WHITE),
+                    egui::Stroke::new(2.0, egui::Color32::from_gray(96)),
                 ));
                 for (_, position) in handle_positions {
                     let handle_rect =
                         egui::Rect::from_center_size(position, egui::Vec2::splat(14.0));
-                    painter.rect_filled(handle_rect, 3.0, egui::Color32::from_gray(20));
+                    painter.rect_filled(handle_rect, 3.0, egui::Color32::from_gray(232));
                     painter.rect_stroke(
                         handle_rect,
                         2.0,
-                        egui::Stroke::new(1.5, egui::Color32::WHITE),
+                        egui::Stroke::new(1.5, egui::Color32::from_gray(72)),
                         egui::StrokeKind::Inside,
                     );
                 }
