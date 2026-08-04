@@ -39,7 +39,10 @@ use self::{
     ui::{BrushResizeLabel, EditorUiState, EyedropperIndicator, GuiLayer},
 };
 use crate::{
-    platform::{MacosPressureMonitor, PenEvent, PressureStateHandle, WaylandTabletMonitor},
+    platform::{
+        MacosPressureMonitor, PenEvent, PressureStateHandle, WaylandTabletMonitor,
+        WindowsPenMonitor, WindowsPenRouter,
+    },
     renderer::{BrushCursor, DocumentVersions, PaintRenderer},
 };
 
@@ -47,7 +50,7 @@ const WINDOW_TITLE: &str = "Chromazen";
 
 enum AppEvent {
     Command(AppCommand),
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "linux", target_os = "windows")), allow(dead_code))]
     Pen(PenEvent),
     AutosaveWake,
     BrushImportWake,
@@ -80,6 +83,11 @@ struct ImportControllers {
     reference_load: ReferenceLoadController,
 }
 
+struct PenControllers {
+    proxy: EventLoopProxy<AppEvent>,
+    windows_router: WindowsPenRouter,
+}
+
 pub struct App {
     window: Option<Arc<Window>>,
     paint: Option<PaintRenderer>,
@@ -88,6 +96,8 @@ pub struct App {
     pressure_state: PressureStateHandle,
     _pressure_monitor: Option<MacosPressureMonitor>,
     tablet_monitor: Option<WaylandTabletMonitor>,
+    windows_pen_monitor: Option<WindowsPenMonitor>,
+    windows_pen_router: WindowsPenRouter,
     pen_proxy: EventLoopProxy<AppEvent>,
     next_repaint: Option<Instant>,
     pending_commands: Vec<AppCommand>,
@@ -109,8 +119,9 @@ pub struct App {
 
 impl Drop for App {
     fn drop(&mut self) {
-        // The tablet thread borrows winit's Wayland display and must stop first.
+        // Platform monitors must release native resources before the window.
         self.tablet_monitor.take();
+        self.windows_pen_monitor.take();
     }
 }
 
@@ -149,6 +160,20 @@ impl ApplicationHandler<AppEvent> for App {
             log::warn!("Wayland tablet input unavailable: {error}");
             None
         });
+        let windows_pen_proxy = self.pen_proxy.clone();
+        let windows_pen_monitor = WindowsPenMonitor::install(
+            window.clone(),
+            self.windows_pen_router.clone(),
+            move |event| {
+                if windows_pen_proxy.send_event(AppEvent::Pen(event)).is_err() {
+                    log::debug!("Windows pen event ignored after event loop shutdown");
+                }
+            },
+        )
+        .unwrap_or_else(|error| {
+            log::warn!("Windows pen input unavailable: {error}");
+            None
+        });
         let catalog = self.settings.take_startup_catalog();
         let startup_error = self.settings.take_startup_error();
         let paint = pollster::block_on(PaintRenderer::new(
@@ -171,6 +196,7 @@ impl ApplicationHandler<AppEvent> for App {
         self.pressure_state = pressure_state;
         self._pressure_monitor = pressure_monitor;
         self.tablet_monitor = tablet_monitor;
+        self.windows_pen_monitor = windows_pen_monitor;
         self.sync_history_menu();
         window.request_redraw();
     }
@@ -393,7 +419,7 @@ impl App {
         autosave: AutosaveController,
         export: ExportController,
         imports: ImportControllers,
-        pen_proxy: EventLoopProxy<AppEvent>,
+        pen: PenControllers,
     ) -> Self {
         Self {
             window: None,
@@ -403,7 +429,9 @@ impl App {
             pressure_state: PressureStateHandle::default(),
             _pressure_monitor: None,
             tablet_monitor: None,
-            pen_proxy,
+            windows_pen_monitor: None,
+            windows_pen_router: pen.windows_router,
+            pen_proxy: pen.proxy,
             next_repaint: None,
             pending_commands: Vec::new(),
             settings,
@@ -1287,7 +1315,10 @@ impl App {
 }
 
 pub fn run() {
-    let event_loop = EventLoop::<AppEvent>::with_user_event()
+    let windows_pen_router = WindowsPenRouter::new();
+    let mut event_loop_builder = EventLoop::<AppEvent>::with_user_event();
+    windows_pen_router.install_hook(&mut event_loop_builder);
+    let event_loop = event_loop_builder
         .build()
         .expect("failed to create event loop");
     let native_menu =
@@ -1334,7 +1365,10 @@ pub fn run() {
             reference: reference_import,
             reference_load,
         },
-        pen_proxy,
+        PenControllers {
+            proxy: pen_proxy,
+            windows_router: windows_pen_router,
+        },
     );
     event_loop.run_app(&mut app).expect("event loop error");
 }
