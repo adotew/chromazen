@@ -248,7 +248,7 @@ mod imp {
         );
         let resize = MenuItem::with_id(
             RESIZE_CANVAS_ID,
-            "Resize Canvas…",
+            "Crop / Resize Canvas",
             false,
             Some(Accelerator::new(
                 Some(CMD_OR_CTRL | Modifiers::ALT),
