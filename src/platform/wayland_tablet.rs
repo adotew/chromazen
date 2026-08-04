@@ -187,13 +187,18 @@ mod imp {
         tablet_seats: Vec<ZwpTabletSeatV2>,
         tablets: Vec<ZwpTabletV2>,
         tools: Vec<ZwpTabletToolV2>,
+        frame: TabletFrame,
+    }
+
+    #[derive(Debug, Default)]
+    struct TabletFrame {
         proximity: bool,
         tip_down: bool,
         position: [f32; 2],
         pressure: f32,
         pressure_supported: bool,
-        frame_action: FrameAction,
-        frame_updated: bool,
+        action: FrameAction,
+        updated: bool,
     }
 
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -221,13 +226,7 @@ mod imp {
                 tablet_seats: Vec::new(),
                 tablets: Vec::new(),
                 tools: Vec::new(),
-                proximity: false,
-                tip_down: false,
-                position: [0.0; 2],
-                pressure: 0.0,
-                pressure_supported: false,
-                frame_action: FrameAction::None,
-                frame_updated: false,
+                frame: TabletFrame::default(),
             }
         }
 
@@ -246,6 +245,14 @@ mod imp {
             (self.sink)(event);
         }
 
+        fn flush_frame(&mut self) {
+            if let Some(event) = self.frame.flush() {
+                self.emit(event);
+            }
+        }
+    }
+
+    impl TabletFrame {
         fn effective_pressure(&self) -> f32 {
             if !self.tip_down {
                 0.0
@@ -256,31 +263,27 @@ mod imp {
             }
         }
 
-        fn flush_frame(&mut self) {
-            let event = match self.frame_action {
+        fn flush(&mut self) -> Option<PenEvent> {
+            let event = match self.action {
                 FrameAction::Leave => Some(PenEvent::Leave),
                 FrameAction::Up => Some(PenEvent::Up),
                 FrameAction::Down => Some(PenEvent::Down {
                     position: self.position,
                     pressure: self.effective_pressure(),
                 }),
-                FrameAction::None if self.proximity && self.frame_updated => {
-                    Some(PenEvent::Motion {
-                        position: self.position,
-                        pressure: self.effective_pressure(),
-                        contact: self.tip_down,
-                    })
-                }
+                FrameAction::None if self.proximity && self.updated => Some(PenEvent::Motion {
+                    position: self.position,
+                    pressure: self.effective_pressure(),
+                    contact: self.tip_down,
+                }),
                 FrameAction::None => None,
             };
-            if let Some(event) = event {
-                self.emit(event);
-            }
-            if matches!(self.frame_action, FrameAction::Up | FrameAction::Leave) {
+            if matches!(self.action, FrameAction::Up | FrameAction::Leave) {
                 self.pressure = 0.0;
             }
-            self.frame_action = FrameAction::None;
-            self.frame_updated = false;
+            self.action = FrameAction::None;
+            self.updated = false;
+            event
         }
     }
 
@@ -450,35 +453,98 @@ mod imp {
         ) {
             match event {
                 zwp_tablet_tool_v2::Event::ProximityIn { surface, .. } => {
-                    state.proximity = surface.id().as_ptr() as usize == state.window_surface;
-                    state.tip_down = false;
-                    state.pressure = 0.0;
+                    state.frame.proximity = surface.id().as_ptr() as usize == state.window_surface;
+                    state.frame.tip_down = false;
+                    state.frame.pressure = 0.0;
                 }
-                zwp_tablet_tool_v2::Event::ProximityOut if state.proximity => {
-                    state.proximity = false;
-                    state.tip_down = false;
-                    state.frame_action = FrameAction::Leave;
+                zwp_tablet_tool_v2::Event::ProximityOut if state.frame.proximity => {
+                    state.frame.proximity = false;
+                    state.frame.tip_down = false;
+                    state.frame.action = FrameAction::Leave;
                 }
-                zwp_tablet_tool_v2::Event::Motion { x, y } if state.proximity => {
-                    state.position = [x as f32, y as f32];
-                    state.frame_updated = true;
+                zwp_tablet_tool_v2::Event::Motion { x, y } if state.frame.proximity => {
+                    state.frame.position = [x as f32, y as f32];
+                    state.frame.updated = true;
                 }
-                zwp_tablet_tool_v2::Event::Pressure { pressure } if state.proximity => {
-                    state.pressure = (pressure as f32 / 65535.0).clamp(0.0, 1.0);
-                    state.pressure_supported = true;
-                    state.frame_updated = true;
+                zwp_tablet_tool_v2::Event::Pressure { pressure } if state.frame.proximity => {
+                    state.frame.pressure = (pressure as f32 / 65535.0).clamp(0.0, 1.0);
+                    state.frame.pressure_supported = true;
+                    state.frame.updated = true;
                 }
-                zwp_tablet_tool_v2::Event::Down { .. } if state.proximity => {
-                    state.tip_down = true;
-                    state.frame_action = FrameAction::Down;
+                zwp_tablet_tool_v2::Event::Down { .. } if state.frame.proximity => {
+                    state.frame.tip_down = true;
+                    state.frame.action = FrameAction::Down;
                 }
-                zwp_tablet_tool_v2::Event::Up if state.tip_down => {
-                    state.tip_down = false;
-                    state.frame_action = FrameAction::Up;
+                zwp_tablet_tool_v2::Event::Up if state.frame.tip_down => {
+                    state.frame.tip_down = false;
+                    state.frame.action = FrameAction::Up;
                 }
                 zwp_tablet_tool_v2::Event::Frame { .. } => state.flush_frame(),
                 _ => {}
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn frame_combines_motion_with_latest_pressure() {
+            let mut frame = TabletFrame {
+                proximity: true,
+                tip_down: true,
+                position: [24.0, 48.0],
+                pressure: 0.25,
+                pressure_supported: true,
+                updated: true,
+                ..TabletFrame::default()
+            };
+
+            assert_eq!(
+                frame.flush(),
+                Some(PenEvent::Motion {
+                    position: [24.0, 48.0],
+                    pressure: 0.25,
+                    contact: true,
+                })
+            );
+            assert!(!frame.updated);
+        }
+
+        #[test]
+        fn pen_without_pressure_uses_mouse_fallback_during_contact() {
+            let mut frame = TabletFrame {
+                proximity: true,
+                tip_down: true,
+                position: [10.0, 20.0],
+                action: FrameAction::Down,
+                ..TabletFrame::default()
+            };
+
+            assert_eq!(
+                frame.flush(),
+                Some(PenEvent::Down {
+                    position: [10.0, 20.0],
+                    pressure: 1.0,
+                })
+            );
+        }
+
+        #[test]
+        fn up_and_leave_end_contact() {
+            let mut frame = TabletFrame {
+                proximity: true,
+                tip_down: false,
+                pressure: 0.8,
+                action: FrameAction::Up,
+                ..TabletFrame::default()
+            };
+            assert_eq!(frame.flush(), Some(PenEvent::Up));
+            assert_eq!(frame.pressure, 0.0);
+
+            frame.action = FrameAction::Leave;
+            assert_eq!(frame.flush(), Some(PenEvent::Leave));
         }
     }
 }

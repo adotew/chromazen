@@ -63,6 +63,7 @@ impl PressureStateHandle {
         (state.brush_pressure() - before).abs() > f32::EPSILON
     }
 
+    #[cfg(any(target_os = "macos", test))]
     pub(crate) fn set_pen_proximity(&self, in_proximity: bool) -> bool {
         let mut state = self.0.lock().expect("pressure state poisoned");
         let before = state.brush_pressure();

@@ -6,6 +6,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(super) enum AppCommand {
     Undo,
     Redo,
