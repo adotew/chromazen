@@ -24,10 +24,13 @@ dependencies = [
  "pollster",
  "raw-window-handle",
  "rfd",
+ "rustix 1.1.4",
  "serde",
  "tempfile",
  "toml",
  "uuid",
+ "wayland-client",
+ "wayland-protocols",
  "wgpu",
  "winit",
 ]
