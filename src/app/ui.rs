@@ -1360,6 +1360,16 @@ impl GuiLayer {
         let pixels_per_point = context.pixels_per_point();
         let screen_corners = canvas_crop_screen_corners(rect, view, pixels_per_point);
         let handle_positions = canvas_crop_handle_positions(screen_corners);
+        let pointer = context.pointer_latest_pos();
+        let hovered_handle = pointer.and_then(|pointer| {
+            let pointer_document = crop_pointer_document(pointer, view, pixels_per_point);
+            canvas_crop_handle_at(pointer, pointer_document, rect, &handle_positions)
+        });
+        let cursor_handle = self
+            .canvas_crop
+            .as_ref()
+            .and_then(|crop| crop.drag.map(|drag| drag.handle))
+            .or(hovered_handle);
         let validation = canvas_crop_request(rect, self.canvas_size_constraints);
         let status = validation
             .as_ref()
@@ -1390,8 +1400,8 @@ impl GuiLayer {
                 ));
                 for (_, position) in handle_positions {
                     let handle_rect =
-                        egui::Rect::from_center_size(position, egui::Vec2::splat(10.0));
-                    painter.rect_filled(handle_rect, 2.0, egui::Color32::from_gray(24));
+                        egui::Rect::from_center_size(position, egui::Vec2::splat(14.0));
+                    painter.rect_filled(handle_rect, 3.0, egui::Color32::from_gray(20));
                     painter.rect_stroke(
                         handle_rect,
                         2.0,
@@ -1409,22 +1419,23 @@ impl GuiLayer {
                 response
             })
             .inner;
+        let response = if let Some(handle) = cursor_handle {
+            response.on_hover_cursor(canvas_crop_cursor(handle))
+        } else {
+            response
+        };
 
-        let pointer = context.pointer_latest_pos();
         if response.drag_started()
             && let Some(pointer) = pointer
+            && let Some(handle) = hovered_handle
+            && let Some(crop) = self.canvas_crop.as_mut()
         {
             let pointer_document = crop_pointer_document(pointer, view, pixels_per_point);
-            let handle = canvas_crop_handle_at(pointer, pointer_document, rect, &handle_positions);
-            if let Some(handle) = handle
-                && let Some(crop) = self.canvas_crop.as_mut()
-            {
-                crop.drag = Some(CanvasCropDrag {
-                    handle,
-                    start_rect: crop.rect,
-                    start_pointer: pointer_document,
-                });
-            }
+            crop.drag = Some(CanvasCropDrag {
+                handle,
+                start_rect: crop.rect,
+                start_pointer: pointer_document,
+            });
         }
         if response.dragged()
             && let Some(pointer) = pointer
@@ -1627,19 +1638,72 @@ fn canvas_crop_handle_at(
     rect: CanvasCropRect,
     handles: &[(CanvasCropHandle, egui::Pos2); 8],
 ) -> Option<CanvasCropHandle> {
-    const HIT_RADIUS: f32 = 14.0;
-    handles
-        .iter()
-        .filter_map(|(handle, position)| {
-            let distance = position.distance_sq(pointer);
-            (distance <= HIT_RADIUS * HIT_RADIUS).then_some((*handle, distance))
+    const CORNER_HIT_RADIUS: f32 = 28.0;
+    const HANDLE_HIT_RADIUS: f32 = 24.0;
+    const EDGE_HIT_RADIUS: f32 = 14.0;
+    let nearest = |corner_only: bool, radius: f32| {
+        handles
+            .iter()
+            .filter(|(handle, _)| !corner_only || canvas_crop_handle_is_corner(*handle))
+            .filter_map(|(handle, position)| {
+                let distance = position.distance_sq(pointer);
+                (distance <= radius * radius).then_some((*handle, distance))
+            })
+            .min_by(|left, right| left.1.total_cmp(&right.1))
+            .map(|(handle, _)| handle)
+    };
+    nearest(true, CORNER_HIT_RADIUS)
+        .or_else(|| nearest(false, HANDLE_HIT_RADIUS))
+        .or_else(|| {
+            let edges = [
+                (CanvasCropHandle::Top, handles[0].1, handles[2].1),
+                (CanvasCropHandle::Right, handles[2].1, handles[4].1),
+                (CanvasCropHandle::Bottom, handles[6].1, handles[4].1),
+                (CanvasCropHandle::Left, handles[0].1, handles[6].1),
+            ];
+            edges
+                .into_iter()
+                .map(|(handle, start, end)| {
+                    (handle, point_segment_distance_sq(pointer, start, end))
+                })
+                .filter(|(_, distance)| *distance <= EDGE_HIT_RADIUS * EDGE_HIT_RADIUS)
+                .min_by(|left, right| left.1.total_cmp(&right.1))
+                .map(|(handle, _)| handle)
         })
-        .min_by(|left, right| left.1.total_cmp(&right.1))
-        .map(|(handle, _)| handle)
         .or_else(|| {
             rect.contains(pointer_document)
                 .then_some(CanvasCropHandle::Move)
         })
+}
+
+fn canvas_crop_handle_is_corner(handle: CanvasCropHandle) -> bool {
+    matches!(
+        handle,
+        CanvasCropHandle::TopLeft
+            | CanvasCropHandle::TopRight
+            | CanvasCropHandle::BottomLeft
+            | CanvasCropHandle::BottomRight
+    )
+}
+
+fn point_segment_distance_sq(point: egui::Pos2, start: egui::Pos2, end: egui::Pos2) -> f32 {
+    let segment = end - start;
+    let length_sq = segment.length_sq();
+    if length_sq <= f32::EPSILON {
+        return point.distance_sq(start);
+    }
+    let projection = ((point - start).dot(segment) / length_sq).clamp(0.0, 1.0);
+    point.distance_sq(start + segment * projection)
+}
+
+fn canvas_crop_cursor(handle: CanvasCropHandle) -> egui::CursorIcon {
+    match handle {
+        CanvasCropHandle::Move => egui::CursorIcon::Grab,
+        CanvasCropHandle::Left | CanvasCropHandle::Right => egui::CursorIcon::ResizeHorizontal,
+        CanvasCropHandle::Top | CanvasCropHandle::Bottom => egui::CursorIcon::ResizeVertical,
+        CanvasCropHandle::TopLeft | CanvasCropHandle::BottomRight => egui::CursorIcon::ResizeNwSe,
+        CanvasCropHandle::TopRight | CanvasCropHandle::BottomLeft => egui::CursorIcon::ResizeNeSw,
+    }
 }
 
 fn canvas_crop_rect_from_drag(drag: CanvasCropDrag, pointer: [f32; 2]) -> CanvasCropRect {
@@ -2333,6 +2397,38 @@ pub fn repaint_delay(output: &egui::FullOutput) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crop_handles_have_large_targets_and_entire_edges_are_draggable() {
+        let corners = [
+            egui::pos2(0.0, 0.0),
+            egui::pos2(400.0, 0.0),
+            egui::pos2(400.0, 200.0),
+            egui::pos2(0.0, 200.0),
+        ];
+        let handles = canvas_crop_handle_positions(corners);
+        let rect = CanvasCropRect {
+            min: [0.0, 0.0],
+            max: [400.0, 200.0],
+        };
+
+        assert_eq!(
+            canvas_crop_handle_at(egui::pos2(-18.0, -18.0), [-18.0, -18.0], rect, &handles),
+            Some(CanvasCropHandle::TopLeft)
+        );
+        assert_eq!(
+            canvas_crop_handle_at(egui::pos2(200.0, 20.0), [200.0, 20.0], rect, &handles),
+            Some(CanvasCropHandle::Top)
+        );
+        assert_eq!(
+            canvas_crop_handle_at(egui::pos2(100.0, 10.0), [100.0, 10.0], rect, &handles),
+            Some(CanvasCropHandle::Top)
+        );
+        assert_eq!(
+            canvas_crop_handle_at(egui::pos2(200.0, 100.0), [200.0, 100.0], rect, &handles),
+            Some(CanvasCropHandle::Move)
+        );
+    }
 
     #[test]
     fn crop_handles_resize_selected_edges_in_document_coordinates() {
