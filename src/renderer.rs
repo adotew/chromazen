@@ -329,6 +329,22 @@ impl PaintRenderer {
         self.view.set_rotation(radians)
     }
 
+    pub(crate) fn rotate_canvas_view(&mut self, radians: f32) -> bool {
+        self.view.rotate_by(radians)
+    }
+
+    pub(crate) fn reset_canvas_rotation(&mut self) -> bool {
+        self.view.reset_rotation()
+    }
+
+    pub(crate) fn toggle_canvas_flip_horizontal(&mut self) {
+        self.view.toggle_flip_horizontal();
+    }
+
+    pub(crate) fn toggle_canvas_flip_vertical(&mut self) {
+        self.view.toggle_flip_vertical();
+    }
+
     pub fn pan_by_window_delta(&mut self, delta: [f32; 2]) {
         self.view.pan_by_window_delta(delta);
     }

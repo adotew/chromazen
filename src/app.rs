@@ -611,6 +611,31 @@ impl App {
             match command {
                 AppCommand::Undo => self.undo(),
                 AppCommand::Redo => self.redo(),
+                AppCommand::RotateCanvasLeft => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.rotate_canvas_view(-std::f32::consts::FRAC_PI_2);
+                    }
+                }
+                AppCommand::RotateCanvasRight => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.rotate_canvas_view(std::f32::consts::FRAC_PI_2);
+                    }
+                }
+                AppCommand::ResetCanvasRotation => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.reset_canvas_rotation();
+                    }
+                }
+                AppCommand::ToggleCanvasFlipHorizontal => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.toggle_canvas_flip_horizontal();
+                    }
+                }
+                AppCommand::ToggleCanvasFlipVertical => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.toggle_canvas_flip_vertical();
+                    }
+                }
                 AppCommand::SelectTool(tool) => {
                     self.input.select_tool(tool);
                     if self.input.tool() != tool {

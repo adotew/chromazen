@@ -222,7 +222,8 @@ impl PaintInputController {
         let PhysicalKey::Code(key) = event.physical_key else {
             return None;
         };
-        document_command_for_key(key, self.modifiers)
+        canvas_command_for_key(key, self.modifiers)
+            .or_else(|| document_command_for_key(key, self.modifiers))
             .or_else(|| history_command_for_key(key, self.modifiers))
     }
 
@@ -621,6 +622,13 @@ fn paint_tool_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<PaintTo
     }
 }
 
+fn canvas_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<AppCommand> {
+    match (key, modifiers) {
+        (KeyCode::KeyR, ModifiersState::SHIFT) => Some(AppCommand::ResetCanvasRotation),
+        _ => None,
+    }
+}
+
 fn document_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<AppCommand> {
     if !modifiers.control_key() || modifiers.alt_key() || modifiers.super_key() {
         return None;
@@ -933,6 +941,18 @@ mod tests {
         let drag = input.resize_drag.unwrap();
         assert_eq!(drag.start_y, 80.0);
         assert_eq!(drag.start_size, 64.0);
+    }
+
+    #[test]
+    fn maps_canvas_view_shortcuts() {
+        assert_eq!(
+            canvas_command_for_key(KeyCode::KeyR, ModifiersState::SHIFT),
+            Some(AppCommand::ResetCanvasRotation)
+        );
+        assert_eq!(
+            canvas_command_for_key(KeyCode::KeyR, ModifiersState::empty()),
+            None
+        );
     }
 
     #[test]

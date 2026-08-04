@@ -171,6 +171,22 @@ impl PaintView {
         true
     }
 
+    pub(crate) fn rotate_by(&mut self, radians: f32) -> bool {
+        self.set_rotation(self.rotation + radians)
+    }
+
+    pub(crate) fn reset_rotation(&mut self) -> bool {
+        self.set_rotation(0.0)
+    }
+
+    pub(crate) fn toggle_flip_horizontal(&mut self) {
+        self.flip[0] = -self.flip[0];
+    }
+
+    pub(crate) fn toggle_flip_vertical(&mut self) {
+        self.flip[1] = -self.flip[1];
+    }
+
     pub(crate) fn reset_orientation(&mut self) {
         self.rotation = 0.0;
         self.flip = [1.0, 1.0];

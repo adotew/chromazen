@@ -23,6 +23,11 @@ mod imp {
     const QUIT_ID: &str = "chromazen.application.quit";
     const UNDO_ID: &str = "chromazen.edit.undo";
     const REDO_ID: &str = "chromazen.edit.redo";
+    const ROTATE_CANVAS_LEFT_ID: &str = "chromazen.canvas.rotate-left";
+    const ROTATE_CANVAS_RIGHT_ID: &str = "chromazen.canvas.rotate-right";
+    const RESET_CANVAS_ROTATION_ID: &str = "chromazen.canvas.reset-rotation";
+    const FLIP_CANVAS_HORIZONTAL_ID: &str = "chromazen.canvas.flip-horizontal";
+    const FLIP_CANVAS_VERTICAL_ID: &str = "chromazen.canvas.flip-vertical";
     const SAVE_SETTINGS_ID: &str = "chromazen.settings.save";
     const RELOAD_CONFIGURATION_ID: &str = "chromazen.settings.reload";
     const RESET_BRUSH_ID: &str = "chromazen.settings.reset-brush";
@@ -37,6 +42,7 @@ mod imp {
         add_reference: MenuItem,
         import_brushes: MenuItem,
         show_gallery: MenuItem,
+        canvas_actions: [MenuItem; 5],
         installed: bool,
     }
 
@@ -55,6 +61,9 @@ mod imp {
             let (edit_menu, undo, redo) = edit_menu()?;
             menu.append(&edit_menu)
                 .map_err(|error| format!("failed to add edit menu: {error}"))?;
+            let (canvas_menu, canvas_actions) = canvas_menu()?;
+            menu.append(&canvas_menu)
+                .map_err(|error| format!("failed to add canvas menu: {error}"))?;
             menu.append(&settings_menu()?)
                 .map_err(|error| format!("failed to add settings menu: {error}"))?;
 
@@ -67,6 +76,7 @@ mod imp {
                 add_reference,
                 import_brushes,
                 show_gallery,
+                canvas_actions,
                 installed: false,
             })
         }
@@ -92,6 +102,9 @@ mod imp {
             self.add_reference.set_enabled(in_editor);
             self.import_brushes.set_enabled(in_editor);
             self.show_gallery.set_enabled(in_editor);
+            for action in &self.canvas_actions {
+                action.set_enabled(in_editor);
+            }
         }
 
         pub(crate) fn set_export_enabled(&self, enabled: bool) {
@@ -189,6 +202,44 @@ mod imp {
         Ok((menu, undo, redo))
     }
 
+    fn canvas_menu() -> Result<(Submenu, [MenuItem; 5]), String> {
+        let rotate_left = MenuItem::with_id(ROTATE_CANVAS_LEFT_ID, "Rotate Left 90°", false, None);
+        let rotate_right =
+            MenuItem::with_id(ROTATE_CANVAS_RIGHT_ID, "Rotate Right 90°", false, None);
+        let reset_rotation = MenuItem::with_id(
+            RESET_CANVAS_ROTATION_ID,
+            "Reset Rotation",
+            false,
+            Some(Accelerator::new(Some(Modifiers::SHIFT), Code::KeyR)),
+        );
+        let flip_horizontal =
+            MenuItem::with_id(FLIP_CANVAS_HORIZONTAL_ID, "Flip Horizontally", false, None);
+        let flip_vertical =
+            MenuItem::with_id(FLIP_CANVAS_VERTICAL_ID, "Flip Vertically", false, None);
+        let separator = PredefinedMenuItem::separator();
+        let actions = [
+            rotate_left,
+            rotate_right,
+            reset_rotation,
+            flip_horizontal,
+            flip_vertical,
+        ];
+        let menu = Submenu::with_items(
+            "Canvas",
+            true,
+            &[
+                &actions[0],
+                &actions[1],
+                &actions[2],
+                &separator,
+                &actions[3],
+                &actions[4],
+            ],
+        )
+        .map_err(|error| format!("failed to build canvas menu: {error}"))?;
+        Ok((menu, actions))
+    }
+
     fn settings_menu() -> Result<Submenu, String> {
         let save = MenuItem::with_id(SAVE_SETTINGS_ID, "Save Settings", true, None);
         let reload = MenuItem::with_id(RELOAD_CONFIGURATION_ID, "Reload Configuration", true, None);
@@ -262,6 +313,11 @@ mod imp {
             QUIT_ID => Some(AppCommand::Quit),
             UNDO_ID => Some(AppCommand::Undo),
             REDO_ID => Some(AppCommand::Redo),
+            ROTATE_CANVAS_LEFT_ID => Some(AppCommand::RotateCanvasLeft),
+            ROTATE_CANVAS_RIGHT_ID => Some(AppCommand::RotateCanvasRight),
+            RESET_CANVAS_ROTATION_ID => Some(AppCommand::ResetCanvasRotation),
+            FLIP_CANVAS_HORIZONTAL_ID => Some(AppCommand::ToggleCanvasFlipHorizontal),
+            FLIP_CANVAS_VERTICAL_ID => Some(AppCommand::ToggleCanvasFlipVertical),
             SAVE_SETTINGS_ID => Some(AppCommand::SaveSettings),
             RELOAD_CONFIGURATION_ID => Some(AppCommand::ReloadConfiguration),
             RESET_BRUSH_ID => Some(AppCommand::ResetBrush),
@@ -311,6 +367,26 @@ mod imp {
             assert_eq!(
                 command_for_id(&MenuId::new(REDO_ID)),
                 Some(AppCommand::Redo)
+            );
+            assert_eq!(
+                command_for_id(&MenuId::new(ROTATE_CANVAS_LEFT_ID)),
+                Some(AppCommand::RotateCanvasLeft)
+            );
+            assert_eq!(
+                command_for_id(&MenuId::new(ROTATE_CANVAS_RIGHT_ID)),
+                Some(AppCommand::RotateCanvasRight)
+            );
+            assert_eq!(
+                command_for_id(&MenuId::new(RESET_CANVAS_ROTATION_ID)),
+                Some(AppCommand::ResetCanvasRotation)
+            );
+            assert_eq!(
+                command_for_id(&MenuId::new(FLIP_CANVAS_HORIZONTAL_ID)),
+                Some(AppCommand::ToggleCanvasFlipHorizontal)
+            );
+            assert_eq!(
+                command_for_id(&MenuId::new(FLIP_CANVAS_VERTICAL_ID)),
+                Some(AppCommand::ToggleCanvasFlipVertical)
             );
             assert_eq!(
                 command_for_id(&MenuId::new(SAVE_SETTINGS_ID)),

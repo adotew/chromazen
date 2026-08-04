@@ -10,6 +10,11 @@ use crate::{
 pub(super) enum AppCommand {
     Undo,
     Redo,
+    RotateCanvasLeft,
+    RotateCanvasRight,
+    ResetCanvasRotation,
+    ToggleCanvasFlipHorizontal,
+    ToggleCanvasFlipVertical,
     SelectTool(PaintTool),
     SelectLayer(LayerId),
     AddLayer,
