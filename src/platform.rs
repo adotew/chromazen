@@ -1,6 +1,7 @@
 mod macos_pressure;
 mod pressure;
 mod wayland_tablet;
+mod windows_pen;
 
 pub(crate) use macos_pressure::MacosPressureMonitor;
 pub(crate) use pressure::PressureStateHandle;
