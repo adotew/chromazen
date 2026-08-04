@@ -1,16 +1,16 @@
-#![cfg_attr(not(test), allow(dead_code))]
-
+#[cfg(any(target_os = "windows", test))]
 use super::PenEvent;
 
+#[cfg(any(target_os = "windows", test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum WindowsPenAction {
     Down,
     Motion,
     Up,
-    Leave,
     Cancel,
 }
 
+#[cfg(any(target_os = "windows", test))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct WindowsPenSample {
     pub action: WindowsPenAction,
@@ -20,6 +20,7 @@ pub(super) struct WindowsPenSample {
     pub contact: bool,
 }
 
+#[cfg(any(target_os = "windows", test))]
 pub(super) fn events_for_sample(sample: WindowsPenSample) -> Vec<PenEvent> {
     let pressure = effective_pressure(sample.pressure, sample.contact);
     match sample.action {
@@ -33,15 +34,16 @@ pub(super) fn events_for_sample(sample: WindowsPenSample) -> Vec<PenEvent> {
             contact: sample.contact,
         }],
         WindowsPenAction::Up => vec![PenEvent::Up],
-        WindowsPenAction::Leave => vec![PenEvent::Leave],
         WindowsPenAction::Cancel => vec![PenEvent::Up, PenEvent::Leave],
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
 pub(super) fn normalize_pressure(raw: u32, supported: bool) -> Option<f32> {
     supported.then(|| (raw as f32 / 1024.0).clamp(0.0, 1.0))
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn effective_pressure(pressure: Option<f32>, contact: bool) -> f32 {
     if contact {
         pressure.unwrap_or(1.0).clamp(0.0, 1.0)
@@ -105,13 +107,6 @@ mod tests {
         assert_eq!(events_for_sample(sample), vec![PenEvent::Up]);
         assert_eq!(
             events_for_sample(WindowsPenSample {
-                action: WindowsPenAction::Leave,
-                ..sample
-            }),
-            vec![PenEvent::Leave]
-        );
-        assert_eq!(
-            events_for_sample(WindowsPenSample {
                 action: WindowsPenAction::Cancel,
                 ..sample
             }),
@@ -121,7 +116,6 @@ mod tests {
 }
 
 #[cfg(not(target_os = "windows"))]
-#[allow(dead_code)]
 mod imp {
     use std::sync::Arc;
 
@@ -133,6 +127,10 @@ mod imp {
     pub struct WindowsPenRouter;
 
     impl WindowsPenRouter {
+        pub fn new() -> Self {
+            Self
+        }
+
         pub fn install_hook<T: 'static>(&self, _builder: &mut EventLoopBuilder<T>) {}
     }
 
@@ -203,6 +201,10 @@ mod imp {
     }
 
     impl WindowsPenRouter {
+        pub fn new() -> Self {
+            Self::default()
+        }
+
         pub fn install_hook<T: 'static>(&self, builder: &mut EventLoopBuilder<T>) {
             let state = Rc::clone(&self.state);
             builder.with_msg_hook(move |message| {
@@ -369,5 +371,4 @@ mod imp {
     }
 }
 
-#[allow(unused_imports)]
 pub(crate) use imp::{WindowsPenMonitor, WindowsPenRouter};
