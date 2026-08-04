@@ -52,6 +52,12 @@ fn effective_pressure(pressure: Option<f32>, contact: bool) -> f32 {
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn physical_to_logical(position: [i32; 2], dpi: u32) -> [f32; 2] {
+    let scale = 96.0 / dpi.max(96) as f32;
+    [position[0] as f32 * scale, position[1] as f32 * scale]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,7 +103,7 @@ mod tests {
     }
 
     #[test]
-    fn release_leave_and_cancellation_end_input() {
+    fn release_and_cancellation_end_input() {
         let sample = WindowsPenSample {
             action: WindowsPenAction::Up,
             position: [0.0; 2],
@@ -112,6 +118,13 @@ mod tests {
             }),
             vec![PenEvent::Up, PenEvent::Leave]
         );
+    }
+
+    #[test]
+    fn physical_coordinates_follow_windows_dpi() {
+        assert_eq!(physical_to_logical([300, 150], 96), [300.0, 150.0]);
+        assert_eq!(physical_to_logical([300, 150], 144), [200.0, 100.0]);
+        assert_eq!(physical_to_logical([300, 150], 0), [300.0, 150.0]);
     }
 }
 
@@ -178,7 +191,10 @@ mod imp {
         event_loop::EventLoopBuilder, platform::windows::EventLoopBuilderExtWindows, window::Window,
     };
 
-    use super::{WindowsPenAction, WindowsPenSample, events_for_sample, normalize_pressure};
+    use super::{
+        WindowsPenAction, WindowsPenSample, events_for_sample, normalize_pressure,
+        physical_to_logical,
+    };
     use crate::platform::PenEvent;
 
     type PenSink = Box<dyn Fn(PenEvent)>;
@@ -192,6 +208,7 @@ mod imp {
     struct RouterState {
         target_hwnd: Option<usize>,
         active_pointer: Option<u32>,
+        active_contact: bool,
         sink: Option<PenSink>,
     }
 
@@ -237,6 +254,7 @@ mod imp {
             let mut state = router.state.borrow_mut();
             state.target_hwnd = Some(hwnd);
             state.active_pointer = None;
+            state.active_contact = false;
             state.sink = Some(Box::new(sink));
             drop(state);
             Ok(Some(Self { router, hwnd }))
@@ -249,6 +267,7 @@ mod imp {
             if state.target_hwnd == Some(self.hwnd) {
                 state.target_hwnd = None;
                 state.active_pointer = None;
+                state.active_contact = false;
                 state.sink = None;
             }
         }
@@ -278,25 +297,18 @@ mod imp {
                     true
                 }
                 WM_POINTERLEAVE if self.active_pointer == Some(pointer_id) => {
-                    self.emit_event(PenEvent::Leave);
-                    self.active_pointer = None;
+                    self.end_pointer();
                     true
                 }
                 WM_POINTERCAPTURECHANGED if self.active_pointer == Some(pointer_id) => {
-                    self.emit_sample(WindowsPenSample {
-                        action: WindowsPenAction::Cancel,
-                        position: [0.0; 2],
-                        pressure: None,
-                        contact: false,
-                    });
-                    self.active_pointer = None;
+                    self.end_pointer();
                     true
                 }
                 _ => false,
             }
         }
 
-        fn emit_info(&self, hwnd: HWND, info: &POINTER_PEN_INFO) {
+        fn emit_info(&mut self, hwnd: HWND, info: &POINTER_PEN_INFO) {
             let flags = info.pointerInfo.pointerFlags;
             let action = if flags & (POINTER_FLAG_CANCELED | POINTER_FLAG_CAPTURECHANGED) != 0 {
                 WindowsPenAction::Cancel
@@ -311,17 +323,28 @@ mod imp {
             if unsafe { ScreenToClient(hwnd, &mut point) } == 0 {
                 return;
             }
-            let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
-            let logical_scale = 96.0 / dpi as f32;
+            let dpi = unsafe { GetDpiForWindow(hwnd) };
+            let contact = flags & POINTER_FLAG_INCONTACT != 0;
+            self.active_contact = contact;
             self.emit_sample(WindowsPenSample {
                 action,
-                position: [
-                    point.x as f32 * logical_scale,
-                    point.y as f32 * logical_scale,
-                ],
+                position: physical_to_logical([point.x, point.y], dpi),
                 pressure: normalize_pressure(info.pressure, info.penMask & PEN_MASK_PRESSURE != 0),
-                contact: flags & POINTER_FLAG_INCONTACT != 0,
+                contact,
             });
+            if action == WindowsPenAction::Cancel {
+                self.active_pointer = None;
+                self.active_contact = false;
+            }
+        }
+
+        fn end_pointer(&mut self) {
+            if self.active_contact {
+                self.emit_event(PenEvent::Up);
+            }
+            self.emit_event(PenEvent::Leave);
+            self.active_pointer = None;
+            self.active_contact = false;
         }
 
         fn emit_sample(&self, sample: WindowsPenSample) {
