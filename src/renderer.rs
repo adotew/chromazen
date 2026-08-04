@@ -2009,6 +2009,27 @@ mod tests {
     }
 
     #[test]
+    fn rotated_canvas_scissor_uses_all_four_corners() {
+        let view = PaintViewSnapshot {
+            zoom: 1.0,
+            center: [50.0, 25.0],
+            viewport_center: [100.0, 100.0],
+            rotation: std::f32::consts::FRAC_PI_2,
+            flip: [1.0, 1.0],
+        };
+
+        assert_eq!(
+            visible_canvas_rect(view, [100, 50], [200, 200]),
+            Some(TextureRect {
+                x: 75,
+                y: 50,
+                width: 50,
+                height: 100,
+            })
+        );
+    }
+
+    #[test]
     fn canvas_outside_surface_has_no_scissor_rect() {
         let view = PaintViewSnapshot {
             zoom: 1.0,

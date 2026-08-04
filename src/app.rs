@@ -612,26 +612,31 @@ impl App {
                 AppCommand::Undo => self.undo(),
                 AppCommand::Redo => self.redo(),
                 AppCommand::RotateCanvasLeft => {
+                    self.finish_editor_interaction();
                     if let Some(paint) = self.paint.as_mut() {
                         paint.rotate_canvas_view(-std::f32::consts::FRAC_PI_2);
                     }
                 }
                 AppCommand::RotateCanvasRight => {
+                    self.finish_editor_interaction();
                     if let Some(paint) = self.paint.as_mut() {
                         paint.rotate_canvas_view(std::f32::consts::FRAC_PI_2);
                     }
                 }
                 AppCommand::ResetCanvasRotation => {
+                    self.finish_editor_interaction();
                     if let Some(paint) = self.paint.as_mut() {
                         paint.reset_canvas_rotation();
                     }
                 }
                 AppCommand::ToggleCanvasFlipHorizontal => {
+                    self.finish_editor_interaction();
                     if let Some(paint) = self.paint.as_mut() {
                         paint.toggle_canvas_flip_horizontal();
                     }
                 }
                 AppCommand::ToggleCanvasFlipVertical => {
+                    self.finish_editor_interaction();
                     if let Some(paint) = self.paint.as_mut() {
                         paint.toggle_canvas_flip_vertical();
                     }
@@ -645,9 +650,7 @@ impl App {
                     }
                 }
                 AppCommand::ResizeCanvas { width, height } => {
-                    if let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_ref()) {
-                        self.input.finish_document_interaction(paint, gui.brush);
-                    }
+                    self.finish_editor_interaction();
                     let result = self
                         .paint
                         .as_mut()
@@ -1097,6 +1100,12 @@ impl App {
             window.set_title(WINDOW_TITLE);
         }
         self.sync_history_menu();
+    }
+
+    fn finish_editor_interaction(&mut self) {
+        if let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_ref()) {
+            self.input.finish_document_interaction(paint, gui.brush);
+        }
     }
 
     fn undo(&mut self) {

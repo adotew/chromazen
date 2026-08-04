@@ -41,18 +41,6 @@ impl PaintViewSnapshot {
         [delta[0] / self.zoom, delta[1] / self.zoom]
     }
 
-    /// Maps workspace aids without rotating or mirroring them with the paint canvas.
-    pub(crate) fn workspace_to_window(self, point: [f32; 2]) -> [f32; 2] {
-        [
-            self.viewport_center[0] + (point[0] - self.center[0]) * self.zoom,
-            self.viewport_center[1] + (point[1] - self.center[1]) * self.zoom,
-        ]
-    }
-
-    pub(crate) fn window_delta_to_workspace(self, delta: [f32; 2]) -> [f32; 2] {
-        [delta[0] / self.zoom, delta[1] / self.zoom]
-    }
-
     pub(crate) fn rotation(self) -> f32 {
         self.rotation
     }
@@ -273,13 +261,6 @@ mod tests {
         view.fit_to_screen([800, 400], [200, 100]);
         assert_eq!(view.zoom, 2.0);
         assert_eq!(view.center, [100.0, 50.0]);
-    }
-
-    #[test]
-    fn workspace_aids_remain_upright_when_canvas_rotates() {
-        let view = view(std::f32::consts::FRAC_PI_2, [-1.0, 1.0]);
-        assert_eq!(view.workspace_to_window([60.0, 40.0]), [420.0, 300.0]);
-        assert_eq!(view.window_delta_to_workspace([20.0, -10.0]), [10.0, -5.0]);
     }
 
     #[test]
