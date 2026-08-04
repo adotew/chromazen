@@ -290,6 +290,7 @@ impl PaintRenderer {
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         self.gpu.resize(size);
+        self.view.set_surface_size(self.gpu.surface_size());
     }
 
     pub fn try_set_brush_preset(&mut self, preset: &LoadedBrushPreset) -> Result<bool, String> {
@@ -436,6 +437,7 @@ impl PaintRenderer {
         self.stamp_queue.clear();
         self.history.clear();
         self.clipping_bind_groups_dirty = true;
+        self.view.reset_orientation();
         self.fit_to_screen();
         self.reset_change_tracking(true);
         Ok(())
@@ -521,6 +523,7 @@ impl PaintRenderer {
         self.stamp_queue.clear();
         self.history.clear();
         self.clipping_bind_groups_dirty = true;
+        self.view.reset_orientation();
         self.fit_to_screen();
         self.reset_change_tracking(false);
         Ok(())
@@ -1765,7 +1768,10 @@ mod tests {
     fn visible_canvas_rect_clips_to_the_surface() {
         let view = PaintViewSnapshot {
             zoom: 2.0,
-            offset: [-10.25, 20.25],
+            center: [27.25, 45.25],
+            viewport_center: [75.0, 50.0],
+            rotation: 0.0,
+            flip: [1.0, 1.0],
         };
 
         assert_eq!(
@@ -1783,7 +1789,10 @@ mod tests {
     fn canvas_outside_surface_has_no_scissor_rect() {
         let view = PaintViewSnapshot {
             zoom: 1.0,
-            offset: [200.0, 200.0],
+            center: [250.0, 250.0],
+            viewport_center: [50.0, 50.0],
+            rotation: 0.0,
+            flip: [1.0, 1.0],
         };
 
         assert_eq!(visible_canvas_rect(view, [100, 100], [100, 100]), None);
