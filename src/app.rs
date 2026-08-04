@@ -225,7 +225,7 @@ impl ApplicationHandler<AppEvent> for App {
                 let placement = self
                     .paint
                     .as_ref()
-                    .map(|paint| paint.window_to_document(self.input.cursor_position()));
+                    .map(|paint| paint.window_to_workspace(self.input.cursor_position()));
                 if let Some(artwork_id) = self.autosave.artwork_id().cloned() {
                     self.reference_import
                         .start(artwork_id, vec![path], placement);
@@ -614,6 +614,22 @@ impl App {
 
         let commands = std::mem::take(&mut self.pending_commands);
         for command in commands {
+            let canvas_crop_active = self.gui.as_ref().is_some_and(GuiLayer::canvas_crop_active);
+            if canvas_crop_active
+                && matches!(
+                    &command,
+                    AppCommand::Undo
+                        | AppCommand::Redo
+                        | AppCommand::RotateCanvasLeft
+                        | AppCommand::RotateCanvasRight
+                        | AppCommand::ResetCanvasRotation
+                        | AppCommand::ToggleCanvasFlipHorizontal
+                        | AppCommand::ToggleCanvasFlipVertical
+                        | AppCommand::RequestCanvasResize
+                )
+            {
+                continue;
+            }
             match command {
                 AppCommand::Undo => self.undo(),
                 AppCommand::Redo => self.redo(),
@@ -1136,13 +1152,17 @@ impl App {
     }
 
     fn sync_history_menu(&self) {
-        let (can_undo, can_redo) = (self.screen == AppScreen::Editor)
+        let in_editor = self.screen == AppScreen::Editor;
+        let canvas_crop_active =
+            in_editor && self.gui.as_ref().is_some_and(GuiLayer::canvas_crop_active);
+        let (can_undo, can_redo) = (in_editor && !canvas_crop_active)
             .then_some(self.paint.as_ref())
             .flatten()
             .map_or((false, false), |paint| (paint.can_undo(), paint.can_redo()));
         self.native_menu.set_history_enabled(can_undo, can_redo);
-        let in_editor = self.screen == AppScreen::Editor;
         self.native_menu.set_document_enabled(in_editor);
+        self.native_menu
+            .set_canvas_enabled(in_editor && !canvas_crop_active);
         self.native_menu
             .set_export_enabled(in_editor && !self.export.is_exporting());
     }

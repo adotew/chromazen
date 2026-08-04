@@ -378,6 +378,10 @@ impl PaintRenderer {
         self.view.window_to_document(point)
     }
 
+    pub(crate) fn window_to_workspace(&self, point: [f32; 2]) -> [f32; 2] {
+        self.view.snapshot().window_to_workspace(point)
+    }
+
     pub fn sample_composited_color(&self, window_point: [f32; 2]) -> Option<[u8; 3]> {
         if self.active_stroke.is_some() || self.stamp_queue.has_pending() {
             return None;

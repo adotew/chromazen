@@ -103,8 +103,11 @@ mod imp {
             self.add_reference.set_enabled(in_editor);
             self.import_brushes.set_enabled(in_editor);
             self.show_gallery.set_enabled(in_editor);
+        }
+
+        pub(crate) fn set_canvas_enabled(&self, enabled: bool) {
             for action in &self.canvas_actions {
-                action.set_enabled(in_editor);
+                action.set_enabled(enabled);
             }
         }
 
@@ -478,6 +481,8 @@ impl NativeMenu {
     pub(super) fn set_history_enabled(&self, _can_undo: bool, _can_redo: bool) {}
 
     pub(super) fn set_document_enabled(&self, _in_editor: bool) {}
+
+    pub(super) fn set_canvas_enabled(&self, _enabled: bool) {}
 
     pub(super) fn set_export_enabled(&self, _enabled: bool) {}
 
