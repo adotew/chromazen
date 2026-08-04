@@ -237,8 +237,11 @@ impl ApplicationHandler<AppEvent> for App {
                     return;
                 };
                 let cursor_changed = self.input.observe_event(&event);
+                let canvas_crop_active =
+                    self.screen == AppScreen::Editor && gui.canvas_crop_active();
                 if self.screen == AppScreen::Editor
                     && !navigation_pending
+                    && !canvas_crop_active
                     && let Some(shortcut) = self.input.keyboard_shortcut(&event)
                 {
                     let changed = match shortcut {
@@ -294,15 +297,18 @@ impl ApplicationHandler<AppEvent> for App {
                     needs_redraw |= gui.close_popups();
                 }
 
-                let history_command =
-                    (self.screen == AppScreen::Editor && !navigation_pending && !egui_consumed)
-                        .then(|| self.input.app_command(&event))
-                        .flatten();
+                let history_command = (self.screen == AppScreen::Editor
+                    && !navigation_pending
+                    && !canvas_crop_active
+                    && !egui_consumed)
+                    .then(|| self.input.app_command(&event))
+                    .flatten();
                 if let Some(command) = history_command {
                     self.pending_commands.push(command);
                     needs_redraw = true;
                 } else if self.screen == AppScreen::Editor
                     && !navigation_pending
+                    && !canvas_crop_active
                     && (self.input.captures_drag_event(&event)
                         || wheel_over_reference
                         || (!egui_consumed && !primary_press_over_reference))
@@ -646,16 +652,20 @@ impl App {
                         && let Some(size) = self.paint.as_ref().map(PaintRenderer::document_size)
                         && let Some(gui) = self.gui.as_mut()
                     {
-                        gui.open_canvas_resize_dialog(size);
+                        gui.open_canvas_crop(size);
                     }
                 }
-                AppCommand::ResizeCanvas { width, height } => {
+                AppCommand::ResizeCanvas {
+                    width,
+                    height,
+                    origin,
+                } => {
                     self.finish_editor_interaction();
                     let result = self
                         .paint
                         .as_mut()
                         .ok_or_else(|| "the paint renderer is unavailable".to_owned())
-                        .and_then(|paint| paint.resize_canvas_centered([width, height]));
+                        .and_then(|paint| paint.resize_canvas([width, height], origin));
                     if let Err(error) = result
                         && let Some(gui) = self.gui.as_mut()
                     {
@@ -847,7 +857,7 @@ impl App {
                     if self.screen == AppScreen::Editor {
                         if let Some(gui) = self.gui.as_mut() {
                             gui.close_new_artwork_dialog();
-                            gui.close_canvas_resize_dialog();
+                            gui.close_canvas_crop();
                         }
                         self.pending_gallery = true;
                         self.pending_new_artwork = None;

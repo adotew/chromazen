@@ -487,16 +487,6 @@ impl PaintRenderer {
         Ok(())
     }
 
-    pub(crate) fn resize_canvas_centered(&mut self, size: [u32; 2]) -> Result<bool, String> {
-        let (source, destination) = centered_canvas_copy(self.document_size, size);
-        let origin = [
-            source.x as i64 - i64::from(destination[0]),
-            source.y as i64 - i64::from(destination[1]),
-        ];
-        let origin = origin.map(|value| i32::try_from(value).expect("canvas origin fits in i32"));
-        self.resize_canvas(size, origin)
-    }
-
     pub(crate) fn resize_canvas(
         &mut self,
         size: [u32; 2],
@@ -1897,20 +1887,6 @@ fn canvas_copy_for_resize(
     })
 }
 
-fn centered_canvas_copy(before: [u32; 2], after: [u32; 2]) -> (TextureRect, [u32; 2]) {
-    let width = before[0].min(after[0]);
-    let height = before[1].min(after[1]);
-    (
-        TextureRect {
-            x: (before[0] - width) / 2,
-            y: (before[1] - height) / 2,
-            width,
-            height,
-        },
-        [(after[0] - width) / 2, (after[1] - height) / 2],
-    )
-}
-
 fn layer_set_byte_len(size: [u32; 2], layer_count: usize) -> u64 {
     let canvas = u64::from(size[0]) * u64::from(size[1]) * 4;
     let preview = u64::from(LAYER_PREVIEW_SIZE) * u64::from(LAYER_PREVIEW_SIZE) * 4;
@@ -2055,38 +2031,6 @@ mod tests {
     #[test]
     fn canvas_resize_can_create_a_blank_canvas_outside_the_old_bounds() {
         assert_eq!(canvas_copy_for_resize([100, 80], [20, 20], [120, 90]), None);
-    }
-
-    #[test]
-    fn centered_canvas_growth_puts_odd_extra_pixels_on_right_and_bottom() {
-        assert_eq!(
-            centered_canvas_copy([4, 2], [7, 5]),
-            (
-                TextureRect {
-                    x: 0,
-                    y: 0,
-                    width: 4,
-                    height: 2,
-                },
-                [1, 1]
-            )
-        );
-    }
-
-    #[test]
-    fn centered_canvas_shrink_crops_odd_extra_pixels_from_right_and_bottom() {
-        assert_eq!(
-            centered_canvas_copy([7, 5], [4, 2]),
-            (
-                TextureRect {
-                    x: 1,
-                    y: 1,
-                    width: 4,
-                    height: 2,
-                },
-                [0, 0]
-            )
-        );
     }
 
     #[test]

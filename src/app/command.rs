@@ -19,6 +19,7 @@ pub(super) enum AppCommand {
     ResizeCanvas {
         width: u32,
         height: u32,
+        origin: [i32; 2],
     },
     SelectTool(PaintTool),
     SelectLayer(LayerId),

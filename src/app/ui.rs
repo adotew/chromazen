@@ -81,7 +81,7 @@ pub struct GuiLayer {
     layers_window_open: bool,
     canvas_size_constraints: CanvasSizeConstraints,
     new_artwork_dialog: Option<NewArtworkDialog>,
-    canvas_resize_dialog: Option<NewArtworkDialog>,
+    canvas_crop: Option<CanvasCrop>,
     gallery: gallery::GalleryUi,
 }
 
@@ -135,6 +135,60 @@ struct LayerOpacityEdit {
 struct NewArtworkDialog {
     width: u32,
     height: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CanvasCropRect {
+    min: [f32; 2],
+    max: [f32; 2],
+}
+
+impl CanvasCropRect {
+    fn from_size(size: [u32; 2]) -> Self {
+        Self {
+            min: [0.0, 0.0],
+            max: [size[0] as f32, size[1] as f32],
+        }
+    }
+
+    fn contains(self, point: [f32; 2]) -> bool {
+        point[0] >= self.min[0]
+            && point[0] <= self.max[0]
+            && point[1] >= self.min[1]
+            && point[1] <= self.max[1]
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CanvasCropHandle {
+    Move,
+    Left,
+    Right,
+    Top,
+    Bottom,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+#[derive(Clone, Copy)]
+struct CanvasCropDrag {
+    handle: CanvasCropHandle,
+    start_rect: CanvasCropRect,
+    start_pointer: [f32; 2],
+}
+
+struct CanvasCrop {
+    rect: CanvasCropRect,
+    drag: Option<CanvasCropDrag>,
+    restore_sidebar: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CanvasCropRequest {
+    size: [u32; 2],
+    origin: [i32; 2],
 }
 
 impl GuiLayer {
@@ -207,7 +261,7 @@ impl GuiLayer {
             layers_window_open: false,
             canvas_size_constraints: paint.canvas_size_constraints(),
             new_artwork_dialog: None,
-            canvas_resize_dialog: None,
+            canvas_crop: None,
             gallery: gallery::GalleryUi::default(),
         }
     }
@@ -1159,7 +1213,7 @@ impl GuiLayer {
                 }
             }
             self.show_new_artwork_dialog(ui.ctx());
-            self.show_canvas_resize_dialog(ui.ctx());
+            self.show_canvas_crop(ui.ctx(), workspace_view, workspace_rect);
             self.clear_reference_selection_on_outside_press(ui.ctx());
         })
     }
@@ -1191,7 +1245,7 @@ impl GuiLayer {
     }
 
     pub(crate) fn open_new_artwork_dialog(&mut self) {
-        self.canvas_resize_dialog = None;
+        self.close_canvas_crop();
         self.new_artwork_dialog = Some(NewArtworkDialog {
             width: DEFAULT_CANVAS_SIZE[0],
             height: DEFAULT_CANVAS_SIZE[1],
@@ -1264,80 +1318,142 @@ impl GuiLayer {
         }
     }
 
-    pub(crate) fn open_canvas_resize_dialog(&mut self, size: [u32; 2]) {
+    pub(crate) fn open_canvas_crop(&mut self, size: [u32; 2]) {
         self.new_artwork_dialog = None;
-        self.canvas_resize_dialog = Some(NewArtworkDialog {
-            width: size[0],
-            height: size[1],
+        let restore_sidebar = self
+            .canvas_crop
+            .as_ref()
+            .map_or(self.sidebar_visible, |crop| crop.restore_sidebar);
+        self.canvas_crop = Some(CanvasCrop {
+            rect: CanvasCropRect::from_size(size),
+            drag: None,
+            restore_sidebar,
         });
+        self.sidebar_visible = false;
+        self.color_window_open = false;
+        self.layers_window_open = false;
+        self.selected_reference = None;
+        self.reference_transform_edit = None;
         self.context.request_repaint();
     }
 
-    pub(crate) fn close_canvas_resize_dialog(&mut self) {
-        self.canvas_resize_dialog = None;
+    pub(crate) fn close_canvas_crop(&mut self) {
+        if let Some(crop) = self.canvas_crop.take() {
+            self.sidebar_visible = crop.restore_sidebar;
+            self.context.request_repaint();
+        }
     }
 
-    fn show_canvas_resize_dialog(&mut self, context: &egui::Context) {
-        let Some(dialog) = self.canvas_resize_dialog.as_mut() else {
+    pub(crate) fn canvas_crop_active(&self) -> bool {
+        self.canvas_crop.is_some()
+    }
+
+    fn show_canvas_crop(
+        &mut self,
+        context: &egui::Context,
+        view: PaintViewSnapshot,
+        workspace_rect: egui::Rect,
+    ) {
+        let Some(rect) = self.canvas_crop.as_ref().map(|crop| crop.rect) else {
             return;
         };
-        let mut close = false;
-        let mut resize = None;
-        let response =
-            egui::Modal::new(egui::Id::new("canvas resize dialog")).show(context, |ui| {
-                ui.heading("Resize Canvas");
-                ui.label("Paint remains centered and is not scaled.");
-                ui.add_space(8.0);
-                egui::Grid::new("canvas resize dimensions")
-                    .num_columns(3)
-                    .spacing([10.0, 8.0])
-                    .show(ui, |ui| {
-                        ui.label("Width");
-                        ui.add(
-                            egui::DragValue::new(&mut dialog.width)
-                                .range(1..=self.canvas_size_constraints.max_dimension)
-                                .speed(1),
-                        );
-                        ui.label("px");
-                        ui.end_row();
+        let pixels_per_point = context.pixels_per_point();
+        let screen_corners = canvas_crop_screen_corners(rect, view, pixels_per_point);
+        let handle_positions = canvas_crop_handle_positions(screen_corners);
+        let validation = canvas_crop_request(rect, self.canvas_size_constraints);
+        let status = validation
+            .as_ref()
+            .map(|request| {
+                format!(
+                    "{} × {} px  •  Enter to apply  •  Esc to cancel",
+                    request.size[0], request.size[1]
+                )
+            })
+            .unwrap_or_else(|error| format!("{error}  •  Esc to cancel"));
+        let status_color = if validation.is_ok() {
+            egui::Color32::WHITE
+        } else {
+            egui::Color32::LIGHT_RED
+        };
 
-                        ui.label("Height");
-                        ui.add(
-                            egui::DragValue::new(&mut dialog.height)
-                                .range(1..=self.canvas_size_constraints.max_dimension)
-                                .speed(1),
-                        );
-                        ui.label("px");
-                        ui.end_row();
-                    });
-                let validation = self
-                    .canvas_size_constraints
-                    .validate([dialog.width, dialog.height]);
-                if let Err(error) = &validation {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+        let response = egui::Area::new(egui::Id::new("canvas crop overlay"))
+            .fixed_pos(workspace_rect.min)
+            .order(egui::Order::Foreground)
+            .show(context, |ui| {
+                let (overlay_rect, response) =
+                    ui.allocate_exact_size(workspace_rect.size(), egui::Sense::click_and_drag());
+                let painter = ui.painter().with_clip_rect(overlay_rect);
+                painter.add(egui::Shape::convex_polygon(
+                    screen_corners.to_vec(),
+                    egui::Color32::from_white_alpha(8),
+                    egui::Stroke::new(2.0, egui::Color32::WHITE),
+                ));
+                for (_, position) in handle_positions {
+                    let handle_rect =
+                        egui::Rect::from_center_size(position, egui::Vec2::splat(10.0));
+                    painter.rect_filled(handle_rect, 2.0, egui::Color32::from_gray(24));
+                    painter.rect_stroke(
+                        handle_rect,
+                        2.0,
+                        egui::Stroke::new(1.5, egui::Color32::WHITE),
+                        egui::StrokeKind::Inside,
+                    );
                 }
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        close = true;
-                    }
-                    let submit = ui.add_enabled(validation.is_ok(), egui::Button::new("Resize"));
-                    if submit.clicked()
-                        || (validation.is_ok()
-                            && ui.input(|input| input.key_pressed(egui::Key::Enter)))
-                    {
-                        resize = Some((dialog.width, dialog.height));
-                    }
+                painter.text(
+                    egui::pos2(overlay_rect.center().x, overlay_rect.top() + 16.0),
+                    egui::Align2::CENTER_TOP,
+                    status,
+                    egui::FontId::proportional(14.0),
+                    status_color,
+                );
+                response
+            })
+            .inner;
+
+        let pointer = context.pointer_latest_pos();
+        if response.drag_started()
+            && let Some(pointer) = pointer
+        {
+            let pointer_document = crop_pointer_document(pointer, view, pixels_per_point);
+            let handle = canvas_crop_handle_at(pointer, pointer_document, rect, &handle_positions);
+            if let Some(handle) = handle
+                && let Some(crop) = self.canvas_crop.as_mut()
+            {
+                crop.drag = Some(CanvasCropDrag {
+                    handle,
+                    start_rect: crop.rect,
+                    start_pointer: pointer_document,
                 });
-            });
-        close |= response.should_close();
-        if let Some((width, height)) = resize {
-            self.commands
-                .push(AppCommand::ResizeCanvas { width, height });
-            close = true;
+            }
         }
-        if close {
-            self.canvas_resize_dialog = None;
+        if response.dragged()
+            && let Some(pointer) = pointer
+            && let Some(crop) = self.canvas_crop.as_mut()
+            && let Some(drag) = crop.drag
+        {
+            let pointer_document = crop_pointer_document(pointer, view, pixels_per_point);
+            crop.rect = canvas_crop_rect_from_drag(drag, pointer_document);
+        }
+        if response.drag_stopped()
+            && let Some(crop) = self.canvas_crop.as_mut()
+        {
+            crop.drag = None;
+        }
+
+        let cancel = context.input(|input| input.key_pressed(egui::Key::Escape));
+        let apply = context.input(|input| input.key_pressed(egui::Key::Enter));
+        if cancel {
+            self.close_canvas_crop();
+        } else if apply
+            && let Some(rect) = self.canvas_crop.as_ref().map(|crop| crop.rect)
+            && let Ok(request) = canvas_crop_request(rect, self.canvas_size_constraints)
+        {
+            self.commands.push(AppCommand::ResizeCanvas {
+                width: request.size[0],
+                height: request.size[1],
+                origin: request.origin,
+            });
+            self.close_canvas_crop();
         }
     }
 
@@ -1464,6 +1580,141 @@ impl GuiLayer {
         });
         self.context.request_repaint();
     }
+}
+
+fn canvas_crop_screen_corners(
+    rect: CanvasCropRect,
+    view: PaintViewSnapshot,
+    pixels_per_point: f32,
+) -> [egui::Pos2; 4] {
+    [
+        [rect.min[0], rect.min[1]],
+        [rect.max[0], rect.min[1]],
+        [rect.max[0], rect.max[1]],
+        [rect.min[0], rect.max[1]],
+    ]
+    .map(|point| {
+        let point = view.document_to_window(point);
+        egui::pos2(point[0] / pixels_per_point, point[1] / pixels_per_point)
+    })
+}
+
+fn canvas_crop_handle_positions(corners: [egui::Pos2; 4]) -> [(CanvasCropHandle, egui::Pos2); 8] {
+    let midpoint = |a: egui::Pos2, b: egui::Pos2| a + (b - a) * 0.5;
+    [
+        (CanvasCropHandle::TopLeft, corners[0]),
+        (CanvasCropHandle::Top, midpoint(corners[0], corners[1])),
+        (CanvasCropHandle::TopRight, corners[1]),
+        (CanvasCropHandle::Right, midpoint(corners[1], corners[2])),
+        (CanvasCropHandle::BottomRight, corners[2]),
+        (CanvasCropHandle::Bottom, midpoint(corners[2], corners[3])),
+        (CanvasCropHandle::BottomLeft, corners[3]),
+        (CanvasCropHandle::Left, midpoint(corners[3], corners[0])),
+    ]
+}
+
+fn crop_pointer_document(
+    pointer: egui::Pos2,
+    view: PaintViewSnapshot,
+    pixels_per_point: f32,
+) -> [f32; 2] {
+    view.window_to_document([pointer.x * pixels_per_point, pointer.y * pixels_per_point])
+}
+
+fn canvas_crop_handle_at(
+    pointer: egui::Pos2,
+    pointer_document: [f32; 2],
+    rect: CanvasCropRect,
+    handles: &[(CanvasCropHandle, egui::Pos2); 8],
+) -> Option<CanvasCropHandle> {
+    const HIT_RADIUS: f32 = 14.0;
+    handles
+        .iter()
+        .filter_map(|(handle, position)| {
+            let distance = position.distance_sq(pointer);
+            (distance <= HIT_RADIUS * HIT_RADIUS).then_some((*handle, distance))
+        })
+        .min_by(|left, right| left.1.total_cmp(&right.1))
+        .map(|(handle, _)| handle)
+        .or_else(|| {
+            rect.contains(pointer_document)
+                .then_some(CanvasCropHandle::Move)
+        })
+}
+
+fn canvas_crop_rect_from_drag(drag: CanvasCropDrag, pointer: [f32; 2]) -> CanvasCropRect {
+    let delta = [
+        pointer[0] - drag.start_pointer[0],
+        pointer[1] - drag.start_pointer[1],
+    ];
+    let mut rect = drag.start_rect;
+    if drag.handle == CanvasCropHandle::Move {
+        rect.min[0] += delta[0];
+        rect.max[0] += delta[0];
+        rect.min[1] += delta[1];
+        rect.max[1] += delta[1];
+        return rect;
+    }
+    if matches!(
+        drag.handle,
+        CanvasCropHandle::Left | CanvasCropHandle::TopLeft | CanvasCropHandle::BottomLeft
+    ) {
+        rect.min[0] = (drag.start_rect.min[0] + delta[0]).min(drag.start_rect.max[0] - 1.0);
+    }
+    if matches!(
+        drag.handle,
+        CanvasCropHandle::Right | CanvasCropHandle::TopRight | CanvasCropHandle::BottomRight
+    ) {
+        rect.max[0] = (drag.start_rect.max[0] + delta[0]).max(drag.start_rect.min[0] + 1.0);
+    }
+    if matches!(
+        drag.handle,
+        CanvasCropHandle::Top | CanvasCropHandle::TopLeft | CanvasCropHandle::TopRight
+    ) {
+        rect.min[1] = (drag.start_rect.min[1] + delta[1]).min(drag.start_rect.max[1] - 1.0);
+    }
+    if matches!(
+        drag.handle,
+        CanvasCropHandle::Bottom | CanvasCropHandle::BottomLeft | CanvasCropHandle::BottomRight
+    ) {
+        rect.max[1] = (drag.start_rect.max[1] + delta[1]).max(drag.start_rect.min[1] + 1.0);
+    }
+    rect
+}
+
+fn canvas_crop_request(
+    rect: CanvasCropRect,
+    constraints: CanvasSizeConstraints,
+) -> Result<CanvasCropRequest, String> {
+    if rect
+        .min
+        .into_iter()
+        .chain(rect.max)
+        .any(|value| !value.is_finite())
+    {
+        return Err("crop bounds must be finite".to_owned());
+    }
+    let left = rect.min[0].round() as i64;
+    let top = rect.min[1].round() as i64;
+    let right = rect.max[0].round() as i64;
+    let bottom = rect.max[1].round() as i64;
+    let width = right
+        .checked_sub(left)
+        .and_then(|width| u32::try_from(width).ok())
+        .ok_or_else(|| "crop width must be at least 1 pixel".to_owned())?;
+    let height = bottom
+        .checked_sub(top)
+        .and_then(|height| u32::try_from(height).ok())
+        .ok_or_else(|| "crop height must be at least 1 pixel".to_owned())?;
+    constraints.validate([width, height])?;
+    let origin = [
+        i32::try_from(left).map_err(|_| "crop origin is outside the supported range".to_owned())?,
+        i32::try_from(top).map_err(|_| "crop origin is outside the supported range".to_owned())?,
+    ];
+    Ok(CanvasCropRequest {
+        size: [width, height],
+        origin,
+    })
 }
 
 fn layer_preview_is_current(current: &[LayerPreviewKey], cached: LayerPreviewKey) -> bool {
@@ -2082,6 +2333,77 @@ pub fn repaint_delay(output: &egui::FullOutput) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crop_handles_resize_selected_edges_in_document_coordinates() {
+        let start_rect = CanvasCropRect {
+            min: [10.0, 20.0],
+            max: [110.0, 220.0],
+        };
+        let drag = CanvasCropDrag {
+            handle: CanvasCropHandle::TopLeft,
+            start_rect,
+            start_pointer: [10.0, 20.0],
+        };
+        assert_eq!(
+            canvas_crop_rect_from_drag(drag, [-15.0, 45.0]),
+            CanvasCropRect {
+                min: [-15.0, 45.0],
+                max: [110.0, 220.0],
+            }
+        );
+    }
+
+    #[test]
+    fn moving_crop_preserves_its_dimensions() {
+        let start_rect = CanvasCropRect {
+            min: [10.0, 20.0],
+            max: [110.0, 220.0],
+        };
+        let drag = CanvasCropDrag {
+            handle: CanvasCropHandle::Move,
+            start_rect,
+            start_pointer: [30.0, 40.0],
+        };
+        assert_eq!(
+            canvas_crop_rect_from_drag(drag, [45.0, 10.0]),
+            CanvasCropRect {
+                min: [25.0, -10.0],
+                max: [125.0, 190.0],
+            }
+        );
+    }
+
+    #[test]
+    fn crop_request_rounds_to_pixels_and_validates_renderer_limits() {
+        let constraints = CanvasSizeConstraints {
+            max_dimension: 8192,
+            max_pixels: 32 * 1024 * 1024,
+        };
+        assert_eq!(
+            canvas_crop_request(
+                CanvasCropRect {
+                    min: [-10.4, 20.4],
+                    max: [90.6, 220.6],
+                },
+                constraints,
+            ),
+            Ok(CanvasCropRequest {
+                size: [101, 201],
+                origin: [-10, 20],
+            })
+        );
+        assert!(
+            canvas_crop_request(
+                CanvasCropRect {
+                    min: [0.0, 0.0],
+                    max: [9000.0, 10.0],
+                },
+                constraints,
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn background_color_round_trips_through_ui() {
