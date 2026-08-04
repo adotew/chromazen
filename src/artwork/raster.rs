@@ -1,7 +1,5 @@
 use image::ImageEncoder;
 
-use super::clipping_base_index;
-
 pub(crate) struct CompositeLayer<'a> {
     pub(crate) image: &'a image::RgbaImage,
     pub(crate) visible: bool,
@@ -33,32 +31,51 @@ pub(crate) fn flatten_premultiplied_layers(
         size.1,
         image::Rgba([background[0], background[1], background[2], 255]),
     );
-    let clipped: Vec<_> = layers.iter().map(|layer| layer.clipped).collect();
-    for (index, layer) in layers.iter().enumerate().filter(|(_, layer)| layer.visible) {
-        let base_index = clipping_base_index(&clipped, index);
-        if layer.clipped && base_index.is_none()
-            || base_index.is_some_and(|base_index| !layers[base_index].visible)
-        {
+    let mut base_index = 0;
+    while base_index < layers.len() {
+        if layers[base_index].clipped {
+            base_index += 1;
             continue;
         }
-        let base = base_index.map(|base_index| &layers[base_index]);
-        let opacity = u32::from(layer.opacity.min(100));
-        for (pixel_index, (destination, source)) in
-            composite.pixels_mut().zip(layer.image.pixels()).enumerate()
-        {
-            let mask = base.map_or(255, |base| {
-                u32::from(base.image.as_raw()[pixel_index * 4 + 3])
-                    * u32::from(base.opacity.min(100))
-                    / 100
-            });
-            let alpha = u32::from(source[3]) * opacity / 100 * mask / 255;
-            let inverse = 255 - alpha;
-            for channel in 0..3 {
-                let source = u32::from(source[channel]) * opacity / 100 * mask / 255;
-                destination[channel] =
-                    (source + u32::from(destination[channel]) * inverse / 255).min(255) as u8;
+        let mut group_end = base_index + 1;
+        while group_end < layers.len() && layers[group_end].clipped {
+            group_end += 1;
+        }
+        let base = &layers[base_index];
+        if base.visible {
+            let base_opacity = u32::from(base.opacity.min(100));
+            for (pixel_index, (destination, base_pixel)) in
+                composite.pixels_mut().zip(base.image.pixels()).enumerate()
+            {
+                let base_alpha = u32::from(base_pixel[3]) * base_opacity / 100;
+                let mut group_rgb = [0; 3];
+                for channel in 0..3 {
+                    group_rgb[channel] = u32::from(base_pixel[channel]) * base_opacity / 100;
+                }
+
+                for layer in layers[base_index + 1..group_end]
+                    .iter()
+                    .filter(|layer| layer.visible)
+                {
+                    let source = &layer.image.as_raw()[pixel_index * 4..pixel_index * 4 + 4];
+                    let opacity = u32::from(layer.opacity.min(100));
+                    let alpha = u32::from(source[3]) * opacity / 100;
+                    let inverse = 255 - alpha;
+                    for channel in 0..3 {
+                        let source = u32::from(source[channel]) * opacity / 100 * base_alpha / 255;
+                        group_rgb[channel] = (source + group_rgb[channel] * inverse / 255).min(255);
+                    }
+                }
+
+                let inverse_base = 255 - base_alpha;
+                for channel in 0..3 {
+                    destination[channel] = (group_rgb[channel]
+                        + u32::from(destination[channel]) * inverse_base / 255)
+                        .min(255) as u8;
+                }
             }
         }
+        base_index = group_end;
     }
     Ok(composite)
 }
@@ -128,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn clipped_layer_uses_base_alpha_as_its_mask() {
+    fn clipped_layer_recolors_translucent_base_without_revealing_its_color() {
         let base = image::RgbaImage::from_pixel(1, 1, image::Rgba([128, 0, 0, 128]));
         let clipped = image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 255, 0, 255]));
         let layers = [
@@ -146,7 +163,32 @@ mod tests {
             },
         ];
         let composite = flatten_premultiplied_layers(&layers, [0, 0, 255]).unwrap();
-        assert_eq!(composite.get_pixel(0, 0), &image::Rgba([63, 128, 63, 255]));
+        assert_eq!(composite.get_pixel(0, 0), &image::Rgba([0, 128, 127, 255]));
+    }
+
+    #[test]
+    fn opaque_black_clip_does_not_leave_translucent_base_tinted() {
+        let base = image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 64, 128, 128]));
+        let black = image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 0, 0, 255]));
+        let layers = [
+            CompositeLayer {
+                image: &base,
+                visible: true,
+                opacity: 100,
+                clipped: false,
+            },
+            CompositeLayer {
+                image: &black,
+                visible: true,
+                opacity: 100,
+                clipped: true,
+            },
+        ];
+        let composite = flatten_premultiplied_layers(&layers, [255; 3]).unwrap();
+        assert_eq!(
+            composite.get_pixel(0, 0),
+            &image::Rgba([127, 127, 127, 255])
+        );
     }
 
     #[test]

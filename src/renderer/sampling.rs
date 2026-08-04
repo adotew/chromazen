@@ -1,7 +1,6 @@
 use std::sync::mpsc;
 
 use super::PaintLayer;
-use crate::artwork::clipping_base_index;
 
 const BYTES_PER_PIXEL: u64 = 4;
 
@@ -113,31 +112,44 @@ pub(super) fn read_composited_color(
 fn composite_premultiplied(background: [f32; 4], layers: &[([u8; 4], u8, bool, bool)]) -> [u8; 3] {
     // Paint textures are premultiplied RGBA and arrive in bottom-to-top render order.
     let mut color = background;
-    let clipped: Vec<_> = layers.iter().map(|layer| layer.3).collect();
-    for (index, (pixel, opacity, visible, is_clipped)) in layers.iter().enumerate() {
-        if !visible {
+    let mut base_index = 0;
+    while base_index < layers.len() {
+        if layers[base_index].3 {
+            base_index += 1;
             continue;
         }
-        let mask = if *is_clipped {
-            let Some(base_index) = clipping_base_index(&clipped, index) else {
-                continue;
-            };
-            let (base_pixel, base_opacity, base_visible, _) = layers[base_index];
-            if !base_visible {
-                continue;
-            }
-            f32::from(base_pixel[3]) / 255.0 * f32::from(base_opacity) / 100.0
-        } else {
-            1.0
-        };
-        let opacity = f32::from(*opacity) / 100.0 * mask;
-        let alpha = f32::from(pixel[3]) / 255.0 * opacity;
-        let inverse_alpha = 1.0 - alpha;
-        for channel in 0..3 {
-            let source = f32::from(pixel[channel]) / 255.0 * opacity;
-            color[channel] = source + color[channel] * inverse_alpha;
+        let mut group_end = base_index + 1;
+        while group_end < layers.len() && layers[group_end].3 {
+            group_end += 1;
         }
-        color[3] = alpha + color[3] * inverse_alpha;
+        let (base_pixel, base_opacity, base_visible, _) = layers[base_index];
+        if base_visible {
+            let base_opacity = f32::from(base_opacity) / 100.0;
+            let base_alpha = f32::from(base_pixel[3]) / 255.0 * base_opacity;
+            let mut group = [0.0; 4];
+            for channel in 0..3 {
+                group[channel] = f32::from(base_pixel[channel]) / 255.0 * base_opacity;
+            }
+            group[3] = base_alpha;
+
+            for (pixel, opacity, visible, _) in &layers[base_index + 1..group_end] {
+                if !visible {
+                    continue;
+                }
+                let opacity = f32::from(*opacity) / 100.0;
+                let alpha = f32::from(pixel[3]) / 255.0 * opacity;
+                for channel in 0..3 {
+                    let source = f32::from(pixel[channel]) / 255.0 * opacity * base_alpha;
+                    group[channel] = source + group[channel] * (1.0 - alpha);
+                }
+            }
+
+            for channel in 0..3 {
+                color[channel] = group[channel] + color[channel] * (1.0 - base_alpha);
+            }
+            color[3] = base_alpha + color[3] * (1.0 - base_alpha);
+        }
+        base_index = group_end;
     }
     rgb8(color)
 }
@@ -200,14 +212,14 @@ mod tests {
     }
 
     #[test]
-    fn clipped_samples_use_the_base_alpha() {
+    fn clipped_samples_recolor_translucent_base_without_revealing_its_color() {
         let pixels = [
             ([128, 0, 0, 128], 100, true, false),
             ([0, 255, 0, 255], 100, true, true),
         ];
         assert_eq!(
             composite_premultiplied([0.0, 0.0, 1.0, 1.0], &pixels),
-            [64, 128, 63]
+            [0, 128, 127]
         );
     }
 

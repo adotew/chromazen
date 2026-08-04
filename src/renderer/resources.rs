@@ -18,6 +18,10 @@ pub(crate) struct RenderResources {
     pub(crate) cursor_bind_group: wgpu::BindGroup,
     pub(crate) smudge_texture: wgpu::Texture,
     smudge_texture_view: wgpu::TextureView,
+    _clipping_group_texture: wgpu::Texture,
+    pub(crate) clipping_group_view: wgpu::TextureView,
+    clipping_group_settings_buffer: wgpu::Buffer,
+    clipping_group_bind_group: wgpu::BindGroup,
     _stroke_mask_texture: wgpu::Texture,
     pub(crate) stroke_mask_view: wgpu::TextureView,
     brush_texture: wgpu::Texture,
@@ -39,13 +43,14 @@ pub(crate) struct RenderResources {
     pub(crate) cursor_pipeline: wgpu::RenderPipeline,
     pub(crate) background_pipeline: wgpu::RenderPipeline,
     pub(crate) layer_pipeline: wgpu::RenderPipeline,
-    pub(crate) clipped_layer_pipeline: wgpu::RenderPipeline,
     pub(crate) clipped_layer_merge_pipeline: wgpu::RenderPipeline,
     pub(crate) merge_pipeline: wgpu::RenderPipeline,
     pub(crate) brush_preview_pipeline: wgpu::RenderPipeline,
     pub(crate) eraser_preview_pipeline: wgpu::RenderPipeline,
-    pub(crate) clipped_brush_preview_pipeline: wgpu::RenderPipeline,
-    pub(crate) clipped_eraser_preview_pipeline: wgpu::RenderPipeline,
+    pub(crate) group_brush_preview_pipeline: wgpu::RenderPipeline,
+    pub(crate) group_eraser_preview_pipeline: wgpu::RenderPipeline,
+    pub(crate) group_clipped_brush_preview_pipeline: wgpu::RenderPipeline,
+    pub(crate) group_clipped_eraser_preview_pipeline: wgpu::RenderPipeline,
     pub(crate) layer_thumbnail_pipeline: wgpu::RenderPipeline,
     pub(crate) brush_commit_pipeline: wgpu::RenderPipeline,
     pub(crate) eraser_commit_pipeline: wgpu::RenderPipeline,
@@ -134,6 +139,17 @@ impl RenderResources {
             ..Default::default()
         });
         let (smudge_texture, smudge_texture_view) = create_paint_texture(device, document_size);
+        let (clipping_group_texture, clipping_group_view) =
+            create_paint_texture(device, document_size);
+        let clipping_group_settings_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("clipping group settings uniform buffer"),
+                contents: bytemuck::bytes_of(&LayerSettingsUniform {
+                    opacity: 1.0,
+                    padding: [0.0; 3],
+                }),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
         let (stroke_mask_texture, stroke_mask_view) =
             create_stroke_mask_texture(device, document_size);
         clear_stroke_mask(device, queue, &stroke_mask_view);
@@ -464,6 +480,28 @@ impl RenderResources {
             bind_group_layouts: &[Some(&blit_bind_group_layout)],
             immediate_size: 0,
         });
+        let clipping_group_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("clipping group blit bind group"),
+            layout: &blit_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&paint_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&clipping_group_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: view_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: clipping_group_settings_buffer.as_entire_binding(),
+                },
+            ],
+        });
         let clipped_layer_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("clipped layer pipeline layout"),
@@ -695,35 +733,19 @@ impl RenderResources {
         };
         let background_pipeline = create_blit_pipeline("background pipeline", "fs_background");
         let layer_pipeline = create_blit_pipeline("layer pipeline", "fs_layer");
-        let clipped_layer_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("clipped layer pipeline"),
-                layout: Some(&clipped_layer_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &clipped_layer_shader,
-                    entry_point: Some("vs"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &clipped_layer_shader,
-                    entry_point: Some("fs"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: surface_format,
-                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            });
+        let clipping_group_blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                operation: wgpu::BlendOperation::Add,
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            },
+            // A clipping group inherits its alpha exclusively from the base layer.
+            alpha: wgpu::BlendComponent {
+                operation: wgpu::BlendOperation::Add,
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::One,
+            },
+        };
         let clipped_layer_merge_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("clipped layer merge pipeline"),
@@ -740,7 +762,7 @@ impl RenderResources {
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: DOCUMENT_FORMAT,
-                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        blend: Some(clipping_group_blend),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
@@ -815,13 +837,55 @@ impl RenderResources {
             create_preview_pipeline("brush stroke preview pipeline", "fs_preview_brush");
         let eraser_preview_pipeline =
             create_preview_pipeline("eraser stroke preview pipeline", "fs_preview_eraser");
-        let clipped_brush_preview_pipeline = create_preview_pipeline(
-            "clipped brush stroke preview pipeline",
-            "fs_preview_clipped_brush",
+        let create_group_preview_pipeline = |label, entry_point, blend| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&stroke_preview_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &stroke_composite_shader,
+                    entry_point: Some("vs_group"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &stroke_composite_shader,
+                    entry_point: Some(entry_point),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: DOCUMENT_FORMAT,
+                        blend: Some(blend),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let group_brush_preview_pipeline = create_group_preview_pipeline(
+            "clipping group brush stroke preview pipeline",
+            "fs_group_preview_brush",
+            wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
         );
-        let clipped_eraser_preview_pipeline = create_preview_pipeline(
-            "clipped eraser stroke preview pipeline",
-            "fs_preview_clipped_eraser",
+        let group_eraser_preview_pipeline = create_group_preview_pipeline(
+            "clipping group eraser stroke preview pipeline",
+            "fs_group_preview_eraser",
+            wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+        );
+        let group_clipped_brush_preview_pipeline = create_group_preview_pipeline(
+            "clipping group clipped brush stroke preview pipeline",
+            "fs_group_preview_clipped_brush",
+            clipping_group_blend,
+        );
+        let group_clipped_eraser_preview_pipeline = create_group_preview_pipeline(
+            "clipping group clipped eraser stroke preview pipeline",
+            "fs_group_preview_clipped_eraser",
+            clipping_group_blend,
         );
         let create_thumbnail_pipeline = |label, entry_point| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -915,6 +979,10 @@ impl RenderResources {
             cursor_bind_group,
             smudge_texture,
             smudge_texture_view,
+            _clipping_group_texture: clipping_group_texture,
+            clipping_group_view,
+            clipping_group_settings_buffer,
+            clipping_group_bind_group,
             _stroke_mask_texture: stroke_mask_texture,
             stroke_mask_view,
             brush_texture,
@@ -936,13 +1004,14 @@ impl RenderResources {
             cursor_pipeline,
             background_pipeline,
             layer_pipeline,
-            clipped_layer_pipeline,
             clipped_layer_merge_pipeline,
             merge_pipeline,
             brush_preview_pipeline,
             eraser_preview_pipeline,
-            clipped_brush_preview_pipeline,
-            clipped_eraser_preview_pipeline,
+            group_brush_preview_pipeline,
+            group_eraser_preview_pipeline,
+            group_clipped_brush_preview_pipeline,
+            group_clipped_eraser_preview_pipeline,
             layer_thumbnail_pipeline,
             brush_commit_pipeline,
             eraser_commit_pipeline,
@@ -1012,6 +1081,10 @@ impl RenderResources {
             .expect("brush and eraser strokes require a preview bind group")
     }
 
+    pub(crate) fn clipping_group_bind_group(&self) -> &wgpu::BindGroup {
+        &self.clipping_group_bind_group
+    }
+
     pub(crate) fn clear_stroke_preview(&mut self) {
         self.stroke_preview_bind_group = None;
     }
@@ -1040,6 +1113,30 @@ impl RenderResources {
         );
 
         let (smudge_texture, smudge_texture_view) = create_paint_texture(device, document_size);
+        let (clipping_group_texture, clipping_group_view) =
+            create_paint_texture(device, document_size);
+        let clipping_group_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("clipping group blit bind group"),
+            layout: &self.blit_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&self.paint_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&clipping_group_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.view_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.clipping_group_settings_buffer.as_entire_binding(),
+                },
+            ],
+        });
         let (stroke_mask_texture, stroke_mask_view) =
             create_stroke_mask_texture(device, document_size);
         clear_stroke_mask(device, queue, &stroke_mask_view);
@@ -1112,6 +1209,9 @@ impl RenderResources {
 
         self.smudge_texture = smudge_texture;
         self.smudge_texture_view = smudge_texture_view;
+        self._clipping_group_texture = clipping_group_texture;
+        self.clipping_group_view = clipping_group_view;
+        self.clipping_group_bind_group = clipping_group_bind_group;
         self._stroke_mask_texture = stroke_mask_texture;
         self.stroke_mask_view = stroke_mask_view;
         self.stamp_bind_group = stamp_bind_group;

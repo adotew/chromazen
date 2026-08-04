@@ -1418,99 +1418,238 @@ impl PaintRenderer {
             self.write_brush_cursor(cursor);
         }
 
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("blit pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                resolve_target: None,
-                depth_slice: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.5,
-                        g: 0.5,
-                        b: 0.5,
-                        a: 1.0,
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-        if let Some(canvas_rect) = visible_canvas_rect(
+        let canvas_rect = visible_canvas_rect(
             self.view.snapshot(),
             self.document_size,
             self.surface_size(),
-        ) {
-            // Full-screen layer triangles do not need to shade workspace pixels outside the canvas.
-            pass.set_scissor_rect(
-                canvas_rect.x,
-                canvas_rect.y,
-                canvas_rect.width,
-                canvas_rect.height,
-            );
-            pass.set_pipeline(&self.resources.background_pipeline);
-            pass.set_bind_group(0, &self.layers[0].blit_bind_group, &[]);
-            pass.draw(0..3, 0..1);
-            let mut last_unclipped_layer = None;
-            for (layer_index, layer) in self.layers.iter().enumerate() {
-                let clipping_base = if layer.clipped {
-                    last_unclipped_layer
-                } else {
-                    last_unclipped_layer = Some(layer_index);
-                    None
-                };
-                if !layer.visible {
-                    continue;
-                }
-                if layer.clipped && clipping_base.is_none()
-                    || clipping_base.is_some_and(|base_index| !self.layers[base_index].visible)
-                {
-                    continue;
-                }
-                let preview_tool = self
-                    .active_stroke
-                    .filter(|stroke| stroke.layer_id == layer.id)
-                    .map(|stroke| stroke.tool);
-                match preview_tool {
-                    Some(PaintTool::Brush) => {
-                        let pipeline = if clipping_base.is_some() {
-                            &self.resources.clipped_brush_preview_pipeline
-                        } else {
-                            &self.resources.brush_preview_pipeline
-                        };
-                        pass.set_pipeline(pipeline);
-                        pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
-                    }
-                    Some(PaintTool::Eraser) => {
-                        let pipeline = if clipping_base.is_some() {
-                            &self.resources.clipped_eraser_preview_pipeline
-                        } else {
-                            &self.resources.eraser_preview_pipeline
-                        };
-                        pass.set_pipeline(pipeline);
-                        pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
-                    }
-                    Some(PaintTool::Smudge) | None if clipping_base.is_some() => {
-                        pass.set_pipeline(&self.resources.clipped_layer_pipeline);
-                        let bind_group = self
-                            .clipped_layer_bind_groups
-                            .get(&layer.id)
-                            .expect("clipped layer must have a bind group");
-                        pass.set_bind_group(0, bind_group, &[]);
-                    }
-                    Some(PaintTool::Smudge) | None => {
-                        pass.set_pipeline(&self.resources.layer_pipeline);
-                        pass.set_bind_group(0, &layer.blit_bind_group, &[]);
-                    }
-                }
+        );
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("canvas background pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.5,
+                            g: 0.5,
+                            b: 0.5,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            if let Some(canvas_rect) = canvas_rect {
+                pass.set_scissor_rect(
+                    canvas_rect.x,
+                    canvas_rect.y,
+                    canvas_rect.width,
+                    canvas_rect.height,
+                );
+                pass.set_pipeline(&self.resources.background_pipeline);
+                pass.set_bind_group(0, &self.layers[0].blit_bind_group, &[]);
                 pass.draw(0..3, 0..1);
             }
         }
+
+        if let Some(canvas_rect) = canvas_rect {
+            let mut base_index = 0;
+            while base_index < self.layers.len() {
+                if self.layers[base_index].clipped {
+                    base_index += 1;
+                    continue;
+                }
+                let mut group_end = base_index + 1;
+                while group_end < self.layers.len() && self.layers[group_end].clipped {
+                    group_end += 1;
+                }
+                let base = &self.layers[base_index];
+                if !base.visible {
+                    base_index = group_end;
+                    continue;
+                }
+                let has_visible_clips = self.layers[base_index + 1..group_end]
+                    .iter()
+                    .any(|layer| layer.visible);
+
+                if has_visible_clips {
+                    // Clipped layers must be composed with their base before the group is put over
+                    // the canvas. Applying each masked layer directly over the canvas multiplies
+                    // the base alpha twice and leaves translucent base color showing through.
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("clipping group pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &self.resources.clipping_group_view,
+                            resolve_target: None,
+                            depth_slice: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    let base_preview = self
+                        .active_stroke
+                        .filter(|stroke| stroke.layer_id == base.id)
+                        .map(|stroke| stroke.tool);
+                    match base_preview {
+                        Some(PaintTool::Brush) => {
+                            pass.set_pipeline(&self.resources.group_brush_preview_pipeline);
+                            pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
+                        }
+                        Some(PaintTool::Eraser) => {
+                            pass.set_pipeline(&self.resources.group_eraser_preview_pipeline);
+                            pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
+                        }
+                        Some(PaintTool::Smudge) | None => {
+                            pass.set_pipeline(&self.resources.merge_pipeline);
+                            pass.set_bind_group(0, &base.blit_bind_group, &[]);
+                        }
+                    }
+                    pass.draw(0..3, 0..1);
+
+                    for layer in &self.layers[base_index + 1..group_end] {
+                        if !layer.visible {
+                            continue;
+                        }
+                        let preview = self
+                            .active_stroke
+                            .filter(|stroke| stroke.layer_id == layer.id)
+                            .map(|stroke| stroke.tool);
+                        match preview {
+                            Some(PaintTool::Brush) => {
+                                pass.set_pipeline(
+                                    &self.resources.group_clipped_brush_preview_pipeline,
+                                );
+                                pass.set_bind_group(
+                                    0,
+                                    self.resources.stroke_preview_bind_group(),
+                                    &[],
+                                );
+                            }
+                            Some(PaintTool::Eraser) => {
+                                pass.set_pipeline(
+                                    &self.resources.group_clipped_eraser_preview_pipeline,
+                                );
+                                pass.set_bind_group(
+                                    0,
+                                    self.resources.stroke_preview_bind_group(),
+                                    &[],
+                                );
+                            }
+                            Some(PaintTool::Smudge) | None => {
+                                pass.set_pipeline(&self.resources.clipped_layer_merge_pipeline);
+                                let bind_group = self
+                                    .clipped_layer_bind_groups
+                                    .get(&layer.id)
+                                    .expect("clipped layer must have a bind group");
+                                pass.set_bind_group(0, bind_group, &[]);
+                            }
+                        }
+                        pass.draw(0..3, 0..1);
+                    }
+                    drop(pass);
+
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("clipping group blit pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view,
+                            resolve_target: None,
+                            depth_slice: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    pass.set_scissor_rect(
+                        canvas_rect.x,
+                        canvas_rect.y,
+                        canvas_rect.width,
+                        canvas_rect.height,
+                    );
+                    pass.set_pipeline(&self.resources.layer_pipeline);
+                    pass.set_bind_group(0, self.resources.clipping_group_bind_group(), &[]);
+                    pass.draw(0..3, 0..1);
+                } else {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("layer blit pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view,
+                            resolve_target: None,
+                            depth_slice: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    pass.set_scissor_rect(
+                        canvas_rect.x,
+                        canvas_rect.y,
+                        canvas_rect.width,
+                        canvas_rect.height,
+                    );
+                    let preview = self
+                        .active_stroke
+                        .filter(|stroke| stroke.layer_id == base.id)
+                        .map(|stroke| stroke.tool);
+                    match preview {
+                        Some(PaintTool::Brush) => {
+                            pass.set_pipeline(&self.resources.brush_preview_pipeline);
+                            pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
+                        }
+                        Some(PaintTool::Eraser) => {
+                            pass.set_pipeline(&self.resources.eraser_preview_pipeline);
+                            pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
+                        }
+                        Some(PaintTool::Smudge) | None => {
+                            pass.set_pipeline(&self.resources.layer_pipeline);
+                            pass.set_bind_group(0, &base.blit_bind_group, &[]);
+                        }
+                    }
+                    pass.draw(0..3, 0..1);
+                }
+                base_index = group_end;
+            }
+        }
+
         if brush_cursor.is_some() {
             let surface_size = self.surface_size();
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("brush cursor pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
             pass.set_scissor_rect(0, 0, surface_size[0], surface_size[1]);
             pass.set_pipeline(&self.resources.cursor_pipeline);
             pass.set_bind_group(0, &self.resources.cursor_bind_group, &[]);
