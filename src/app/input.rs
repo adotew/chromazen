@@ -626,15 +626,21 @@ fn canvas_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<App
     if key == KeyCode::KeyR && modifiers == ModifiersState::SHIFT {
         return Some(AppCommand::ResetCanvasRotation);
     }
-    if key == KeyCode::KeyC
-        && modifiers.control_key()
-        && modifiers.alt_key()
-        && !modifiers.shift_key()
-        && !modifiers.super_key()
+    if !modifiers.control_key()
+        || !modifiers.alt_key()
+        || modifiers.shift_key()
+        || modifiers.super_key()
     {
-        return Some(AppCommand::RequestCanvasResize);
+        return None;
     }
-    None
+    match key {
+        KeyCode::ArrowLeft => Some(AppCommand::RotateCanvasLeft),
+        KeyCode::ArrowRight => Some(AppCommand::RotateCanvasRight),
+        KeyCode::KeyH => Some(AppCommand::ToggleCanvasFlipHorizontal),
+        KeyCode::KeyV => Some(AppCommand::ToggleCanvasFlipVertical),
+        KeyCode::KeyC => Some(AppCommand::RequestCanvasResize),
+        _ => None,
+    }
 }
 
 fn document_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<AppCommand> {
@@ -961,8 +967,25 @@ mod tests {
             canvas_command_for_key(KeyCode::KeyR, ModifiersState::empty()),
             None
         );
+        let canvas_modifiers = ModifiersState::CONTROL | ModifiersState::ALT;
         assert_eq!(
-            canvas_command_for_key(KeyCode::KeyC, ModifiersState::CONTROL | ModifiersState::ALT),
+            canvas_command_for_key(KeyCode::ArrowLeft, canvas_modifiers),
+            Some(AppCommand::RotateCanvasLeft)
+        );
+        assert_eq!(
+            canvas_command_for_key(KeyCode::ArrowRight, canvas_modifiers),
+            Some(AppCommand::RotateCanvasRight)
+        );
+        assert_eq!(
+            canvas_command_for_key(KeyCode::KeyH, canvas_modifiers),
+            Some(AppCommand::ToggleCanvasFlipHorizontal)
+        );
+        assert_eq!(
+            canvas_command_for_key(KeyCode::KeyV, canvas_modifiers),
+            Some(AppCommand::ToggleCanvasFlipVertical)
+        );
+        assert_eq!(
+            canvas_command_for_key(KeyCode::KeyC, canvas_modifiers),
             Some(AppCommand::RequestCanvasResize)
         );
     }

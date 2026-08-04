@@ -204,19 +204,48 @@ mod imp {
     }
 
     fn canvas_menu() -> Result<(Submenu, [MenuItem; 6]), String> {
-        let rotate_left = MenuItem::with_id(ROTATE_CANVAS_LEFT_ID, "Rotate Left 90°", false, None);
-        let rotate_right =
-            MenuItem::with_id(ROTATE_CANVAS_RIGHT_ID, "Rotate Right 90°", false, None);
+        let rotate_left = MenuItem::with_id(
+            ROTATE_CANVAS_LEFT_ID,
+            "Rotate Left 90°",
+            false,
+            Some(Accelerator::new(
+                Some(CMD_OR_CTRL | Modifiers::ALT),
+                Code::ArrowLeft,
+            )),
+        );
+        let rotate_right = MenuItem::with_id(
+            ROTATE_CANVAS_RIGHT_ID,
+            "Rotate Right 90°",
+            false,
+            Some(Accelerator::new(
+                Some(CMD_OR_CTRL | Modifiers::ALT),
+                Code::ArrowRight,
+            )),
+        );
         let reset_rotation = MenuItem::with_id(
             RESET_CANVAS_ROTATION_ID,
             "Reset Rotation",
             false,
             Some(Accelerator::new(Some(Modifiers::SHIFT), Code::KeyR)),
         );
-        let flip_horizontal =
-            MenuItem::with_id(FLIP_CANVAS_HORIZONTAL_ID, "Flip Horizontally", false, None);
-        let flip_vertical =
-            MenuItem::with_id(FLIP_CANVAS_VERTICAL_ID, "Flip Vertically", false, None);
+        let flip_horizontal = MenuItem::with_id(
+            FLIP_CANVAS_HORIZONTAL_ID,
+            "Flip Horizontally",
+            false,
+            Some(Accelerator::new(
+                Some(CMD_OR_CTRL | Modifiers::ALT),
+                Code::KeyH,
+            )),
+        );
+        let flip_vertical = MenuItem::with_id(
+            FLIP_CANVAS_VERTICAL_ID,
+            "Flip Vertically",
+            false,
+            Some(Accelerator::new(
+                Some(CMD_OR_CTRL | Modifiers::ALT),
+                Code::KeyV,
+            )),
+        );
         let resize = MenuItem::with_id(
             RESIZE_CANVAS_ID,
             "Resize Canvas…",
