@@ -6,6 +6,7 @@ const TAU: f32 = std::f32::consts::TAU;
 pub(crate) struct PaintViewSnapshot {
     pub(crate) zoom: f32,
     pub(super) center: [f32; 2],
+    pub(super) workspace_center: [f32; 2],
     pub(super) viewport_center: [f32; 2],
     pub(super) rotation: f32,
     pub(super) flip: [f32; 2],
@@ -41,6 +42,24 @@ impl PaintViewSnapshot {
         [delta[0] / self.zoom, delta[1] / self.zoom]
     }
 
+    pub(crate) fn workspace_to_window(self, point: [f32; 2]) -> [f32; 2] {
+        [
+            self.viewport_center[0] + (point[0] - self.workspace_center[0]) * self.zoom,
+            self.viewport_center[1] + (point[1] - self.workspace_center[1]) * self.zoom,
+        ]
+    }
+
+    pub(crate) fn window_to_workspace(self, point: [f32; 2]) -> [f32; 2] {
+        [
+            self.workspace_center[0] + (point[0] - self.viewport_center[0]) / self.zoom,
+            self.workspace_center[1] + (point[1] - self.viewport_center[1]) / self.zoom,
+        ]
+    }
+
+    pub(crate) fn window_delta_to_workspace(self, delta: [f32; 2]) -> [f32; 2] {
+        [delta[0] / self.zoom, delta[1] / self.zoom]
+    }
+
     pub(crate) fn rotation(self) -> f32 {
         self.rotation
     }
@@ -67,6 +86,7 @@ impl PaintViewSnapshot {
 pub(crate) struct PaintView {
     zoom: f32,
     center: [f32; 2],
+    workspace_center: [f32; 2],
     surface_size: [f32; 2],
     rotation: f32,
     flip: [f32; 2],
@@ -77,6 +97,7 @@ impl Default for PaintView {
         Self {
             zoom: 1.0,
             center: [0.0, 0.0],
+            workspace_center: [0.0, 0.0],
             surface_size: [1.0, 1.0],
             rotation: 0.0,
             flip: [1.0, 1.0],
@@ -93,6 +114,7 @@ impl PaintView {
         PaintViewSnapshot {
             zoom: self.zoom,
             center: self.center,
+            workspace_center: self.workspace_center,
             viewport_center: [self.surface_size[0] * 0.5, self.surface_size[1] * 0.5],
             rotation: self.rotation,
             flip: self.flip,
@@ -114,6 +136,7 @@ impl PaintView {
             .min(surface_size[1] as f32 / oriented_height)
             .clamp(MIN_ZOOM, MAX_ZOOM);
         self.center = [width * 0.5, height * 0.5];
+        self.workspace_center = self.center;
     }
 
     pub(crate) fn apply_zoom_at(&mut self, factor: f32, cursor: [f32; 2]) {
@@ -122,9 +145,11 @@ impl PaintView {
         if (new - old).abs() <= f32::EPSILON {
             return;
         }
-        let document_point = self.snapshot().window_to_document(cursor);
+        let snapshot = self.snapshot();
+        let document_point = snapshot.window_to_document(cursor);
+        let workspace_point = snapshot.window_to_workspace(cursor);
         self.zoom = new;
-        let viewport_center = self.snapshot().viewport_center;
+        let viewport_center = snapshot.viewport_center;
         let screen_delta = [
             cursor[0] - viewport_center[0],
             cursor[1] - viewport_center[1],
@@ -134,12 +159,20 @@ impl PaintView {
             document_point[0] - document_delta[0] / new,
             document_point[1] - document_delta[1] / new,
         ];
+        self.workspace_center = [
+            workspace_point[0] - screen_delta[0] / new,
+            workspace_point[1] - screen_delta[1] / new,
+        ];
     }
 
     pub(crate) fn pan_by_window_delta(&mut self, delta: [f32; 2]) {
-        let delta = self.snapshot().window_delta_to_document(delta);
-        self.center[0] -= delta[0];
-        self.center[1] -= delta[1];
+        let snapshot = self.snapshot();
+        let document_delta = snapshot.window_delta_to_document(delta);
+        let workspace_delta = snapshot.window_delta_to_workspace(delta);
+        self.center[0] -= document_delta[0];
+        self.center[1] -= document_delta[1];
+        self.workspace_center[0] -= workspace_delta[0];
+        self.workspace_center[1] -= workspace_delta[1];
     }
 
     pub(crate) fn window_to_document(&self, point: [f32; 2]) -> [f32; 2] {
@@ -226,6 +259,7 @@ mod tests {
         PaintViewSnapshot {
             zoom: 2.0,
             center: [50.0, 40.0],
+            workspace_center: [50.0, 40.0],
             viewport_center: [400.0, 300.0],
             rotation,
             flip,
@@ -253,18 +287,49 @@ mod tests {
     }
 
     #[test]
-    fn cursor_centered_zoom_preserves_the_document_point() {
+    fn cursor_centered_zoom_preserves_document_and_workspace_points() {
         let mut view = PaintView::default();
         view.set_surface_size([800, 600]);
         view.center = [200.0, 100.0];
+        view.workspace_center = [-50.0, 75.0];
         view.rotation = 0.7;
         view.flip = [-1.0, 1.0];
         let cursor = [175.0, 480.0];
-        let before = view.window_to_document(cursor);
+        let document_before = view.window_to_document(cursor);
+        let workspace_before = view.snapshot().window_to_workspace(cursor);
         view.apply_zoom_at(1.1, cursor);
-        let after = view.window_to_document(cursor);
-        assert!((before[0] - after[0]).abs() < 0.0001);
-        assert!((before[1] - after[1]).abs() < 0.0001);
+        let document_after = view.window_to_document(cursor);
+        let workspace_after = view.snapshot().window_to_workspace(cursor);
+        assert!((document_before[0] - document_after[0]).abs() < 0.0001);
+        assert!((document_before[1] - document_after[1]).abs() < 0.0001);
+        assert!((workspace_before[0] - workspace_after[0]).abs() < 0.0001);
+        assert!((workspace_before[1] - workspace_after[1]).abs() < 0.0001);
+    }
+
+    #[test]
+    fn pan_moves_oriented_canvas_and_workspace_aids_by_same_screen_delta() {
+        let mut view = PaintView {
+            zoom: 1.3,
+            center: [80.0, 60.0],
+            workspace_center: [-20.0, 140.0],
+            surface_size: [700.0, 500.0],
+            rotation: 0.8,
+            flip: [-1.0, 1.0],
+        };
+        let document_point = [120.0, 90.0];
+        let workspace_point = [40.0, 200.0];
+        let document_before = view.snapshot().document_to_window(document_point);
+        let workspace_before = view.snapshot().workspace_to_window(workspace_point);
+        let delta = [35.0, -22.0];
+
+        view.pan_by_window_delta(delta);
+
+        let document_after = view.snapshot().document_to_window(document_point);
+        let workspace_after = view.snapshot().workspace_to_window(workspace_point);
+        assert!((document_after[0] - document_before[0] - delta[0]).abs() < 0.0001);
+        assert!((document_after[1] - document_before[1] - delta[1]).abs() < 0.0001);
+        assert!((workspace_after[0] - workspace_before[0] - delta[0]).abs() < 0.0001);
+        assert!((workspace_after[1] - workspace_before[1] - delta[1]).abs() < 0.0001);
     }
 
     #[test]
@@ -294,6 +359,29 @@ mod tests {
         let after = view.snapshot().document_to_window(canvas_center);
         assert!((before[0] - after[0]).abs() < 0.0001);
         assert!((before[1] - after[1]).abs() < 0.0001);
+    }
+
+    #[test]
+    fn workspace_aids_stay_stationary_during_canvas_orientation_changes() {
+        let mut view = PaintView {
+            zoom: 1.4,
+            center: [30.0, 20.0],
+            workspace_center: [30.0, 20.0],
+            surface_size: [800.0, 600.0],
+            ..PaintView::default()
+        };
+        let canvas_center = [100.0, 50.0];
+        let reference_position = [220.0, -40.0];
+        let before = view.snapshot().workspace_to_window(reference_position);
+
+        view.set_rotation_around(0.91, canvas_center);
+        view.toggle_flip_horizontal_around(canvas_center);
+        view.toggle_flip_vertical_around(canvas_center);
+
+        assert_eq!(
+            view.snapshot().workspace_to_window(reference_position),
+            before
+        );
     }
 
     #[test]

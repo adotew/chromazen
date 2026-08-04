@@ -2010,6 +2010,7 @@ mod tests {
         let view = PaintViewSnapshot {
             zoom: 2.0,
             center: [27.25, 45.25],
+            workspace_center: [27.25, 45.25],
             viewport_center: [75.0, 50.0],
             rotation: 0.0,
             flip: [1.0, 1.0],
@@ -2031,6 +2032,7 @@ mod tests {
         let view = PaintViewSnapshot {
             zoom: 1.0,
             center: [50.0, 25.0],
+            workspace_center: [50.0, 25.0],
             viewport_center: [100.0, 100.0],
             rotation: std::f32::consts::FRAC_PI_2,
             flip: [1.0, 1.0],
@@ -2052,6 +2054,7 @@ mod tests {
         let view = PaintViewSnapshot {
             zoom: 1.0,
             center: [250.0, 250.0],
+            workspace_center: [250.0, 250.0],
             viewport_center: [50.0, 50.0],
             rotation: 0.0,
             flip: [1.0, 1.0],

@@ -309,7 +309,7 @@ impl GuiLayer {
             let Some(texture_id) = self.reference_texture(reference.id) else {
                 continue;
             };
-            let window_position = view.document_to_window(reference.position);
+            let window_position = view.workspace_to_window(reference.position);
             let position = egui::pos2(
                 window_position[0] / pixels_per_point,
                 window_position[1] / pixels_per_point,
@@ -512,7 +512,7 @@ impl GuiLayer {
         let Some(origin) = self.reference_transform_edit.filter(|edit| edit.id == id) else {
             return;
         };
-        let delta = view.window_delta_to_document([
+        let delta = view.window_delta_to_workspace([
             drag_delta.x * pixels_per_point,
             drag_delta.y * pixels_per_point,
         ]);
