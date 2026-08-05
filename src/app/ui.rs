@@ -25,6 +25,9 @@ use super::{
     references::{ReferenceId, ReferenceImage},
 };
 
+const SIDEBAR_WIDTH: f32 = 300.0;
+const TOOL_RAIL_WIDTH: f32 = 42.0;
+
 #[derive(Clone, Copy)]
 pub(crate) struct BrushResizeLabel {
     pub(crate) center: [f32; 2],
@@ -202,6 +205,7 @@ impl GuiLayer {
     ) -> Self {
         let context = egui::Context::default();
         install_fonts(&context);
+        install_rounded_ui_style(&context);
         egui_extras::install_image_loaders(&context);
         let state = EguiWinitState::new(
             context.clone(),
@@ -656,6 +660,11 @@ impl GuiLayer {
         background: egui::Color32,
     ) {
         egui::Panel::bottom("layer controls")
+            .frame(
+                egui::Frame::side_top_panel(ui.style())
+                    .fill(egui::Color32::TRANSPARENT)
+                    .stroke(egui::Stroke::NONE),
+            )
             .show_separator_line(false)
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -930,7 +939,6 @@ impl GuiLayer {
     }
 
     fn show_tool_rail(&mut self, ui: &mut egui::Ui, active_tool: PaintTool) -> Option<PaintTool> {
-        const RAIL_WIDTH: f32 = 42.0;
         const TOOL_HEIGHT: f32 = 40.0;
         const TOOL_COUNT: usize = 3;
         const VERTICAL_PADDING: f32 = 6.0;
@@ -939,22 +947,20 @@ impl GuiLayer {
         let button_count = TOOL_COUNT + if self.sidebar_visible { 0 } else { 2 };
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(
-                RAIL_WIDTH,
+                TOOL_RAIL_WIDTH,
                 TOOL_HEIGHT * button_count as f32 + 2.0 * VERTICAL_PADDING,
             ),
             egui::Sense::hover(),
         );
-        let separator_width = ui.visuals().widgets.noninteractive.bg_stroke.width;
-        let panel_rect = rect.with_max_x(rect.right() + separator_width);
-        ui.painter().rect_filled(
-            panel_rect,
+        paint_rounded_panel(
+            ui,
+            rect,
             egui::CornerRadius {
                 nw: 0,
                 ne: 0,
-                sw: 12,
+                sw: 16,
                 se: 0,
             },
-            ui.visuals().panel_fill,
         );
         let body = egui::Rect::from_min_max(
             egui::pos2(rect.left(), rect.top() + VERTICAL_PADDING),
@@ -965,7 +971,7 @@ impl GuiLayer {
         for (index, tool) in tools.into_iter().enumerate() {
             let tool_rect = egui::Rect::from_min_size(
                 egui::pos2(body.left(), body.top() + index as f32 * TOOL_HEIGHT),
-                egui::vec2(RAIL_WIDTH, TOOL_HEIGHT),
+                egui::vec2(TOOL_RAIL_WIDTH, TOOL_HEIGHT),
             );
             let response = show_tool_button(ui, tool_rect, tool, tool == active_tool);
             if tool != active_tool {
@@ -1013,7 +1019,7 @@ impl GuiLayer {
             let separator_y = body.top() + TOOL_COUNT as f32 * TOOL_HEIGHT;
             let layers_rect = egui::Rect::from_min_size(
                 egui::pos2(body.left(), separator_y),
-                egui::vec2(RAIL_WIDTH, TOOL_HEIGHT),
+                egui::vec2(TOOL_RAIL_WIDTH, TOOL_HEIGHT),
             );
             let layers_response = ui
                 .interact(layers_rect, ui.id().with("Layers"), egui::Sense::click())
@@ -1080,7 +1086,6 @@ impl GuiLayer {
             // egui's built-in animated panel deliberately hides its contents while resizing,
             // which makes a wide sidebar flash empty. Keep a full-width child clipped to an
             // animated panel instead, so the complete sidebar slides off the right edge.
-            const SIDEBAR_WIDTH: f32 = 300.0;
             let sidebar_progress = ui.ctx().animate_bool_with_time_and_easing(
                 egui::Id::new("sidebar animation"),
                 self.sidebar_visible,
@@ -1088,10 +1093,22 @@ impl GuiLayer {
                 egui::emath::easing::cubic_in_out,
             );
             if sidebar_progress > 0.0 {
+                let sidebar_frame = egui::Frame::side_top_panel(ui.style())
+                    .fill(egui::Color32::TRANSPARENT)
+                    .stroke(egui::Stroke::NONE);
                 egui::Panel::right("tools")
+                    .frame(sidebar_frame)
+                    .show_separator_line(false)
                     .exact_size(SIDEBAR_WIDTH * sidebar_progress)
                     .resizable(false)
                     .show_inside(ui, |panel_ui| {
+                        // The panel ui excludes its frame margin. Paint through that margin so the
+                        // background meets the tool rail without a gray divider between them.
+                        let component_rect = egui::Frame::side_top_panel(panel_ui.style())
+                            .fill(egui::Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::NONE)
+                            .widget_rect(panel_ui.max_rect());
+                        paint_rounded_panel(panel_ui, component_rect, egui::CornerRadius::ZERO);
                         let inner_width = SIDEBAR_WIDTH
                             - egui::Frame::side_top_panel(panel_ui.style())
                                 .inner_margin
@@ -2312,12 +2329,6 @@ fn install_fonts(context: &egui::Context) {
         ))),
     );
     fonts.font_data.insert(
-        "inter_medium".to_owned(),
-        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
-            "../../assets/fonts/Inter-Medium.ttf"
-        ))),
-    );
-    fonts.font_data.insert(
         "elms_sans".to_owned(),
         std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
             "../../assets/fonts/ElmsSans-Medium.ttf"
@@ -2329,10 +2340,6 @@ fn install_fonts(context: &egui::Context) {
         .expect("default proportional font family")
         .insert(0, "inter".to_owned());
     fonts.families.insert(
-        egui::FontFamily::Name("inter_medium".into()),
-        vec!["inter_medium".to_owned(), "inter".to_owned()],
-    );
-    fonts.families.insert(
         egui::FontFamily::Name("elms_sans".into()),
         vec!["elms_sans".to_owned(), "inter".to_owned()],
     );
@@ -2340,9 +2347,69 @@ fn install_fonts(context: &egui::Context) {
     context.all_styles_mut(|style| {
         style.text_styles.insert(
             egui::TextStyle::Heading,
-            egui::FontId::new(18.0, egui::FontFamily::Name("inter_medium".into())),
+            egui::FontId::new(18.0, egui::FontFamily::Proportional),
         );
     });
+}
+
+fn install_rounded_ui_style(context: &egui::Context) {
+    context.all_styles_mut(|style| {
+        let dark_mode = style.visuals.dark_mode;
+        let visuals = &mut style.visuals;
+        visuals.window_corner_radius = egui::CornerRadius::same(16);
+        visuals.menu_corner_radius = egui::CornerRadius::same(12);
+        visuals.window_fill = if dark_mode {
+            egui::Color32::from_rgb(28, 30, 34)
+        } else {
+            egui::Color32::from_rgb(248, 250, 252)
+        };
+        // egui uses the window stroke for both the outer border and the title separator.
+        // Removing it keeps the title bar visually continuous with the window body.
+        visuals.window_stroke = egui::Stroke::NONE;
+        visuals.window_highlight_topmost = false;
+        visuals.window_shadow = egui::Shadow {
+            offset: [0, 10],
+            blur: 28,
+            spread: 1,
+            color: egui::Color32::from_black_alpha(if dark_mode { 105 } else { 48 }),
+        };
+        visuals.popup_shadow = egui::Shadow {
+            offset: [0, 8],
+            blur: 22,
+            spread: 0,
+            color: egui::Color32::from_black_alpha(if dark_mode { 100 } else { 42 }),
+        };
+
+        let radius = egui::CornerRadius::same(9);
+        visuals.widgets.noninteractive.corner_radius = radius;
+        visuals.widgets.inactive.corner_radius = radius;
+        visuals.widgets.hovered.corner_radius = radius;
+        visuals.widgets.active.corner_radius = radius;
+        visuals.widgets.open.corner_radius = radius;
+        visuals.widgets.inactive.weak_bg_fill = if dark_mode {
+            egui::Color32::from_white_alpha(12)
+        } else {
+            egui::Color32::from_black_alpha(10)
+        };
+        visuals.widgets.hovered.weak_bg_fill = if dark_mode {
+            egui::Color32::from_white_alpha(28)
+        } else {
+            egui::Color32::from_white_alpha(150)
+        };
+        visuals.widgets.active.weak_bg_fill = if dark_mode {
+            egui::Color32::from_white_alpha(38)
+        } else {
+            egui::Color32::from_white_alpha(190)
+        };
+        visuals.widgets.open.weak_bg_fill = visuals.widgets.hovered.weak_bg_fill;
+        visuals.slider_trailing_fill = true;
+        visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
+    });
+}
+
+fn paint_rounded_panel(ui: &egui::Ui, rect: egui::Rect, corner_radius: egui::CornerRadius) {
+    ui.painter()
+        .rect_filled(rect, corner_radius, ui.visuals().window_fill());
 }
 
 fn brush_settings_from_config(
