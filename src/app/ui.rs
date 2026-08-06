@@ -1900,11 +1900,18 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
         opacity,
         drag_id,
     } = layer;
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 60.0), egui::Sense::click());
+    let sense = if drag_id.is_some() {
+        egui::Sense::click_and_drag()
+    } else {
+        egui::Sense::click()
+    };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 60.0), sense);
+    if let Some(layer_id) = drag_id {
+        response.dnd_set_drag_payload(layer_id);
+    }
     let visibility = visible.map(|_| {
         let eye_rect = egui::Rect::from_center_size(
-            egui::pos2(rect.left() + 16.0, rect.center().y),
+            egui::pos2(rect.right() - 16.0, rect.center().y),
             egui::Vec2::splat(24.0),
         );
         ui.interact(
@@ -1949,14 +1956,9 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
         } else {
             egui::include_image!("../../assets/icons/eye-off.svg")
         };
-        let alpha = if !visible || selected || visibility.hovered() {
-            220
-        } else {
-            90
-        };
         egui::Image::new(icon)
             .fit_to_exact_size(egui::Vec2::splat(16.0))
-            .tint(egui::Color32::from_white_alpha(alpha))
+            .tint(ui.visuals().weak_text_color())
             .paint_at(ui, visibility.rect.shrink(4.0));
     }
 
@@ -1978,7 +1980,7 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
     }
 
     let thumbnail =
-        egui::Rect::from_min_size(rect.min + egui::vec2(34.0, 6.0), egui::Vec2::splat(48.0));
+        egui::Rect::from_min_size(rect.min + egui::vec2(6.0, 6.0), egui::Vec2::splat(48.0));
     if let Some(color) = solid_color {
         painter.rect_filled(thumbnail, 8, color);
         painter.rect_stroke(
@@ -2028,45 +2030,16 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
         text_color,
     );
 
-    if let Some(layer_id) = drag_id {
-        let drag_rect = egui::Rect::from_center_size(
-            egui::pos2(rect.right() - 15.0, rect.center().y),
-            egui::vec2(24.0, 44.0),
-        );
-        ui.scope_builder(
-            egui::UiBuilder::new()
-                .max_rect(drag_rect)
-                .layout(egui::Layout::top_down(egui::Align::Center)),
-            |ui| {
-                ui.dnd_drag_source(egui::Id::new(("layer drag", layer_id.0)), layer_id, |ui| {
-                    let (icon_rect, response) =
-                        ui.allocate_exact_size(drag_rect.size(), egui::Sense::hover());
-                    let alpha = if response.hovered() { 190 } else { 80 };
-                    let tint = if ui.visuals().dark_mode {
-                        egui::Color32::from_white_alpha(alpha)
-                    } else {
-                        egui::Color32::from_black_alpha(alpha)
-                    };
-                    egui::Image::new(egui::include_image!("../../assets/icons/grip-vertical.svg"))
-                        .fit_to_exact_size(egui::Vec2::splat(16.0))
-                        .tint(tint)
-                        .paint_at(
-                            ui,
-                            egui::Rect::from_center_size(
-                                icon_rect.center(),
-                                egui::Vec2::splat(16.0),
-                            ),
-                        );
-                    response
-                })
-                .response
-                .on_hover_text("Drag to reorder");
-            },
-        );
-    }
+    let row = if drag_id.is_some() {
+        response
+            .on_hover_cursor(egui::CursorIcon::Grab)
+            .on_hover_text("Drag to reorder")
+    } else {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    };
 
     LayerRowResponse {
-        row: response.on_hover_cursor(egui::CursorIcon::PointingHand),
+        row,
         visibility,
         mode,
         name_rect,
