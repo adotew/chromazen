@@ -42,6 +42,7 @@ pub(crate) struct ArtworkSummary {
     pub(crate) id: ArtworkId,
     pub(crate) title: String,
     pub(crate) modified_unix_ms: u64,
+    pub(crate) dimensions: [u32; 2],
     pub(crate) thumbnail_path: PathBuf,
 }
 
@@ -133,11 +134,21 @@ impl ArtworkStore {
                         project.title
                     )));
                 }
+                let document_path = revision.join(DOCUMENT_FILE);
+                let source = fs::read_to_string(&document_path)
+                    .map_err(|error| ArtworkError::io("read", &document_path, error))?;
+                let document: DocumentManifest = toml::from_str(&source).map_err(|error| {
+                    ArtworkError::new(format!(
+                        "failed to parse {}: {error}",
+                        document_path.display()
+                    ))
+                })?;
                 self.cleanup_old_revisions(&id, project.current_revision);
                 Ok(ArtworkSummary {
                     id,
                     title: project.title,
                     modified_unix_ms: project.modified_unix_ms,
+                    dimensions: [document.width, document.height],
                     thumbnail_path: revision.join(THUMBNAIL_FILE),
                 })
             }) {
@@ -196,6 +207,7 @@ impl ArtworkStore {
                 id: id.clone(),
                 title: project.title,
                 modified_unix_ms: project.modified_unix_ms,
+                dimensions: [document.width, document.height],
                 thumbnail_path: revision.join(THUMBNAIL_FILE),
             },
             document,
@@ -315,6 +327,7 @@ impl ArtworkStore {
             id: id.clone(),
             title: project.title,
             modified_unix_ms: project.modified_unix_ms,
+            dimensions: [write.document.width, write.document.height],
             thumbnail_path: final_revision.join(THUMBNAIL_FILE),
         })
     }
@@ -523,6 +536,20 @@ mod tests {
         assert_eq!(loaded.summary.title, "Untitled");
         assert_eq!(loaded.document.layers[0].id, 1);
         assert_eq!(store.catalog().artworks.len(), 1);
+    }
+
+    #[test]
+    fn catalog_and_load_summary_include_dimensions() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ArtworkStore::from_root(temp.path());
+        let id = ArtworkId::new();
+        store.commit_revision(&id, "Untitled", revision(1)).unwrap();
+
+        let catalog = store.catalog();
+        assert_eq!(catalog.artworks[0].dimensions, [1, 1]);
+
+        let loaded = store.load(&id).unwrap();
+        assert_eq!(loaded.summary.dimensions, [1, 1]);
     }
 
     #[test]

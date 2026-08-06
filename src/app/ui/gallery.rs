@@ -81,7 +81,7 @@ impl GalleryUi {
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(32.0, 24.0);
+                        ui.spacing_mut().item_spacing = egui::vec2(32.0, 10.0);
                         for artwork in artworks {
                             ui.allocate_ui_with_layout(
                                 egui::vec2(220.0, 250.0),
@@ -114,6 +114,7 @@ impl GalleryUi {
                                         ui.add_space(8.0);
                                         ui.vertical_centered(|ui| {
                                             ui.strong(&artwork.title);
+                                            ui.label(format_dimensions(artwork.dimensions));
                                         });
                                     });
                                 },
@@ -242,6 +243,10 @@ impl GalleryUi {
             self.delete = None;
         }
     }
+}
+
+fn format_dimensions(dimensions: [u32; 2]) -> String {
+    format!("{} \u{00d7} {}", dimensions[0], dimensions[1])
 }
 
 fn show_artwork_thumbnail(ui: &mut egui::Ui, thumbnail: Option<&Thumbnail>) -> egui::Response {
