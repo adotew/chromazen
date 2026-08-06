@@ -26,6 +26,8 @@ use super::{
 };
 
 const TOOL_RAIL_WIDTH: f32 = 42.0;
+const LAYER_PANEL_WIDTH: f32 = 300.0;
+const LAYER_LIST_MAX_HEIGHT: f32 = 440.0;
 
 #[derive(Clone, Copy)]
 pub(crate) struct BrushResizeLabel {
@@ -670,7 +672,8 @@ impl GuiLayer {
         ui.add_space(4.0);
         egui::ScrollArea::vertical()
             .id_salt("layer list")
-            .auto_shrink([false, false])
+            .max_height(LAYER_LIST_MAX_HEIGHT)
+            .auto_shrink([false, true])
             .show(ui, |ui| {
                 for layer in layers.layers.iter().rev() {
                     let selected = layers.selection == layer.id;
@@ -1099,8 +1102,11 @@ impl GuiLayer {
                 let layers_response = egui::Window::new("Layers")
                     .id(egui::Id::new("floating layers"))
                     .default_pos(egui::pos2(340.0, 80.0))
-                    .default_size(egui::vec2(300.0, 480.0))
-                    .resizable(true)
+                    .auto_sized()
+                    .default_width(LAYER_PANEL_WIDTH)
+                    .min_width(LAYER_PANEL_WIDTH)
+                    .max_width(LAYER_PANEL_WIDTH)
+                    .max_height(LAYER_LIST_MAX_HEIGHT + 48.0)
                     .collapsible(false)
                     .show(ui.ctx(), |ui| self.show_layers(ui, layers, background));
                 if let Some(response) = layers_response {
@@ -2027,10 +2033,15 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
                 ui.dnd_drag_source(egui::Id::new(("layer drag", layer_id.0)), layer_id, |ui| {
                     let (icon_rect, response) =
                         ui.allocate_exact_size(drag_rect.size(), egui::Sense::hover());
-                    let alpha = if response.hovered() { 190 } else { 70 };
+                    let alpha = if response.hovered() { 190 } else { 80 };
+                    let tint = if ui.visuals().dark_mode {
+                        egui::Color32::from_white_alpha(alpha)
+                    } else {
+                        egui::Color32::from_black_alpha(alpha)
+                    };
                     egui::Image::new(egui::include_image!("../../assets/icons/grip-vertical.svg"))
                         .fit_to_exact_size(egui::Vec2::splat(16.0))
-                        .tint(egui::Color32::from_white_alpha(alpha))
+                        .tint(tint)
                         .paint_at(
                             ui,
                             egui::Rect::from_center_size(
