@@ -69,6 +69,7 @@ pub struct GuiLayer {
     background_edit_start: Option<[u8; 3]>,
     layer_name_edit: Option<LayerNameEdit>,
     layer_opacity_edit: Option<LayerOpacityEdit>,
+    layer_opacity_open: Option<LayerId>,
     layer_thumbnails: Vec<LayerThumbnail>,
     reference_textures: Vec<ReferenceTexture>,
     selected_reference: Option<ReferenceId>,
@@ -250,6 +251,7 @@ impl GuiLayer {
             background_edit_start: None,
             layer_name_edit: None,
             layer_opacity_edit: None,
+            layer_opacity_open: None,
             layer_thumbnails: Vec::new(),
             reference_textures: Vec::new(),
             selected_reference: None,
@@ -665,55 +667,6 @@ impl GuiLayer {
         layers: &LayerSnapshot,
         background: egui::Color32,
     ) {
-        egui::Panel::bottom("layer controls")
-            .frame(
-                egui::Frame::side_top_panel(ui.style())
-                    .fill(egui::Color32::TRANSPARENT)
-                    .stroke(egui::Stroke::NONE),
-            )
-            .show_separator_line(false)
-            .show_inside(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if let Some(layer) = layers
-                        .layers
-                        .iter()
-                        .find(|layer| layer.id == layers.selection)
-                    {
-                        ui.add_space(4.0);
-                        let mut opacity = layer.opacity;
-                        let opacity_changed = ui
-                            .add_sized(
-                                [ui.available_width(), 24.0],
-                                egui::Slider::new(&mut opacity, 0..=100)
-                                    .suffix("%")
-                                    .show_value(true),
-                            )
-                            .on_hover_text("Layer opacity")
-                            .changed();
-                        if opacity_changed {
-                            let edit = self.layer_opacity_edit.get_or_insert(LayerOpacityEdit {
-                                id: layer.id,
-                                before: layer.opacity,
-                                current: opacity,
-                            });
-                            if edit.id != layer.id {
-                                *edit = LayerOpacityEdit {
-                                    id: layer.id,
-                                    before: layer.opacity,
-                                    current: opacity,
-                                };
-                            } else {
-                                edit.current = opacity;
-                            }
-                            self.commands.push(AppCommand::SetLayerOpacity {
-                                id: layer.id,
-                                opacity,
-                            });
-                        }
-                    }
-                });
-                ui.add_space(6.0);
-            });
         ui.add_space(4.0);
         egui::ScrollArea::vertical()
             .id_salt("layer list")
@@ -774,7 +727,16 @@ impl GuiLayer {
                             });
                         }
                     }
-                    if row.visibility.as_ref().is_some_and(|eye| eye.clicked()) {
+                    if row.mode.as_ref().is_some_and(egui::Response::clicked) {
+                        self.layer_opacity_open = if self.layer_opacity_open == Some(layer.id) {
+                            None
+                        } else {
+                            Some(layer.id)
+                        };
+                        if !selected {
+                            self.commands.push(AppCommand::SelectLayer(layer.id));
+                        }
+                    } else if row.visibility.as_ref().is_some_and(egui::Response::clicked) {
                         self.commands.push(AppCommand::SetLayerVisibility {
                             id: layer.id,
                             visible: !layer.visible,
@@ -883,6 +845,52 @@ impl GuiLayer {
                         } else if let Some(edit) = self.layer_name_edit.as_mut() {
                             edit.name = edited_name;
                         }
+                    }
+
+                    if self.layer_opacity_open == Some(layer.id) {
+                        egui::Frame::new()
+                            .inner_margin(egui::Margin {
+                                left: 14,
+                                right: 14,
+                                top: 6,
+                                bottom: 0,
+                            })
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label("Opacity");
+                                    let mut opacity = layer.opacity;
+                                    let opacity_changed = ui
+                                        .add(
+                                            egui::Slider::new(&mut opacity, 0..=100)
+                                                .suffix("%")
+                                                .show_value(true),
+                                        )
+                                        .on_hover_text("Layer opacity")
+                                        .changed();
+                                    if opacity_changed {
+                                        let edit = self.layer_opacity_edit.get_or_insert(
+                                            LayerOpacityEdit {
+                                                id: layer.id,
+                                                before: layer.opacity,
+                                                current: opacity,
+                                            },
+                                        );
+                                        if edit.id != layer.id {
+                                            *edit = LayerOpacityEdit {
+                                                id: layer.id,
+                                                before: layer.opacity,
+                                                current: opacity,
+                                            };
+                                        } else {
+                                            edit.current = opacity;
+                                        }
+                                        self.commands.push(AppCommand::SetLayerOpacity {
+                                            id: layer.id,
+                                            opacity,
+                                        });
+                                    }
+                                });
+                            });
                     }
 
                     ui.add_space(4.0);
@@ -1096,13 +1104,18 @@ impl GuiLayer {
                     .collapsible(false)
                     .show(ui.ctx(), |ui| self.show_layers(ui, layers, background));
                 if let Some(response) = layers_response {
-                    let button_pos = response.response.rect.left_top() + egui::vec2(8.0, 6.0);
-                    let add_clicked = egui::Area::new(egui::Id::new("floating layer add button"))
-                        .fixed_pos(button_pos)
-                        .order(egui::Order::Foreground)
-                        .show(ui.ctx(), add_layer_button)
-                        .inner;
-                    if add_clicked {
+                    let button_rect = egui::Rect::from_min_size(
+                        response.response.rect.left_top() + egui::vec2(8.0, 6.0),
+                        egui::Vec2::splat(28.0),
+                    );
+                    let mut button_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .id(egui::Id::new("floating layer add button"))
+                            .layer_id(response.response.layer_id)
+                            .max_rect(button_rect),
+                    );
+                    button_ui.set_clip_rect(response.response.rect);
+                    if add_layer_button(&mut button_ui) {
                         self.commands.push(AppCommand::AddLayer);
                     }
                 }
@@ -1867,6 +1880,7 @@ struct LayerRow<'a> {
 struct LayerRowResponse {
     row: egui::Response,
     visibility: Option<egui::Response>,
+    mode: Option<egui::Response>,
     name_rect: egui::Rect,
 }
 
@@ -1899,7 +1913,8 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
             egui::pos2(rect.right() - 45.0, rect.center().y),
             egui::vec2(24.0, 28.0),
         );
-        ui.interact(mode_rect, response.id.with("mode"), egui::Sense::hover())
+        ui.interact(mode_rect, response.id.with("mode"), egui::Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text(format!("Normal · {opacity}%"))
     });
     let visuals = ui.style().interact(&response);
@@ -1911,16 +1926,8 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
     } else {
         egui::Color32::TRANSPARENT
     };
-    let stroke = if selected {
-        egui::Stroke::new(
-            1.0_f32,
-            egui::Color32::from_gray(if dark_mode { 110 } else { 155 }),
-        )
-    } else {
-        egui::Stroke::NONE
-    };
     let painter = ui.painter();
-    painter.rect(rect, 12, fill, stroke, egui::StrokeKind::Inside);
+    painter.rect_filled(rect, 12, fill);
 
     if let (Some(visible), Some(visibility)) = (visible, &visibility) {
         let icon = if visible {
@@ -2042,6 +2049,7 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
     LayerRowResponse {
         row: response.on_hover_cursor(egui::CursorIcon::PointingHand),
         visibility,
+        mode,
         name_rect,
     }
 }
