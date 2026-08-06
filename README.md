@@ -113,7 +113,7 @@ Controls:
   open the shared floating brush library. Each tool remembers its own brush.
 - On macOS and Windows, use **File → Import Photoshop Brushes…** to import one
   or more `.abr` files; the first imported brush is selected automatically.
-- `Tab`: show or hide the sidebar
+- `Tab`: show or hide the Color and Layers panels
 - Hold `Shift` and left-drag vertically on the canvas to resize the brush; drag
   up to increase its size or down to decrease it
 - Hold `Option` (`Alt` outside macOS) to activate the eyedropper, then

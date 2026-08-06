@@ -25,7 +25,6 @@ use super::{
     references::{ReferenceId, ReferenceImage},
 };
 
-const SIDEBAR_WIDTH: f32 = 300.0;
 const TOOL_RAIL_WIDTH: f32 = 42.0;
 
 #[derive(Clone, Copy)]
@@ -79,7 +78,6 @@ pub struct GuiLayer {
     pointer_over_selected_reference: bool,
     brush_previews: Vec<(String, egui::TextureHandle)>,
     failed_brush_previews: Vec<String>,
-    sidebar_visible: bool,
     color_window_open: bool,
     layers_window_open: bool,
     canvas_size_constraints: CanvasSizeConstraints,
@@ -185,7 +183,8 @@ struct CanvasCropDrag {
 struct CanvasCrop {
     rect: CanvasCropRect,
     drag: Option<CanvasCropDrag>,
-    restore_sidebar: bool,
+    restore_color_window: bool,
+    restore_layers_window: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -260,7 +259,6 @@ impl GuiLayer {
             pointer_over_selected_reference: false,
             brush_previews: Vec::new(),
             failed_brush_previews: Vec::new(),
-            sidebar_visible: true,
             color_window_open: false,
             layers_window_open: false,
             canvas_size_constraints: paint.canvas_size_constraints(),
@@ -651,6 +649,14 @@ impl GuiLayer {
                 .push(AppCommand::SetBrushColor(self.brush.color.to_array()));
         }
         ui.add_space(8.0);
+        if let Some(message) = &self.settings_message {
+            let color = if message.is_error {
+                egui::Color32::LIGHT_RED
+            } else {
+                egui::Color32::LIGHT_GREEN
+            };
+            ui.colored_label(color, &message.text);
+        }
     }
 
     fn show_layers(
@@ -668,18 +674,6 @@ impl GuiLayer {
             .show_separator_line(false)
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
-                    let add_icon =
-                        egui::Image::new(egui::include_image!("../../assets/icons/plus.svg"))
-                            .fit_to_exact_size(egui::Vec2::splat(16.0))
-                            .alt_text("Add layer");
-                    let add_button = egui::Button::image(add_icon)
-                        .image_tint_follows_text_color(true)
-                        .min_size(egui::Vec2::splat(28.0))
-                        .corner_radius(8);
-                    if ui.add(add_button).on_hover_text("Add layer").clicked() {
-                        self.commands.push(AppCommand::AddLayer);
-                    }
-
                     if let Some(layer) = layers
                         .layers
                         .iter()
@@ -944,7 +938,7 @@ impl GuiLayer {
         const VERTICAL_PADDING: f32 = 6.0;
 
         let tools = [PaintTool::Brush, PaintTool::Eraser, PaintTool::Smudge];
-        let button_count = TOOL_COUNT + if self.sidebar_visible { 0 } else { 2 };
+        let button_count = TOOL_COUNT + 2;
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(
                 TOOL_RAIL_WIDTH,
@@ -1015,7 +1009,7 @@ impl GuiLayer {
             }
         }
 
-        if !self.sidebar_visible {
+        {
             let separator_y = body.top() + TOOL_COUNT as f32 * TOOL_HEIGHT;
             let layers_rect = egui::Rect::from_min_size(
                 egui::pos2(body.left(), separator_y),
@@ -1083,106 +1077,49 @@ impl GuiLayer {
                 self.commands.push(AppCommand::DeleteReference(id));
             }
 
-            // egui's built-in animated panel deliberately hides its contents while resizing,
-            // which makes a wide sidebar flash empty. Keep a full-width child clipped to an
-            // animated panel instead, so the complete sidebar slides off the right edge.
-            let sidebar_progress = ui.ctx().animate_bool_with_time_and_easing(
-                egui::Id::new("sidebar animation"),
-                self.sidebar_visible,
-                0.18,
-                egui::emath::easing::cubic_in_out,
-            );
-            if sidebar_progress > 0.0 {
-                let sidebar_frame = egui::Frame::side_top_panel(ui.style())
-                    .fill(egui::Color32::TRANSPARENT)
-                    .stroke(egui::Stroke::NONE);
-                egui::Panel::right("tools")
-                    .frame(sidebar_frame)
-                    .show_separator_line(false)
-                    .exact_size(SIDEBAR_WIDTH * sidebar_progress)
-                    .resizable(false)
-                    .show_inside(ui, |panel_ui| {
-                        // The panel ui excludes its frame margin. Paint through that margin so the
-                        // background meets the tool rail without a gray divider between them.
-                        let component_rect = egui::Frame::side_top_panel(panel_ui.style())
-                            .fill(egui::Color32::TRANSPARENT)
-                            .stroke(egui::Stroke::NONE)
-                            .widget_rect(panel_ui.max_rect());
-                        paint_rounded_panel(panel_ui, component_rect, egui::CornerRadius::ZERO);
-                        let inner_width = SIDEBAR_WIDTH
-                            - egui::Frame::side_top_panel(panel_ui.style())
-                                .inner_margin
-                                .sum()
-                                .x;
-                        let content_rect = egui::Rect::from_min_size(
-                            panel_ui.min_rect().min,
-                            egui::vec2(inner_width, panel_ui.available_height()),
-                        );
-                        let mut content_ui = panel_ui.new_child(
-                            egui::UiBuilder::new()
-                                .id_salt("sidebar contents")
-                                .max_rect(content_rect),
-                        );
-                        content_ui.set_clip_rect(panel_ui.clip_rect());
-                        let ui = &mut content_ui;
-
-                        self.show_brush_controls(ui);
-
-                        if let Some(message) = &self.settings_message {
-                            let color = if message.is_error {
-                                egui::Color32::LIGHT_RED
-                            } else {
-                                egui::Color32::LIGHT_GREEN
-                            };
-                            ui.colored_label(color, &message.text);
-                        }
-
-                        self.show_layers(ui, layers, background);
-                    });
-            }
-
-            if !self.sidebar_visible {
-                let mut color_window_open = self.color_window_open;
+            if self.color_window_open {
                 egui::Window::new("Color")
                     .id(egui::Id::new("floating color picker"))
                     .default_pos(egui::pos2(24.0, 80.0))
                     .default_width(280.0)
                     .resizable(false)
                     .collapsible(false)
-                    .open(&mut color_window_open)
                     .show(ui.ctx(), |ui| self.show_brush_controls(ui));
-                self.color_window_open = color_window_open;
+            }
 
-                let mut layers_window_open = self.layers_window_open;
-                egui::Window::new("Layers")
+            if self.layers_window_open {
+                let layers_response = egui::Window::new("Layers")
                     .id(egui::Id::new("floating layers"))
                     .default_pos(egui::pos2(340.0, 80.0))
                     .default_size(egui::vec2(300.0, 480.0))
                     .resizable(true)
                     .collapsible(false)
-                    .open(&mut layers_window_open)
                     .show(ui.ctx(), |ui| self.show_layers(ui, layers, background));
-                self.layers_window_open = layers_window_open;
-
-                if !ui.ctx().egui_wants_keyboard_input()
-                    && ui.ctx().input(|input| input.key_pressed(egui::Key::Escape))
-                {
-                    self.color_window_open = false;
-                    self.layers_window_open = false;
+                if let Some(response) = layers_response {
+                    let button_pos = response.response.rect.left_top() + egui::vec2(8.0, 6.0);
+                    let add_clicked = egui::Area::new(egui::Id::new("floating layer add button"))
+                        .fixed_pos(button_pos)
+                        .order(egui::Order::Foreground)
+                        .show(ui.ctx(), add_layer_button)
+                        .inner;
+                    if add_clicked {
+                        self.commands.push(AppCommand::AddLayer);
+                    }
                 }
             }
 
-            // The canvas is rendered underneath the UI and naturally hidden by the sidebar.
-            // Give references the same visible workspace instead of allowing their middle-layer
-            // painters and interactions to extend over the panel.
+            if !ui.ctx().egui_wants_keyboard_input()
+                && ui.ctx().input(|input| input.key_pressed(egui::Key::Escape))
+            {
+                self.color_window_open = false;
+                self.layers_window_open = false;
+            }
+
             let workspace_rect = ui.available_rect_before_wrap();
             self.show_workspace_references(ui.ctx(), references, workspace_view, workspace_rect);
 
             let selected_tool = egui::Area::new(egui::Id::new("tool rail"))
-                .anchor(
-                    egui::Align2::RIGHT_TOP,
-                    egui::vec2(-SIDEBAR_WIDTH * sidebar_progress, 0.0),
-                )
+                .anchor(egui::Align2::RIGHT_TOP, egui::Vec2::ZERO)
                 .order(egui::Order::Foreground)
                 .show(ui.ctx(), |ui| self.show_tool_rail(ui, tool))
                 .inner;
@@ -1336,16 +1273,18 @@ impl GuiLayer {
 
     pub(crate) fn open_canvas_crop(&mut self, size: [u32; 2]) {
         self.new_artwork_dialog = None;
-        let restore_sidebar = self
+        let (restore_color_window, restore_layers_window) = self
             .canvas_crop
             .as_ref()
-            .map_or(self.sidebar_visible, |crop| crop.restore_sidebar);
+            .map_or((self.color_window_open, self.layers_window_open), |crop| {
+                (crop.restore_color_window, crop.restore_layers_window)
+            });
         self.canvas_crop = Some(CanvasCrop {
             rect: CanvasCropRect::from_size(size),
             drag: None,
-            restore_sidebar,
+            restore_color_window,
+            restore_layers_window,
         });
-        self.sidebar_visible = false;
         self.color_window_open = false;
         self.layers_window_open = false;
         self.selected_reference = None;
@@ -1355,7 +1294,8 @@ impl GuiLayer {
 
     pub(crate) fn close_canvas_crop(&mut self) {
         if let Some(crop) = self.canvas_crop.take() {
-            self.sidebar_visible = crop.restore_sidebar;
+            self.color_window_open = crop.restore_color_window;
+            self.layers_window_open = crop.restore_layers_window;
             self.context.request_repaint();
         }
     }
@@ -1484,8 +1424,10 @@ impl GuiLayer {
         }
     }
 
-    pub(crate) fn toggle_sidebar(&mut self) {
-        self.sidebar_visible = !self.sidebar_visible;
+    pub(crate) fn toggle_panels(&mut self) {
+        let open = !self.color_window_open && !self.layers_window_open;
+        self.color_window_open = open;
+        self.layers_window_open = open;
     }
 
     pub(crate) fn close_popups(&self) -> bool {
@@ -2183,6 +2125,23 @@ fn show_brush_resize_label(ui: &egui::Ui, overlay: BrushResizeLabel, brush_size:
         egui::Color32::BLACK,
     );
     painter.text(position, align, text, font, egui::Color32::WHITE);
+}
+
+fn add_layer_button(ui: &mut egui::Ui) -> bool {
+    let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(28.0), egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Add layer"));
+
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact(&response);
+        ui.painter().rect_filled(rect, 8.0, visuals.weak_bg_fill);
+        let icon_rect = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(16.0));
+        egui::Image::new(egui::include_image!("../../assets/icons/plus.svg"))
+            .tint(visuals.fg_stroke.color)
+            .alt_text("Add layer")
+            .paint_at(ui, icon_rect);
+    }
+
+    response.on_hover_text("Add layer").clicked()
 }
 
 fn show_tool_button(

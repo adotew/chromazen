@@ -73,7 +73,7 @@ struct EyedropperDrag {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum KeyboardShortcut {
-    ToggleSidebar,
+    TogglePanels,
     CycleTool,
 }
 
@@ -579,7 +579,7 @@ fn keyboard_shortcut_for_key(
         return None;
     }
     match modifiers {
-        modifiers if modifiers.is_empty() => Some(KeyboardShortcut::ToggleSidebar),
+        modifiers if modifiers.is_empty() => Some(KeyboardShortcut::TogglePanels),
         ModifiersState::SHIFT => Some(KeyboardShortcut::CycleTool),
         _ => None,
     }
@@ -706,7 +706,7 @@ mod tests {
                 false,
                 ModifiersState::empty(),
             ),
-            Some(KeyboardShortcut::ToggleSidebar)
+            Some(KeyboardShortcut::TogglePanels)
         );
         assert_eq!(
             keyboard_shortcut_for_key(
