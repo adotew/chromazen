@@ -690,7 +690,7 @@ impl App {
                     if let Err(error) = result
                         && let Some(gui) = self.gui.as_mut()
                     {
-                        gui.show_error(error);
+                        gui.show_error("Chromazen couldn’t resize the canvas.", error);
                     }
                 }
                 AppCommand::SelectTool(tool) => {
@@ -871,7 +871,7 @@ impl App {
                     if let Err(error) = result
                         && let Some(gui) = self.gui.as_mut()
                     {
-                        gui.show_error(error);
+                        gui.show_error("Chromazen couldn’t export the PNG.", error);
                     }
                 }
                 AppCommand::ShowGallery => {
@@ -889,14 +889,14 @@ impl App {
                     if let Err(error) = self.gallery.rename(&id, &title)
                         && let Some(gui) = self.gui.as_mut()
                     {
-                        gui.show_error(error);
+                        gui.show_error("Chromazen couldn’t rename the artwork.", error);
                     }
                 }
                 AppCommand::DeleteArtwork(id) => {
                     if let Err(error) = self.gallery.delete(&id)
                         && let Some(gui) = self.gui.as_mut()
                     {
-                        gui.show_error(error);
+                        gui.show_error("Chromazen couldn’t delete the artwork.", error);
                     }
                 }
                 AppCommand::CancelPendingNavigation => {
@@ -928,22 +928,20 @@ impl App {
         details.extend(completion.errors);
         if let Some(gui) = self.gui.as_mut() {
             if imported_count == 0 {
-                gui.show_error(if details.is_empty() {
-                    "No brushes were imported".to_owned()
-                } else {
-                    details.join("\n")
-                });
+                gui.show_error("No brushes were imported.", details.join("\n"));
             } else if details.is_empty() {
                 gui.show_success(format!(
                     "Imported {imported_count} Photoshop brush{}",
                     if imported_count == 1 { "" } else { "es" }
                 ));
             } else {
-                gui.show_error(format!(
-                    "Imported {imported_count} Photoshop brush{} with warnings:\n{}",
-                    if imported_count == 1 { "" } else { "es" },
-                    details.join("\n")
-                ));
+                gui.show_error(
+                    format!(
+                        "Imported {imported_count} Photoshop brush{}, but some brushes were skipped.",
+                        if imported_count == 1 { "" } else { "es" },
+                    ),
+                    details.join("\n"),
+                );
             }
         }
         true
@@ -969,7 +967,10 @@ impl App {
             if !completion.errors.is_empty()
                 && let Some(gui) = self.gui.as_mut()
             {
-                gui.show_error(completion.errors.join("\n"));
+                gui.show_error(
+                    "Some reference images could not be imported.",
+                    completion.errors.join("\n"),
+                );
             }
         }
         if changed {
@@ -999,7 +1000,10 @@ impl App {
             if !completion.warnings.is_empty()
                 && let Some(gui) = self.gui.as_mut()
             {
-                gui.show_error(completion.warnings.join("\n"));
+                gui.show_error(
+                    "Some reference images could not be loaded.",
+                    completion.warnings.join("\n"),
+                );
             }
         }
         changed
@@ -1016,7 +1020,7 @@ impl App {
                 }
                 Err(error) => {
                     self.pending_exit = false;
-                    gui.show_error(error);
+                    gui.show_error("Chromazen couldn’t export the PNG.", error);
                 }
             }
         }
@@ -1036,7 +1040,7 @@ impl App {
         };
         if let Err(error) = paint.reset_document(size) {
             if let Some(gui) = self.gui.as_mut() {
-                gui.show_error(error);
+                gui.show_error("Chromazen couldn’t create the artwork.", error);
             }
             return;
         }
@@ -1071,7 +1075,7 @@ impl App {
             Ok(opened) => opened,
             Err(error) => {
                 if let Some(gui) = self.gui.as_mut() {
-                    gui.show_error(error);
+                    gui.show_error("Chromazen couldn’t open the artwork.", error);
                 }
                 return;
             }
@@ -1081,7 +1085,7 @@ impl App {
         };
         if let Err(error) = paint.load_document(&opened.document, opened.layers) {
             if let Some(gui) = self.gui.as_mut() {
-                gui.show_error(error);
+                gui.show_error("Chromazen couldn’t open the artwork.", error);
             }
             return;
         }
@@ -1177,7 +1181,9 @@ impl App {
             };
             match effect {
                 SettingsEffect::Success(message) => gui.show_success(message),
-                SettingsEffect::Error(error) => gui.show_error(error),
+                SettingsEffect::Error(error) => {
+                    gui.show_error("Chromazen couldn’t update the settings.", error)
+                }
             }
         }
     }
@@ -1347,14 +1353,16 @@ impl App {
                     gui.settings_reloaded(self.settings.config(), tool);
                 }
                 if !completed.warnings.is_empty() {
-                    gui.show_error(completed.warnings.join("\n"));
+                    gui.show_error(
+                        "The selected brush could not be loaded completely.",
+                        completed.warnings.join("\n"),
+                    );
                 }
                 true
             }
             Err(error) => {
-                log::error!("failed to switch brush texture: {error}");
                 if let Some(gui) = self.gui.as_mut() {
-                    gui.show_error(error);
+                    gui.show_error("Chromazen couldn’t load the selected brush.", error);
                 }
                 false
             }

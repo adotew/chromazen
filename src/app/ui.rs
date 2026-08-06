@@ -67,7 +67,7 @@ pub struct GuiLayer {
     size_range: std::ops::RangeInclusive<f32>,
     default_size: f32,
     commands: Vec<AppCommand>,
-    settings_message: Option<SettingsMessage>,
+    message_dialog: Option<MessageDialog>,
     background_edit_start: Option<[u8; 3]>,
     layer_name_edit: Option<LayerNameEdit>,
     layer_opacity_edit: Option<LayerOpacityEdit>,
@@ -89,9 +89,27 @@ pub struct GuiLayer {
     gallery: gallery::GalleryUi,
 }
 
-struct SettingsMessage {
-    text: String,
-    is_error: bool,
+struct MessageDialog {
+    title: &'static str,
+    message: String,
+}
+
+impl MessageDialog {
+    fn error(message: impl Into<String>, details: impl std::fmt::Display) -> Self {
+        let message = message.into();
+        log::error!("{message}: {details}");
+        Self {
+            title: "Something went wrong",
+            message,
+        }
+    }
+
+    fn success(message: impl Into<String>) -> Self {
+        Self {
+            title: "Done",
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -223,6 +241,12 @@ impl GuiLayer {
             RendererOptions::default(),
         );
         let preset = &brush_preset.preset;
+        let message_dialog = load_error.map(|error| {
+            MessageDialog::error(
+                "Chromazen couldn’t load your settings and is using the defaults.",
+                error,
+            )
+        });
 
         Self {
             context,
@@ -246,10 +270,7 @@ impl GuiLayer {
             size_range: preset.size.min..=preset.size.max,
             default_size: preset.size.default,
             commands: Vec::new(),
-            settings_message: load_error.map(|text| SettingsMessage {
-                text,
-                is_error: true,
-            }),
+            message_dialog,
             background_edit_start: None,
             layer_name_edit: None,
             layer_opacity_edit: None,
@@ -651,15 +672,6 @@ impl GuiLayer {
         if color_picker::show(ui, &mut self.brush.color) {
             self.commands
                 .push(AppCommand::SetBrushColor(self.brush.color.to_array()));
-        }
-        ui.add_space(8.0);
-        if let Some(message) = &self.settings_message {
-            let color = if message.is_error {
-                egui::Color32::LIGHT_RED
-            } else {
-                egui::Color32::LIGHT_GREEN
-            };
-            ui.colored_label(color, &message.text);
         }
     }
 
@@ -1187,6 +1199,7 @@ impl GuiLayer {
             self.show_new_artwork_dialog(ui.ctx());
             self.show_canvas_crop(ui.ctx(), workspace_view, workspace_rect);
             self.clear_reference_selection_on_outside_press(ui.ctx());
+            self.show_message_dialog(ui.ctx());
         })
     }
 
@@ -1198,21 +1211,11 @@ impl GuiLayer {
     ) -> egui::FullOutput {
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
-        let settings_message = self
-            .settings_message
-            .as_ref()
-            .filter(|message| message.is_error)
-            .map(|message| message.text.as_str());
-        let warning = match (discovery_warning, settings_message) {
-            (Some(discovery), Some(message)) => Some(format!("{discovery}\n{message}")),
-            (Some(discovery), None) => Some(discovery.to_owned()),
-            (None, Some(message)) => Some(message.to_owned()),
-            (None, None) => None,
-        };
         context.run_ui(raw_input, |ui| {
             self.gallery
-                .show(ui, artworks, warning.as_deref(), &mut self.commands);
+                .show(ui, artworks, discovery_warning, &mut self.commands);
             self.show_new_artwork_dialog(ui.ctx());
+            self.show_message_dialog(ui.ctx());
         })
     }
 
@@ -1485,7 +1488,6 @@ impl GuiLayer {
     pub(crate) fn reset_brush(&mut self) {
         self.brush.size = self.default_size;
         self.brush.color = brush_color(&CurrentBrushConfig::default());
-        self.settings_message = None;
         self.context.request_repaint();
     }
 
@@ -1549,24 +1551,41 @@ impl GuiLayer {
         self.brush.size = self.tool_sizes[tool_index(active_tool)]
             .clamp(*self.size_range.start(), *self.size_range.end());
         self.stroke_smoothing.strength = config.smoothing.strength;
-        self.settings_message = None;
         self.context.request_repaint();
     }
 
-    pub(crate) fn show_error(&mut self, error: impl Into<String>) {
-        self.show_message(error, true);
+    pub(crate) fn show_error(
+        &mut self,
+        message: impl Into<String>,
+        details: impl std::fmt::Display,
+    ) {
+        self.message_dialog = Some(MessageDialog::error(message, details));
+        self.context.request_repaint();
     }
 
     pub(crate) fn show_success(&mut self, message: impl Into<String>) {
-        self.show_message(message, false);
+        self.message_dialog = Some(MessageDialog::success(message));
+        self.context.request_repaint();
     }
 
-    fn show_message(&mut self, text: impl Into<String>, is_error: bool) {
-        self.settings_message = Some(SettingsMessage {
-            text: text.into(),
-            is_error,
+    fn show_message_dialog(&mut self, context: &egui::Context) {
+        let Some(dialog) = self.message_dialog.as_ref() else {
+            return;
+        };
+        let response = egui::Modal::new(egui::Id::new("message dialog")).show(context, |ui| {
+            ui.set_width(320.0);
+            ui.heading(dialog.title);
+            ui.add_space(8.0);
+            ui.label(&dialog.message);
+            ui.add_space(16.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.button("OK").clicked()
+            })
+            .inner
         });
-        self.context.request_repaint();
+        if response.inner || context.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.message_dialog = None;
+        }
     }
 }
 
@@ -2421,6 +2440,18 @@ pub fn repaint_delay(output: &egui::FullOutput) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_dialog_hides_technical_details() {
+        let dialog = MessageDialog::error(
+            "Chromazen couldn’t export the PNG.",
+            "renderer unavailable at adapter 0",
+        );
+
+        assert_eq!(dialog.title, "Something went wrong");
+        assert_eq!(dialog.message, "Chromazen couldn’t export the PNG.");
+        assert!(!dialog.message.contains("adapter 0"));
+    }
 
     #[test]
     fn crop_handles_have_large_targets_and_entire_edges_are_draggable() {
