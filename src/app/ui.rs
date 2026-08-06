@@ -1926,9 +1926,17 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
     let visuals = ui.style().interact(&response);
     let dark_mode = ui.visuals().dark_mode;
     let fill = if selected {
-        egui::Color32::from_gray(if dark_mode { 58 } else { 224 })
+        if dark_mode {
+            egui::Color32::from_rgb(34, 39, 46)
+        } else {
+            egui::Color32::from_gray(224)
+        }
     } else if response.hovered() {
-        egui::Color32::from_gray(if dark_mode { 42 } else { 240 })
+        if dark_mode {
+            egui::Color32::from_rgb(24, 28, 34)
+        } else {
+            egui::Color32::from_gray(240)
+        }
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -2152,7 +2160,6 @@ fn add_layer_button(ui: &mut egui::Ui) -> bool {
 
     if ui.is_rect_visible(rect) {
         let visuals = ui.style().interact(&response);
-        ui.painter().rect_filled(rect, 8.0, visuals.weak_bg_fill);
         let icon_rect = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(16.0));
         egui::Image::new(egui::include_image!("../../assets/icons/plus.svg"))
             .tint(visuals.fg_stroke.color)
