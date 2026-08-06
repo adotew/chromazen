@@ -2326,7 +2326,7 @@ fn install_rounded_ui_style(context: &egui::Context) {
         visuals.window_corner_radius = egui::CornerRadius::same(16);
         visuals.menu_corner_radius = egui::CornerRadius::same(12);
         visuals.window_fill = if dark_mode {
-            egui::Color32::from_rgb(28, 30, 34)
+            egui::Color32::from_rgb(17, 19, 24)
         } else {
             egui::Color32::from_rgb(248, 250, 252)
         };
