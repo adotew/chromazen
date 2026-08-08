@@ -109,10 +109,11 @@ Controls:
 - `E`: select Eraser; erasing makes the selected layer transparent to reveal
   lower layers and the Background
 - `S`: select Smudge; smudging drags colors already on the selected layer
-- `T`: select Transform. Left-drag to move the selected layer, and use the
-  floating controls to scale or rotate it around the marked canvas center.
-  Press `Enter` or Apply to bake the transform, or `Escape` or Cancel to restore
-  the original pixels. Applied transforms are undoable.
+- `T`: select Transform. Drag inside the frame to move the selected layer, drag
+  its square handles to scale uniformly, or drag the circular handle to rotate.
+  The floating controls provide precise scale and rotation values. Press `Enter`
+  or Apply to bake the transform, or `Escape` or Cancel to restore the original
+  pixels. Applied transforms are undoable.
 - `Shift-Tab`: cycle through Brush, Eraser, and Smudge
 - Click an inactive tool button to select it; click the active tool again to
   open the shared floating brush library. Each tool remembers its own brush.
