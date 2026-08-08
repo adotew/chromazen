@@ -115,7 +115,10 @@ impl RenderResources {
         let transform_uniform_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("layer transform uniform buffer"),
-                contents: bytemuck::bytes_of(&LayerTransform::default().uniform(document_size)),
+                contents: bytemuck::bytes_of(&LayerTransform::default().uniform(
+                    document_size,
+                    [document_size[0] as f32 * 0.5, document_size[1] as f32 * 0.5],
+                )),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
 
@@ -1120,11 +1123,12 @@ impl RenderResources {
         queue: &wgpu::Queue,
         transform: LayerTransform,
         size: [u32; 2],
+        pivot: [f32; 2],
     ) {
         queue.write_buffer(
             &self.transform_uniform_buffer,
             0,
-            bytemuck::bytes_of(&transform.uniform(size)),
+            bytemuck::bytes_of(&transform.uniform(size, pivot)),
         );
     }
 

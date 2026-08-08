@@ -14,8 +14,9 @@ use crate::{
     config::{AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset},
     paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings, StrokeSmoothingOptions},
     renderer::{
-        CanvasSizeConstraints, DEFAULT_CANVAS_SIZE, DropEdge, LayerId, LayerResourceId,
-        LayerSnapshot, LayerTransform, PaintRenderer, PaintViewSnapshot, merge_down_target_index,
+        CanvasSizeConstraints, DEFAULT_CANVAS_SIZE, DropEdge, LayerContentBounds, LayerId,
+        LayerResourceId, LayerSnapshot, LayerTransform, PaintRenderer, PaintViewSnapshot,
+        merge_down_target_index,
     },
 };
 
@@ -46,7 +47,7 @@ pub(crate) struct EditorUiState<'a> {
     pub(crate) layers: &'a LayerSnapshot,
     pub(crate) tool: EditorTool,
     pub(crate) layer_transform: Option<LayerTransform>,
-    pub(crate) document_size: [u32; 2],
+    pub(crate) layer_content_bounds: Option<LayerContentBounds>,
     pub(crate) brush_resize_label: Option<BrushResizeLabel>,
     pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
     pub(crate) save_status: SaveStatus,
@@ -1102,14 +1103,17 @@ impl GuiLayer {
         &mut self,
         context: &egui::Context,
         view: PaintViewSnapshot,
-        document_size: [u32; 2],
+        bounds: Option<LayerContentBounds>,
         active: Option<LayerTransform>,
         workspace_rect: egui::Rect,
     ) {
+        let Some(bounds) = bounds else {
+            self.layer_transform_drag = None;
+            return;
+        };
         let transform = active.unwrap_or_default();
         let pixels_per_point = context.pixels_per_point();
-        let corners =
-            layer_transform_screen_corners(document_size, transform, view, pixels_per_point);
+        let corners = layer_transform_screen_corners(bounds, transform, view, pixels_per_point);
         let handles = canvas_crop_handle_positions(corners);
         let rotation_handle = layer_rotation_handle(corners);
         let pointer = context.pointer_latest_pos();
@@ -1150,6 +1154,13 @@ impl GuiLayer {
                     7.0,
                     egui::Stroke::new(1.5, egui::Color32::from_gray(72)),
                 );
+                painter.text(
+                    egui::pos2(overlay_rect.center().x, overlay_rect.top() + 16.0),
+                    egui::Align2::CENTER_TOP,
+                    "Enter to apply  •  Esc to cancel",
+                    egui::FontId::proportional(14.0),
+                    egui::Color32::WHITE,
+                );
                 response
             })
             .inner;
@@ -1174,9 +1185,7 @@ impl GuiLayer {
             let pointer = pointer_document(pointer, view, pixels_per_point);
             self.commands
                 .push(AppCommand::SetLayerTransform(layer_transform_from_drag(
-                    drag,
-                    pointer,
-                    document_size,
+                    drag, pointer, bounds,
                 )));
         }
         if response.drag_stopped() {
@@ -1184,75 +1193,12 @@ impl GuiLayer {
         }
     }
 
-    fn show_transform_controls(&mut self, context: &egui::Context, active: Option<LayerTransform>) {
-        let mut transform = active.unwrap_or_default();
-        let mut scale_percent = transform.scale * 100.0;
-        let mut rotation_degrees = transform.rotation.to_degrees();
-        egui::Window::new("Transform")
-            .id(egui::Id::new("layer transform controls"))
-            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 16.0))
-            .resizable(false)
-            .collapsible(false)
-            .show(context, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Scale");
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut scale_percent)
-                                .range(1.0..=10_000.0)
-                                .speed(1.0)
-                                .suffix("%"),
-                        )
-                        .changed()
-                    {
-                        transform.scale = scale_percent / 100.0;
-                        self.commands.push(AppCommand::SetLayerTransform(transform));
-                    }
-                    ui.label("Rotation");
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut rotation_degrees)
-                                .speed(0.5)
-                                .suffix("°"),
-                        )
-                        .changed()
-                    {
-                        transform.rotation = rotation_degrees.to_radians();
-                        self.commands.push(AppCommand::SetLayerTransform(transform));
-                    }
-                });
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(active.is_some(), egui::Button::new("Reset"))
-                        .clicked()
-                    {
-                        self.commands
-                            .push(AppCommand::SetLayerTransform(LayerTransform::default()));
-                    }
-                    if ui
-                        .add_enabled(active.is_some(), egui::Button::new("Cancel"))
-                        .clicked()
-                    {
-                        self.layer_transform_drag = None;
-                        self.commands.push(AppCommand::CancelLayerTransform);
-                    }
-                    if ui
-                        .add_enabled(active.is_some(), egui::Button::new("Apply"))
-                        .clicked()
-                    {
-                        self.layer_transform_drag = None;
-                        self.commands.push(AppCommand::ApplyLayerTransform);
-                    }
-                });
-            });
-    }
-
     pub fn run_editor(&mut self, window: &Window, state: EditorUiState<'_>) -> egui::FullOutput {
         let EditorUiState {
             layers,
             tool,
             layer_transform,
-            document_size,
+            layer_content_bounds,
             brush_resize_label,
             eyedropper_indicator,
             save_status,
@@ -1343,7 +1289,7 @@ impl GuiLayer {
                 self.show_layer_transform(
                     ui.ctx(),
                     workspace_view,
-                    document_size,
+                    layer_content_bounds,
                     layer_transform,
                     workspace_rect,
                 );
@@ -1358,9 +1304,6 @@ impl GuiLayer {
                 .inner;
             if let Some(tool) = selected_tool {
                 self.commands.push(AppCommand::SelectTool(tool));
-            }
-            if tool == EditorTool::Transform {
-                self.show_transform_controls(ui.ctx(), layer_transform);
             }
 
             if let Some(label) = brush_resize_label {
@@ -1829,25 +1772,31 @@ fn paint_resize_handles(painter: &egui::Painter, handles: &[(CanvasCropHandle, e
 }
 
 fn layer_transform_screen_corners(
-    size: [u32; 2],
+    bounds: LayerContentBounds,
     transform: LayerTransform,
     view: PaintViewSnapshot,
     pixels_per_point: f32,
 ) -> [egui::Pos2; 4] {
-    layer_transform_document_corners(size, transform).map(|point| {
+    layer_transform_document_corners(bounds, transform).map(|point| {
         let point = view.document_to_window(point);
         egui::pos2(point[0] / pixels_per_point, point[1] / pixels_per_point)
     })
 }
 
-fn layer_transform_document_corners(size: [u32; 2], transform: LayerTransform) -> [[f32; 2]; 4] {
-    let pivot = [size[0] as f32 * 0.5, size[1] as f32 * 0.5];
+fn layer_transform_document_corners(
+    bounds: LayerContentBounds,
+    transform: LayerTransform,
+) -> [[f32; 2]; 4] {
+    let pivot = [
+        (bounds.min[0] + bounds.max[0]) * 0.5,
+        (bounds.min[1] + bounds.max[1]) * 0.5,
+    ];
     let (sin, cos) = transform.rotation.sin_cos();
     [
-        [0.0, 0.0],
-        [size[0] as f32, 0.0],
-        [size[0] as f32, size[1] as f32],
-        [0.0, size[1] as f32],
+        bounds.min,
+        [bounds.max[0], bounds.min[1]],
+        bounds.max,
+        [bounds.min[0], bounds.max[1]],
     ]
     .map(|point| {
         let x = (point[0] - pivot[0]) * transform.scale;
@@ -1951,11 +1900,11 @@ fn point_in_quad(point: egui::Pos2, corners: [egui::Pos2; 4]) -> bool {
 fn layer_transform_from_drag(
     drag: LayerTransformDrag,
     pointer: [f32; 2],
-    size: [u32; 2],
+    bounds: LayerContentBounds,
 ) -> LayerTransform {
     let pivot = [
-        size[0] as f32 * 0.5 + drag.start_transform.translation[0],
-        size[1] as f32 * 0.5 + drag.start_transform.translation[1],
+        (bounds.min[0] + bounds.max[0]) * 0.5 + drag.start_transform.translation[0],
+        (bounds.min[1] + bounds.max[1]) * 0.5 + drag.start_transform.translation[1],
     ];
     match drag.handle {
         LayerTransformHandle::Move => LayerTransform {
@@ -2827,7 +2776,10 @@ mod tests {
             scale: 2.0,
             rotation: 0.25,
         };
-        let size = [100, 100];
+        let bounds = LayerContentBounds {
+            min: [20.0, 10.0],
+            max: [80.0, 90.0],
+        };
         let drag = |handle, start_pointer| LayerTransformDrag {
             handle,
             start_transform: start,
@@ -2838,7 +2790,7 @@ mod tests {
             layer_transform_from_drag(
                 drag(LayerTransformHandle::Move, [20.0, 30.0]),
                 [35.0, 5.0],
-                size
+                bounds
             )
             .translation,
             [25.0, -30.0]
@@ -2850,7 +2802,7 @@ mod tests {
                     [110.0, 45.0],
                 ),
                 [160.0, 45.0],
-                size,
+                bounds,
             )
             .scale,
             4.0
@@ -2858,7 +2810,7 @@ mod tests {
         let rotated = layer_transform_from_drag(
             drag(LayerTransformHandle::Rotate, [110.0, 45.0]),
             [60.0, 95.0],
-            size,
+            bounds,
         );
         assert!((rotated.rotation - (0.25 + std::f32::consts::FRAC_PI_2)).abs() < 0.0001);
     }

@@ -138,6 +138,21 @@ pub(crate) struct BrushCursor {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct LayerContentBounds {
+    pub(crate) min: [f32; 2],
+    pub(crate) max: [f32; 2],
+}
+
+impl LayerContentBounds {
+    fn center(self) -> [f32; 2] {
+        [
+            (self.min[0] + self.max[0]) * 0.5,
+            (self.min[1] + self.max[1]) * 0.5,
+        ]
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct LayerTransform {
     pub(crate) translation: [f32; 2],
     pub(crate) scale: f32,
@@ -180,8 +195,7 @@ impl LayerTransform {
             && self.rotation.abs() <= f32::EPSILON
     }
 
-    fn uniform(self, size: [u32; 2]) -> TransformUniform {
-        let pivot = [size[0] as f32 * 0.5, size[1] as f32 * 0.5];
+    fn uniform(self, size: [u32; 2], pivot: [f32; 2]) -> TransformUniform {
         let (sin, cos) = self.rotation.sin_cos();
         let a = cos / self.scale;
         let b = sin / self.scale;
@@ -222,6 +236,7 @@ struct ActiveStroke {
 
 struct ActiveLayerTransform {
     layer_id: LayerId,
+    bounds: LayerContentBounds,
     value: LayerTransform,
     bind_group: wgpu::BindGroup,
 }
@@ -256,6 +271,7 @@ pub struct PaintRenderer {
     stamp_queue: StampQueue,
     active_stroke: Option<ActiveStroke>,
     active_transform: Option<ActiveLayerTransform>,
+    content_bounds_cache: Option<(LayerId, Option<LayerContentBounds>)>,
     history: PaintHistory,
     view: PaintView,
     document_generation: u64,
@@ -310,6 +326,7 @@ impl PaintRenderer {
             stamp_queue: StampQueue::new(stamp_aspect),
             active_stroke: None,
             active_transform: None,
+            content_bounds_cache: None,
             history,
             view: PaintView::default(),
             document_generation: 0,
@@ -490,6 +507,35 @@ impl PaintRenderer {
         self.active_transform.as_ref().map(|active| active.value)
     }
 
+    pub(crate) fn selected_layer_content_bounds(&mut self) -> Option<LayerContentBounds> {
+        if let Some(active) = self.active_transform.as_ref() {
+            return Some(active.bounds);
+        }
+        if !self.can_paint() {
+            return None;
+        }
+        let layer_index = self.selected_layer_index()?;
+        let layer_id = self.layers[layer_index].id;
+        if let Some((cached_id, bounds)) = self.content_bounds_cache
+            && cached_id == layer_id
+        {
+            return bounds;
+        }
+        let bounds = persistence::begin_read_layers(
+            self.gpu.device(),
+            self.gpu.queue(),
+            std::slice::from_ref(&self.layers[layer_index]),
+            self.document_size,
+        )
+        .finish()
+        .map_err(|error| log::error!("failed to find layer content bounds: {error}"))
+        .ok()
+        .and_then(|layers| layers.into_iter().next())
+        .and_then(|(_, image)| alpha_content_bounds(&image));
+        self.content_bounds_cache = Some((layer_id, bounds));
+        bounds
+    }
+
     fn begin_layer_transform(&mut self) -> bool {
         if self.active_transform.is_some() {
             return true;
@@ -497,6 +543,9 @@ impl PaintRenderer {
         if !self.can_paint() {
             return false;
         }
+        let Some(bounds) = self.selected_layer_content_bounds() else {
+            return false;
+        };
         let layer_index = self
             .selected_layer_index()
             .expect("transform requires a selected layer");
@@ -525,6 +574,7 @@ impl PaintRenderer {
             .create_transform_bind_group(self.gpu.device(), &source);
         self.active_transform = Some(ActiveLayerTransform {
             layer_id,
+            bounds,
             value: LayerTransform::default(),
             bind_group,
         });
@@ -557,8 +607,14 @@ impl PaintRenderer {
             .iter()
             .position(|layer| layer.id == layer_id)
             .expect("transformed layer must exist");
+        let pivot = self
+            .active_transform
+            .as_ref()
+            .expect("transform session must exist")
+            .bounds
+            .center();
         self.resources
-            .write_transform(self.gpu.queue(), transform, self.document_size);
+            .write_transform(self.gpu.queue(), transform, self.document_size, pivot);
         let mut encoder =
             self.gpu
                 .device()
@@ -2135,6 +2191,7 @@ impl PaintRenderer {
     }
 
     fn reset_change_tracking(&mut self, dirty: bool) {
+        self.content_bounds_cache = None;
         let version = u64::from(dirty);
         self.document_generation = version;
         self.metadata_version = version;
@@ -2151,6 +2208,7 @@ impl PaintRenderer {
     }
 
     fn mark_entire_document_changed(&mut self) {
+        self.content_bounds_cache = None;
         let version = self.next_document_generation();
         self.metadata_version = version;
         self.layer_versions = self
@@ -2169,6 +2227,7 @@ impl PaintRenderer {
     }
 
     fn mark_layer_changed(&mut self, id: LayerId) {
+        self.content_bounds_cache = None;
         if let Some(layer) = self.layers.iter_mut().find(|layer| layer.id == id) {
             layer.preview_dirty = true;
         }
@@ -2410,6 +2469,24 @@ fn clear_layer(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureV
     queue.submit(std::iter::once(encoder.finish()));
 }
 
+fn alpha_content_bounds(image: &image::RgbaImage) -> Option<LayerContentBounds> {
+    let mut min = [image.width(), image.height()];
+    let mut max = [0, 0];
+    for (x, y, pixel) in image.enumerate_pixels() {
+        if pixel[3] == 0 {
+            continue;
+        }
+        min[0] = min[0].min(x);
+        min[1] = min[1].min(y);
+        max[0] = max[0].max(x + 1);
+        max[1] = max[1].max(y + 1);
+    }
+    (min[0] < max[0] && min[1] < max[1]).then_some(LayerContentBounds {
+        min: [min[0] as f32, min[1] as f32],
+        max: [max[0] as f32, max[1] as f32],
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2578,6 +2655,21 @@ mod tests {
     }
 
     #[test]
+    fn alpha_bounds_wrap_visible_pixels() {
+        let mut image = image::RgbaImage::new(8, 6);
+        assert_eq!(alpha_content_bounds(&image), None);
+        image.put_pixel(2, 4, image::Rgba([1, 2, 3, 1]));
+        image.put_pixel(6, 1, image::Rgba([1, 2, 3, 255]));
+        assert_eq!(
+            alpha_content_bounds(&image),
+            Some(LayerContentBounds {
+                min: [2.0, 1.0],
+                max: [7.0, 5.0],
+            })
+        );
+    }
+
+    #[test]
     fn canvas_size_constraints_reject_invalid_dimensions() {
         let constraints = CanvasSizeConstraints {
             max_dimension: 8192,
@@ -2604,21 +2696,21 @@ mod tests {
             ]
         }
 
-        let identity = LayerTransform::default().uniform([100, 80]);
+        let identity = LayerTransform::default().uniform([100, 80], [50.0, 40.0]);
         assert_eq!(map(identity, [20.5, 30.5]), [20.5, 30.5]);
 
         let translated = LayerTransform {
             translation: [10.0, -5.0],
             ..Default::default()
         }
-        .uniform([100, 80]);
+        .uniform([100, 80], [50.0, 40.0]);
         assert_eq!(map(translated, [30.5, 25.5]), [20.5, 30.5]);
 
         let rotated = LayerTransform {
             rotation: std::f32::consts::FRAC_PI_2,
             ..Default::default()
         }
-        .uniform([100, 80]);
+        .uniform([100, 80], [50.0, 40.0]);
         let source = map(rotated, [50.0, 50.0]);
         assert!((source[0] - 60.0).abs() < 0.0001);
         assert!((source[1] - 40.0).abs() < 0.0001);

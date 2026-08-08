@@ -527,12 +527,24 @@ impl App {
             }
         }
 
+        if self
+            .paint
+            .as_ref()
+            .is_none_or(|paint| paint.surface_size()[0] == 0 || paint.surface_size()[1] == 0)
+        {
+            return;
+        }
+        let layer_content_bounds = (self.screen == AppScreen::Editor
+            && self.input.tool().paint_tool().is_none())
+        .then(|| {
+            self.paint
+                .as_mut()
+                .and_then(PaintRenderer::selected_layer_content_bounds)
+        })
+        .flatten();
         let Some(paint) = self.paint.as_ref() else {
             return;
         };
-        if paint.surface_size()[0] == 0 || paint.surface_size()[1] == 0 {
-            return;
-        }
 
         let (full_output, commands) = {
             let Some(gui) = self.gui.as_mut() else {
@@ -579,7 +591,7 @@ impl App {
                             layers: &layer_snapshot,
                             tool: self.input.tool(),
                             layer_transform: paint.active_layer_transform(),
-                            document_size: paint.document_size(),
+                            layer_content_bounds,
                             brush_resize_label,
                             eyedropper_indicator,
                             save_status: status,
