@@ -1096,7 +1096,7 @@ impl GuiLayer {
 
     fn show_layer_transform(
         &mut self,
-        context: &egui::Context,
+        ui: &mut egui::Ui,
         view: PaintViewSnapshot,
         bounds: Option<LayerContentBounds>,
         active: Option<LayerTransform>,
@@ -1106,6 +1106,7 @@ impl GuiLayer {
             self.layer_transform_drag = None;
             return;
         };
+        let context = ui.ctx().clone();
         let transform = active.unwrap_or_default();
         let pixels_per_point = context.pixels_per_point();
         let corners = layer_transform_screen_corners(bounds, transform, view, pixels_per_point);
@@ -1121,45 +1122,44 @@ impl GuiLayer {
             .or(hovered_handle);
         let (panning, preserve_aspect) =
             context.input(|input| (input.key_down(egui::Key::Space), input.modifiers.shift));
-        let response = egui::Area::new(egui::Id::new("layer transform overlay"))
-            .fixed_pos(workspace_rect.min)
-            .order(egui::Order::Foreground)
-            .show(context, |ui| {
-                let (overlay_rect, response) = ui.allocate_exact_size(
-                    workspace_rect.size(),
-                    if panning {
-                        egui::Sense::hover()
-                    } else {
-                        egui::Sense::click_and_drag()
-                    },
-                );
-                let painter = ui.painter().with_clip_rect(overlay_rect);
-                painter.add(egui::Shape::closed_line(
-                    corners.to_vec(),
-                    egui::Stroke::new(2.0, egui::Color32::from_gray(96)),
-                ));
-                let top_center = corners[0] + (corners[1] - corners[0]) * 0.5;
-                painter.line_segment(
-                    [top_center, rotation_handle],
-                    egui::Stroke::new(1.5, egui::Color32::from_gray(160)),
-                );
-                paint_resize_handles(&painter, &handles);
-                painter.circle_filled(rotation_handle, 7.0, egui::Color32::from_gray(232));
-                painter.circle_stroke(
-                    rotation_handle,
-                    7.0,
-                    egui::Stroke::new(1.5, egui::Color32::from_gray(72)),
-                );
-                painter.text(
-                    egui::pos2(overlay_rect.center().x, overlay_rect.top() + 16.0),
-                    egui::Align2::CENTER_TOP,
-                    "Shift preserves aspect  •  Enter to apply  •  Esc to cancel",
-                    egui::FontId::proportional(14.0),
-                    egui::Color32::WHITE,
-                );
-                response
-            })
-            .inner;
+        let interaction_rect = if panning {
+            egui::Rect::NOTHING
+        } else if self.layer_transform_drag.is_some() {
+            workspace_rect
+        } else if let (Some(_), Some(pointer)) = (hovered_handle, pointer) {
+            egui::Rect::from_center_size(pointer, egui::Vec2::splat(2.0))
+        } else {
+            egui::Rect::NOTHING
+        };
+        let response = ui.interact(
+            interaction_rect,
+            ui.id().with("layer transform interaction"),
+            egui::Sense::click_and_drag(),
+        );
+        let painter = ui.painter().with_clip_rect(workspace_rect);
+        painter.add(egui::Shape::closed_line(
+            corners.to_vec(),
+            egui::Stroke::new(2.0, egui::Color32::from_gray(96)),
+        ));
+        let top_center = corners[0] + (corners[1] - corners[0]) * 0.5;
+        painter.line_segment(
+            [top_center, rotation_handle],
+            egui::Stroke::new(1.5, egui::Color32::from_gray(160)),
+        );
+        paint_resize_handles(&painter, &handles);
+        painter.circle_filled(rotation_handle, 7.0, egui::Color32::from_gray(232));
+        painter.circle_stroke(
+            rotation_handle,
+            7.0,
+            egui::Stroke::new(1.5, egui::Color32::from_gray(72)),
+        );
+        painter.text(
+            egui::pos2(workspace_rect.center().x, workspace_rect.top() + 16.0),
+            egui::Align2::CENTER_TOP,
+            "Enter to apply  •  Esc to cancel",
+            egui::FontId::proportional(14.0),
+            egui::Color32::WHITE,
+        );
         let response = if let Some(handle) = cursor_handle {
             response.on_hover_cursor(layer_transform_cursor(handle))
         } else {
@@ -1286,7 +1286,7 @@ impl GuiLayer {
             self.show_workspace_references(ui.ctx(), references, workspace_view, workspace_rect);
             if tool == EditorTool::Transform {
                 self.show_layer_transform(
-                    ui.ctx(),
+                    ui,
                     workspace_view,
                     layer_content_bounds,
                     layer_transform,

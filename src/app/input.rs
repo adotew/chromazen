@@ -538,9 +538,12 @@ impl PaintInputController {
         if self.is_drawing {
             return false;
         }
-        let Some(tool) = editor_tool_for_key(key, self.modifiers) else {
+        let Some(mut tool) = editor_tool_for_key(key, self.modifiers) else {
             return false;
         };
+        if tool == EditorTool::Transform && self.tool == EditorTool::Transform {
+            tool = self.previous_paint_tool();
+        }
         self.select_tool(tool)
     }
 
@@ -916,8 +919,10 @@ mod tests {
     fn transform_remembers_the_previous_paint_tool() {
         let mut input = PaintInputController::default();
         input.select_tool(EditorTool::Eraser);
-        input.select_tool(EditorTool::Transform);
+        input.select_tool_for_key(KeyCode::KeyT);
         assert_eq!(input.previous_paint_tool(), EditorTool::Eraser);
+        input.select_tool_for_key(KeyCode::KeyT);
+        assert_eq!(input.tool(), EditorTool::Eraser);
     }
 
     #[test]
