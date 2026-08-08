@@ -24,6 +24,7 @@ Implemented:
   color changes with a bounded 256 MiB history
 - wheel zoom, pan, clear, fit, 100% zoom
 - non-destructive freehand canvas rotation with 90° snapping and view flipping
+- destructive, undoable selected-layer move, scale, and rotation transforms
 - visual, undoable canvas cropping and expansion without scaling paint
 
 The app opens to the gallery. Use **New Artwork** to create a 4000 × 4000
@@ -108,6 +109,10 @@ Controls:
 - `E`: select Eraser; erasing makes the selected layer transparent to reveal
   lower layers and the Background
 - `S`: select Smudge; smudging drags colors already on the selected layer
+- `T`: select Transform. Left-drag to move the selected layer, and use the
+  floating controls to scale or rotate it around the marked canvas center.
+  Press `Enter` or Apply to bake the transform, or `Escape` or Cancel to restore
+  the original pixels. Applied transforms are undoable.
 - `Shift-Tab`: cycle through Brush, Eraser, and Smudge
 - Click an inactive tool button to select it; click the active tool again to
   open the shared floating brush library. Each tool remembers its own brush.
