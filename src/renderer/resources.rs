@@ -1,10 +1,10 @@
 use wgpu::util::DeviceExt;
 
 use super::layers::{LayerId, LayerProperties, LayerResourceId, PaintLayer};
-use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
+use super::stamps::{StampRaw, MAX_STAMPS_PER_FRAME};
 use super::{
-    CursorRaw, DOCUMENT_FORMAT, LAYER_PREVIEW_SIZE, LayerPreviewUniform, LayerSettingsUniform,
-    LayerTransform, PaintUniform, STROKE_MASK_FORMAT, StrokeUniform, ViewUniform,
+    CursorRaw, LayerPreviewUniform, LayerSettingsUniform, LayerTransform, PaintUniform,
+    StrokeUniform, ViewUniform, DOCUMENT_FORMAT, LAYER_PREVIEW_SIZE, STROKE_MASK_FORMAT,
 };
 
 pub(crate) struct RenderResources {
