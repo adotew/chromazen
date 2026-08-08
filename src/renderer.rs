@@ -113,6 +113,15 @@ struct LayerSettingsUniform {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
+struct TransformUniform {
+    source_from_destination_x: [f32; 4],
+    source_from_destination_y: [f32; 4],
+    source_dims: [f32; 2],
+    padding: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 struct CursorRaw {
     center: [f32; 2],
     half_size: [f32; 2],
@@ -126,6 +135,69 @@ struct CursorRaw {
 pub(crate) struct BrushCursor {
     pub(crate) center: [f32; 2],
     pub(crate) diameter: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct LayerTransform {
+    pub(crate) translation: [f32; 2],
+    pub(crate) scale: f32,
+    pub(crate) rotation: f32,
+}
+
+impl Default for LayerTransform {
+    fn default() -> Self {
+        Self {
+            translation: [0.0; 2],
+            scale: 1.0,
+            rotation: 0.0,
+        }
+    }
+}
+
+impl LayerTransform {
+    const MIN_SCALE: f32 = 0.01;
+    const MAX_SCALE: f32 = 100.0;
+
+    fn normalized(mut self) -> Option<Self> {
+        if self
+            .translation
+            .into_iter()
+            .chain([self.scale, self.rotation])
+            .any(|value| !value.is_finite())
+            || self.scale <= 0.0
+        {
+            return None;
+        }
+        self.scale = self.scale.clamp(Self::MIN_SCALE, Self::MAX_SCALE);
+        self.rotation = (self.rotation + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+            - std::f32::consts::PI;
+        Some(self)
+    }
+
+    fn is_identity(self) -> bool {
+        self.translation == [0.0; 2]
+            && (self.scale - 1.0).abs() <= f32::EPSILON
+            && self.rotation.abs() <= f32::EPSILON
+    }
+
+    fn uniform(self, size: [u32; 2]) -> TransformUniform {
+        let pivot = [size[0] as f32 * 0.5, size[1] as f32 * 0.5];
+        let (sin, cos) = self.rotation.sin_cos();
+        let a = cos / self.scale;
+        let b = sin / self.scale;
+        let c = -sin / self.scale;
+        let d = cos / self.scale;
+        let origin = [
+            pivot[0] + self.translation[0],
+            pivot[1] + self.translation[1],
+        ];
+        TransformUniform {
+            source_from_destination_x: [a, b, pivot[0] - a * origin[0] - b * origin[1], 0.0],
+            source_from_destination_y: [c, d, pivot[1] - c * origin[0] - d * origin[1], 0.0],
+            source_dims: [size[0] as f32, size[1] as f32],
+            padding: [0.0; 2],
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,6 +218,12 @@ struct ActiveStroke {
     layer_id: LayerId,
     tool: PaintTool,
     color: [f32; 4],
+}
+
+struct ActiveLayerTransform {
+    layer_id: LayerId,
+    value: LayerTransform,
+    bind_group: wgpu::BindGroup,
 }
 
 impl ActiveStroke {
@@ -177,6 +255,7 @@ pub struct PaintRenderer {
     next_layer_resource_id: u64,
     stamp_queue: StampQueue,
     active_stroke: Option<ActiveStroke>,
+    active_transform: Option<ActiveLayerTransform>,
     history: PaintHistory,
     view: PaintView,
     document_generation: u64,
@@ -230,6 +309,7 @@ impl PaintRenderer {
             next_layer_resource_id: 2,
             stamp_queue: StampQueue::new(stamp_aspect),
             active_stroke: None,
+            active_transform: None,
             history,
             view: PaintView::default(),
             document_generation: 0,
@@ -383,7 +463,7 @@ impl PaintRenderer {
     }
 
     pub fn sample_composited_color(&self, window_point: [f32; 2]) -> Option<[u8; 3]> {
-        if self.active_stroke.is_some() || self.stamp_queue.has_pending() {
+        if !self.can_replace_document() {
             return None;
         }
         let pixel = document_pixel(
@@ -400,10 +480,194 @@ impl PaintRenderer {
     }
 
     pub fn can_paint(&self) -> bool {
-        self.active_stroke.is_none()
+        self.can_replace_document()
             && self
                 .selected_layer_index()
                 .is_some_and(|index| self.layers[index].visible)
+    }
+
+    pub(crate) fn active_layer_transform(&self) -> Option<LayerTransform> {
+        self.active_transform.as_ref().map(|active| active.value)
+    }
+
+    fn begin_layer_transform(&mut self) -> bool {
+        if self.active_transform.is_some() {
+            return true;
+        }
+        if !self.can_paint() {
+            return false;
+        }
+        let layer_index = self
+            .selected_layer_index()
+            .expect("transform requires a selected layer");
+        let layer_id = self.layers[layer_index].id;
+        if !self.history.begin_stroke(layer_id) {
+            return false;
+        }
+
+        let mut encoder =
+            self.gpu
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("layer transform setup encoder"),
+                });
+        self.history.ensure_layer_synced(
+            &mut encoder,
+            layer_id,
+            &self.layers[layer_index].texture,
+            self.document_size,
+        );
+        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+
+        let source = self.history.mirror_view();
+        let bind_group = self
+            .resources
+            .create_transform_bind_group(self.gpu.device(), &source);
+        self.active_transform = Some(ActiveLayerTransform {
+            layer_id,
+            value: LayerTransform::default(),
+            bind_group,
+        });
+        true
+    }
+
+    pub(crate) fn update_layer_transform(&mut self, transform: LayerTransform) -> bool {
+        let Some(transform) = transform.normalized() else {
+            return false;
+        };
+        if self.active_transform.is_none() && transform.is_identity() {
+            return false;
+        }
+        if !self.begin_layer_transform()
+            || self
+                .active_transform
+                .as_ref()
+                .is_some_and(|active| active.value == transform)
+        {
+            return false;
+        }
+
+        let layer_id = self
+            .active_transform
+            .as_ref()
+            .expect("transform session must exist")
+            .layer_id;
+        let layer_index = self
+            .layers
+            .iter()
+            .position(|layer| layer.id == layer_id)
+            .expect("transformed layer must exist");
+        self.resources
+            .write_transform(self.gpu.queue(), transform, self.document_size);
+        let mut encoder =
+            self.gpu
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("layer transform preview encoder"),
+                });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("layer transform preview pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.layers[layer_index].view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.resources.transform_pipeline);
+            pass.set_bind_group(
+                0,
+                &self
+                    .active_transform
+                    .as_ref()
+                    .expect("transform session must exist")
+                    .bind_group,
+                &[],
+            );
+            pass.draw(0..3, 0..1);
+        }
+        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.active_transform
+            .as_mut()
+            .expect("transform session must exist")
+            .value = transform;
+        true
+    }
+
+    pub(crate) fn commit_layer_transform(&mut self) -> bool {
+        let Some(active) = self.active_transform.take() else {
+            return false;
+        };
+        if active.value.is_identity() {
+            self.active_transform = Some(active);
+            return self.cancel_layer_transform();
+        }
+        let layer_index = self
+            .layers
+            .iter()
+            .position(|layer| layer.id == active.layer_id)
+            .expect("transformed layer must exist");
+        let rect = TextureRect {
+            x: 0,
+            y: 0,
+            width: self.document_size[0],
+            height: self.document_size[1],
+        };
+        let mut encoder =
+            self.gpu
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("layer transform commit encoder"),
+                });
+        self.history.commit_stroke(
+            self.gpu.device(),
+            &mut encoder,
+            active.layer_id,
+            &self.layers[layer_index].texture,
+            rect,
+        );
+        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.mark_layer_changed(active.layer_id);
+        true
+    }
+
+    pub(crate) fn cancel_layer_transform(&mut self) -> bool {
+        let Some(active) = self.active_transform.take() else {
+            return false;
+        };
+        let layer_index = self
+            .layers
+            .iter()
+            .position(|layer| layer.id == active.layer_id)
+            .expect("transformed layer must exist");
+        let mut encoder =
+            self.gpu
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("layer transform cancel encoder"),
+                });
+        let restored = self.history.restore_active_edit(
+            &mut encoder,
+            active.layer_id,
+            &self.layers[layer_index].texture,
+            TextureRect {
+                x: 0,
+                y: 0,
+                width: self.document_size[0],
+                height: self.document_size[1],
+            },
+        );
+        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.layers[layer_index].preview_dirty = true;
+        restored
     }
 
     pub(crate) fn document_versions(&self) -> DocumentVersions {
@@ -716,7 +980,7 @@ impl PaintRenderer {
     }
 
     pub(crate) fn select_layer(&mut self, id: LayerId) -> bool {
-        if self.active_stroke.is_some() || self.selection == id {
+        if !self.can_replace_document() || self.selection == id {
             return false;
         }
         if self.layers.iter().any(|layer| layer.id == id) {
@@ -2325,6 +2589,69 @@ mod tests {
         assert!(constraints.validate([8193, 100]).is_err());
         assert!(constraints.validate([8192, 8192]).is_err());
         assert!(constraints.validate([8192, 4096]).is_ok());
+    }
+
+    #[test]
+    fn layer_transform_maps_destination_back_to_source() {
+        fn map(uniform: TransformUniform, point: [f32; 2]) -> [f32; 2] {
+            [
+                uniform.source_from_destination_x[0] * point[0]
+                    + uniform.source_from_destination_x[1] * point[1]
+                    + uniform.source_from_destination_x[2],
+                uniform.source_from_destination_y[0] * point[0]
+                    + uniform.source_from_destination_y[1] * point[1]
+                    + uniform.source_from_destination_y[2],
+            ]
+        }
+
+        let identity = LayerTransform::default().uniform([100, 80]);
+        assert_eq!(map(identity, [20.5, 30.5]), [20.5, 30.5]);
+
+        let translated = LayerTransform {
+            translation: [10.0, -5.0],
+            ..Default::default()
+        }
+        .uniform([100, 80]);
+        assert_eq!(map(translated, [30.5, 25.5]), [20.5, 30.5]);
+
+        let rotated = LayerTransform {
+            rotation: std::f32::consts::FRAC_PI_2,
+            ..Default::default()
+        }
+        .uniform([100, 80]);
+        let source = map(rotated, [50.0, 50.0]);
+        assert!((source[0] - 60.0).abs() < 0.0001);
+        assert!((source[1] - 40.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn invalid_layer_transforms_are_rejected_and_scale_is_clamped() {
+        assert!(
+            LayerTransform {
+                scale: 0.0,
+                ..Default::default()
+            }
+            .normalized()
+            .is_none()
+        );
+        assert!(
+            LayerTransform {
+                rotation: f32::NAN,
+                ..Default::default()
+            }
+            .normalized()
+            .is_none()
+        );
+        assert_eq!(
+            LayerTransform {
+                scale: 1_000.0,
+                ..Default::default()
+            }
+            .normalized()
+            .unwrap()
+            .scale,
+            LayerTransform::MAX_SCALE
+        );
     }
 
     #[test]

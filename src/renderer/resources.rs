@@ -4,7 +4,7 @@ use super::layers::{LayerId, LayerProperties, LayerResourceId, PaintLayer};
 use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
 use super::{
     CursorRaw, DOCUMENT_FORMAT, LAYER_PREVIEW_SIZE, LayerPreviewUniform, LayerSettingsUniform,
-    PaintUniform, STROKE_MASK_FORMAT, StrokeUniform, ViewUniform,
+    LayerTransform, PaintUniform, STROKE_MASK_FORMAT, StrokeUniform, ViewUniform,
 };
 
 pub(crate) struct RenderResources {
@@ -14,6 +14,7 @@ pub(crate) struct RenderResources {
     pub(crate) view_uniform_buffer: wgpu::Buffer,
     stroke_uniform_buffer: wgpu::Buffer,
     layer_preview_uniform_buffer: wgpu::Buffer,
+    transform_uniform_buffer: wgpu::Buffer,
     pub(crate) stamp_bind_group: wgpu::BindGroup,
     pub(crate) cursor_bind_group: wgpu::BindGroup,
     pub(crate) smudge_texture: wgpu::Texture,
@@ -36,6 +37,7 @@ pub(crate) struct RenderResources {
     stroke_preview_bind_group: Option<wgpu::BindGroup>,
     layer_preview_bind_group_layout: wgpu::BindGroupLayout,
     stroke_commit_bind_group_layout: wgpu::BindGroupLayout,
+    transform_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) stroke_commit_bind_group: wgpu::BindGroup,
     pub(crate) mask_pipeline: wgpu::RenderPipeline,
     pub(crate) mask_clear_pipeline: wgpu::RenderPipeline,
@@ -54,6 +56,7 @@ pub(crate) struct RenderResources {
     pub(crate) layer_thumbnail_pipeline: wgpu::RenderPipeline,
     pub(crate) brush_commit_pipeline: wgpu::RenderPipeline,
     pub(crate) eraser_commit_pipeline: wgpu::RenderPipeline,
+    pub(crate) transform_pipeline: wgpu::RenderPipeline,
 }
 
 impl RenderResources {
@@ -107,6 +110,12 @@ impl RenderResources {
                     preview_dims: [LAYER_PREVIEW_SIZE as f32; 2],
                     document_dims: [document_size[0] as f32, document_size[1] as f32],
                 }),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+        let transform_uniform_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("layer transform uniform buffer"),
+                contents: bytemuck::bytes_of(&LayerTransform::default().uniform(document_size)),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
 
@@ -455,6 +464,32 @@ impl RenderResources {
                     },
                 ],
             });
+        let transform_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("layer transform bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
         let stroke_commit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("stroke commit bind group"),
             layout: &stroke_commit_bind_group_layout,
@@ -526,6 +561,12 @@ impl RenderResources {
                 bind_group_layouts: &[Some(&stroke_commit_bind_group_layout)],
                 immediate_size: 0,
             });
+        let transform_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("layer transform pipeline layout"),
+                bind_group_layouts: &[Some(&transform_bind_group_layout)],
+                immediate_size: 0,
+            });
         let stamp_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("stamp shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/stamp.wgsl").into()),
@@ -561,6 +602,10 @@ impl RenderResources {
         let layer_preview_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("layer preview shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/layer_preview.wgsl").into()),
+        });
+        let transform_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("layer transform shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/transform.wgsl").into()),
         });
 
         let create_stamp_pipeline =
@@ -967,6 +1012,34 @@ impl RenderResources {
                 alpha: erase_blend,
             },
         );
+        let transform_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("layer transform pipeline"),
+            layout: Some(&transform_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &transform_shader,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &transform_shader,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: DOCUMENT_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
 
         Ok(Self {
             stamp_buffer,
@@ -975,6 +1048,7 @@ impl RenderResources {
             view_uniform_buffer,
             stroke_uniform_buffer,
             layer_preview_uniform_buffer,
+            transform_uniform_buffer,
             stamp_bind_group,
             cursor_bind_group,
             smudge_texture,
@@ -997,6 +1071,7 @@ impl RenderResources {
             stroke_preview_bind_group: None,
             layer_preview_bind_group_layout,
             stroke_commit_bind_group_layout,
+            transform_bind_group_layout,
             stroke_commit_bind_group,
             mask_pipeline,
             mask_clear_pipeline,
@@ -1015,7 +1090,42 @@ impl RenderResources {
             layer_thumbnail_pipeline,
             brush_commit_pipeline,
             eraser_commit_pipeline,
+            transform_pipeline,
         })
+    }
+
+    pub(crate) fn create_transform_bind_group(
+        &self,
+        device: &wgpu::Device,
+        source: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("layer transform bind group"),
+            layout: &self.transform_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(source),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.transform_uniform_buffer.as_entire_binding(),
+                },
+            ],
+        })
+    }
+
+    pub(crate) fn write_transform(
+        &self,
+        queue: &wgpu::Queue,
+        transform: LayerTransform,
+        size: [u32; 2],
+    ) {
+        queue.write_buffer(
+            &self.transform_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&transform.uniform(size)),
+        );
     }
 
     pub(crate) fn prepare_stroke_preview(

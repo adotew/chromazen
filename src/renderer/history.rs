@@ -224,6 +224,26 @@ impl PaintHistory {
         self.active_stroke.is_some()
     }
 
+    pub(crate) fn mirror_view(&self) -> wgpu::TextureView {
+        self.mirror
+            .create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    pub(crate) fn restore_active_edit(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        layer_id: LayerId,
+        canvas: &wgpu::Texture,
+        rect: TextureRect,
+    ) -> bool {
+        if self.active_stroke != Some(layer_id) {
+            return false;
+        }
+        copy_rect(encoder, &self.mirror, rect, canvas, [rect.x, rect.y]);
+        self.active_stroke = None;
+        true
+    }
+
     pub(crate) fn can_undo(&self) -> bool {
         !self.stroke_active() && self.cursor > 0
     }
@@ -799,7 +819,9 @@ fn create_texture(device: &wgpu::Device, label: &str, size: [u32; 2]) -> wgpu::T
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: DOCUMENT_FORMAT,
-        usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
+        usage: wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     })
 }
