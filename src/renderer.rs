@@ -155,7 +155,7 @@ impl LayerContentBounds {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct LayerTransform {
     pub(crate) translation: [f32; 2],
-    pub(crate) scale: f32,
+    pub(crate) scale: [f32; 2],
     pub(crate) rotation: f32,
 }
 
@@ -163,7 +163,7 @@ impl Default for LayerTransform {
     fn default() -> Self {
         Self {
             translation: [0.0; 2],
-            scale: 1.0,
+            scale: [1.0; 2],
             rotation: 0.0,
         }
     }
@@ -177,13 +177,16 @@ impl LayerTransform {
         if self
             .translation
             .into_iter()
-            .chain([self.scale, self.rotation])
+            .chain(self.scale)
+            .chain([self.rotation])
             .any(|value| !value.is_finite())
-            || self.scale <= 0.0
+            || self.scale.into_iter().any(|scale| scale <= 0.0)
         {
             return None;
         }
-        self.scale = self.scale.clamp(Self::MIN_SCALE, Self::MAX_SCALE);
+        self.scale = self
+            .scale
+            .map(|scale| scale.clamp(Self::MIN_SCALE, Self::MAX_SCALE));
         self.rotation = (self.rotation + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
             - std::f32::consts::PI;
         Some(self)
@@ -191,16 +194,19 @@ impl LayerTransform {
 
     fn is_identity(self) -> bool {
         self.translation == [0.0; 2]
-            && (self.scale - 1.0).abs() <= f32::EPSILON
+            && self
+                .scale
+                .into_iter()
+                .all(|scale| (scale - 1.0).abs() <= f32::EPSILON)
             && self.rotation.abs() <= f32::EPSILON
     }
 
     fn uniform(self, size: [u32; 2], pivot: [f32; 2]) -> TransformUniform {
         let (sin, cos) = self.rotation.sin_cos();
-        let a = cos / self.scale;
-        let b = sin / self.scale;
-        let c = -sin / self.scale;
-        let d = cos / self.scale;
+        let a = cos / self.scale[0];
+        let b = sin / self.scale[0];
+        let c = -sin / self.scale[1];
+        let d = cos / self.scale[1];
         let origin = [
             pivot[0] + self.translation[0],
             pivot[1] + self.translation[1],
@@ -2706,6 +2712,13 @@ mod tests {
         .uniform([100, 80], [50.0, 40.0]);
         assert_eq!(map(translated, [30.5, 25.5]), [20.5, 30.5]);
 
+        let scaled = LayerTransform {
+            scale: [2.0, 4.0],
+            ..Default::default()
+        }
+        .uniform([100, 80], [50.0, 40.0]);
+        assert_eq!(map(scaled, [70.0, 80.0]), [60.0, 50.0]);
+
         let rotated = LayerTransform {
             rotation: std::f32::consts::FRAC_PI_2,
             ..Default::default()
@@ -2720,7 +2733,7 @@ mod tests {
     fn invalid_layer_transforms_are_rejected_and_scale_is_clamped() {
         assert!(
             LayerTransform {
-                scale: 0.0,
+                scale: [0.0, 1.0],
                 ..Default::default()
             }
             .normalized()
@@ -2736,13 +2749,13 @@ mod tests {
         );
         assert_eq!(
             LayerTransform {
-                scale: 1_000.0,
+                scale: [1_000.0, 0.001],
                 ..Default::default()
             }
             .normalized()
             .unwrap()
             .scale,
-            LayerTransform::MAX_SCALE
+            [LayerTransform::MAX_SCALE, LayerTransform::MIN_SCALE]
         );
     }
 

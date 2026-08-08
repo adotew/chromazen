@@ -977,15 +977,10 @@ impl GuiLayer {
 
     fn show_tool_rail(&mut self, ui: &mut egui::Ui, active_tool: EditorTool) -> Option<EditorTool> {
         const TOOL_HEIGHT: f32 = 40.0;
-        const TOOL_COUNT: usize = 4;
+        const TOOL_COUNT: usize = 3;
         const VERTICAL_PADDING: f32 = 6.0;
 
-        let tools = [
-            EditorTool::Brush,
-            EditorTool::Eraser,
-            EditorTool::Smudge,
-            EditorTool::Transform,
-        ];
+        let tools = [EditorTool::Brush, EditorTool::Eraser, EditorTool::Smudge];
         let button_count = TOOL_COUNT + 2;
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(
@@ -1099,6 +1094,24 @@ impl GuiLayer {
         selected_tool
     }
 
+    fn show_bottom_toolbar(
+        &mut self,
+        ui: &mut egui::Ui,
+        active_tool: EditorTool,
+    ) -> Option<EditorTool> {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(52.0, 52.0), egui::Sense::hover());
+        paint_rounded_panel(ui, rect, egui::CornerRadius::same(16));
+        let button_rect = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(40.0));
+        let response = show_tool_button(
+            ui,
+            button_rect,
+            EditorTool::Transform,
+            active_tool == EditorTool::Transform,
+        );
+        (response.clicked() && active_tool != EditorTool::Transform)
+            .then_some(EditorTool::Transform)
+    }
+
     fn show_layer_transform(
         &mut self,
         context: &egui::Context,
@@ -1124,7 +1137,8 @@ impl GuiLayer {
             .layer_transform_drag
             .map(|drag| drag.handle)
             .or(hovered_handle);
-        let panning = context.input(|input| input.key_down(egui::Key::Space));
+        let (panning, preserve_aspect) =
+            context.input(|input| (input.key_down(egui::Key::Space), input.modifiers.shift));
         let response = egui::Area::new(egui::Id::new("layer transform overlay"))
             .fixed_pos(workspace_rect.min)
             .order(egui::Order::Foreground)
@@ -1157,7 +1171,7 @@ impl GuiLayer {
                 painter.text(
                     egui::pos2(overlay_rect.center().x, overlay_rect.top() + 16.0),
                     egui::Align2::CENTER_TOP,
-                    "Enter to apply  •  Esc to cancel",
+                    "Shift preserves aspect  •  Enter to apply  •  Esc to cancel",
                     egui::FontId::proportional(14.0),
                     egui::Color32::WHITE,
                 );
@@ -1185,7 +1199,10 @@ impl GuiLayer {
             let pointer = pointer_document(pointer, view, pixels_per_point);
             self.commands
                 .push(AppCommand::SetLayerTransform(layer_transform_from_drag(
-                    drag, pointer, bounds,
+                    drag,
+                    pointer,
+                    bounds,
+                    preserve_aspect,
                 )));
         }
         if response.drag_stopped() {
@@ -1301,6 +1318,14 @@ impl GuiLayer {
                 .anchor(egui::Align2::RIGHT_TOP, egui::Vec2::ZERO)
                 .order(egui::Order::Foreground)
                 .show(ui.ctx(), |ui| self.show_tool_rail(ui, tool))
+                .inner;
+            if let Some(tool) = selected_tool {
+                self.commands.push(AppCommand::SelectTool(tool));
+            }
+            let selected_tool = egui::Area::new(egui::Id::new("bottom tool rail"))
+                .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -16.0))
+                .order(egui::Order::Foreground)
+                .show(ui.ctx(), |ui| self.show_bottom_toolbar(ui, tool))
                 .inner;
             if let Some(tool) = selected_tool {
                 self.commands.push(AppCommand::SelectTool(tool));
@@ -1799,8 +1824,8 @@ fn layer_transform_document_corners(
         [bounds.min[0], bounds.max[1]],
     ]
     .map(|point| {
-        let x = (point[0] - pivot[0]) * transform.scale;
-        let y = (point[1] - pivot[1]) * transform.scale;
+        let x = (point[0] - pivot[0]) * transform.scale[0];
+        let y = (point[1] - pivot[1]) * transform.scale[1];
         [
             pivot[0] + transform.translation[0] + cos * x - sin * y,
             pivot[1] + transform.translation[1] + sin * x + cos * y,
@@ -1901,6 +1926,7 @@ fn layer_transform_from_drag(
     drag: LayerTransformDrag,
     pointer: [f32; 2],
     bounds: LayerContentBounds,
+    preserve_aspect: bool,
 ) -> LayerTransform {
     let pivot = [
         (bounds.min[0] + bounds.max[0]) * 0.5 + drag.start_transform.translation[0],
@@ -1914,12 +1940,56 @@ fn layer_transform_from_drag(
             ],
             ..drag.start_transform
         },
-        LayerTransformHandle::Scale(_) => {
-            let distance = |point: [f32; 2]| (point[0] - pivot[0]).hypot(point[1] - pivot[1]);
+        LayerTransformHandle::Scale(handle) => {
+            let mut scale = drag.start_transform.scale;
+            if preserve_aspect {
+                let distance = |point: [f32; 2]| (point[0] - pivot[0]).hypot(point[1] - pivot[1]);
+                let factor = distance(pointer) / distance(drag.start_pointer).max(f32::EPSILON);
+                scale = scale.map(|value| (value * factor).max(0.01));
+            } else {
+                let delta = [pointer[0] - pivot[0], pointer[1] - pivot[1]];
+                let (sin, cos) = drag.start_transform.rotation.sin_cos();
+                let local = [
+                    cos * delta[0] + sin * delta[1],
+                    -sin * delta[0] + cos * delta[1],
+                ];
+                let half = [
+                    (bounds.max[0] - bounds.min[0]) * 0.5,
+                    (bounds.max[1] - bounds.min[1]) * 0.5,
+                ];
+                if matches!(
+                    handle,
+                    CanvasCropHandle::Left
+                        | CanvasCropHandle::TopLeft
+                        | CanvasCropHandle::BottomLeft
+                ) {
+                    scale[0] = (-local[0] / half[0]).max(0.01);
+                }
+                if matches!(
+                    handle,
+                    CanvasCropHandle::Right
+                        | CanvasCropHandle::TopRight
+                        | CanvasCropHandle::BottomRight
+                ) {
+                    scale[0] = (local[0] / half[0]).max(0.01);
+                }
+                if matches!(
+                    handle,
+                    CanvasCropHandle::Top | CanvasCropHandle::TopLeft | CanvasCropHandle::TopRight
+                ) {
+                    scale[1] = (-local[1] / half[1]).max(0.01);
+                }
+                if matches!(
+                    handle,
+                    CanvasCropHandle::Bottom
+                        | CanvasCropHandle::BottomLeft
+                        | CanvasCropHandle::BottomRight
+                ) {
+                    scale[1] = (local[1] / half[1]).max(0.01);
+                }
+            }
             LayerTransform {
-                scale: (drag.start_transform.scale * distance(pointer)
-                    / distance(drag.start_pointer).max(f32::EPSILON))
-                .max(0.01),
+                scale,
                 ..drag.start_transform
             }
         }
@@ -2773,8 +2843,8 @@ mod tests {
     fn transform_handles_move_scale_and_rotate_from_the_drag_origin() {
         let start = LayerTransform {
             translation: [10.0, -5.0],
-            scale: 2.0,
-            rotation: 0.25,
+            scale: [2.0, 2.0],
+            rotation: 0.0,
         };
         let bounds = LayerContentBounds {
             min: [20.0, 10.0],
@@ -2790,7 +2860,8 @@ mod tests {
             layer_transform_from_drag(
                 drag(LayerTransformHandle::Move, [20.0, 30.0]),
                 [35.0, 5.0],
-                bounds
+                bounds,
+                false,
             )
             .translation,
             [25.0, -30.0]
@@ -2799,20 +2870,35 @@ mod tests {
             layer_transform_from_drag(
                 drag(
                     LayerTransformHandle::Scale(CanvasCropHandle::TopRight),
-                    [110.0, 45.0],
+                    [120.0, -35.0],
                 ),
-                [160.0, 45.0],
+                [150.0, -15.0],
                 bounds,
+                false,
             )
             .scale,
-            4.0
+            [3.0, 1.5]
+        );
+        assert_eq!(
+            layer_transform_from_drag(
+                drag(
+                    LayerTransformHandle::Scale(CanvasCropHandle::TopRight),
+                    [120.0, -35.0],
+                ),
+                [180.0, -115.0],
+                bounds,
+                true,
+            )
+            .scale,
+            [4.0, 4.0]
         );
         let rotated = layer_transform_from_drag(
             drag(LayerTransformHandle::Rotate, [110.0, 45.0]),
             [60.0, 95.0],
             bounds,
+            false,
         );
-        assert!((rotated.rotation - (0.25 + std::f32::consts::FRAC_PI_2)).abs() < 0.0001);
+        assert!((rotated.rotation - std::f32::consts::FRAC_PI_2).abs() < 0.0001);
     }
 
     #[test]
