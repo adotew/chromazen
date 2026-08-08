@@ -9,7 +9,7 @@ use winit::{
 use crate::{
     paint::{BrushSettings, PaintTool, StrokePoint, StrokeSmoother, StrokeSmoothingOptions},
     platform::{PenEvent, PressureStateHandle},
-    renderer::{LayerTransform, PaintRenderer},
+    renderer::PaintRenderer,
 };
 
 use super::command::AppCommand;
@@ -66,12 +66,6 @@ struct RotationDrag {
     snapped_to: Option<f32>,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct TransformDrag {
-    start_pointer: [f32; 2],
-    start_transform: LayerTransform,
-}
-
 #[derive(Debug, Default)]
 struct EyedropperDrag {
     last_sample: Option<(Instant, [f32; 2])>,
@@ -122,7 +116,6 @@ pub struct PaintInputController {
     is_space_down: bool,
     is_rotation_key_down: bool,
     rotation_drag: Option<RotationDrag>,
-    transform_drag: Option<TransformDrag>,
     resize_origin: Option<[f32; 2]>,
     resize_drag: Option<BrushResizeDrag>,
     eyedropper_drag: Option<EyedropperDrag>,
@@ -174,14 +167,6 @@ impl PaintInputController {
         self.rotation_drag.is_some()
     }
 
-    pub(crate) fn is_transforming_layer(&self) -> bool {
-        self.transform_drag.is_some()
-    }
-
-    pub(crate) fn is_transform_tool_active(&self) -> bool {
-        self.tool == EditorTool::Transform
-    }
-
     pub fn is_pan_modifier_active(&self) -> bool {
         self.is_space_down
     }
@@ -199,7 +184,6 @@ impl PaintInputController {
             || self.is_panning
             || self.resize_origin.is_some()
             || self.rotation_drag.is_some()
-            || self.transform_drag.is_some()
             || self.eyedropper_drag.is_some()
     }
 
@@ -327,19 +311,6 @@ impl PaintInputController {
                     return false;
                 }
 
-                if let Some(drag) = self.transform_drag {
-                    let window_delta = [
-                        next[0] - drag.start_pointer[0],
-                        next[1] - drag.start_pointer[1],
-                    ];
-                    let document_delta =
-                        paint.view_snapshot().window_delta_to_document(window_delta);
-                    return paint.update_layer_transform(translated_transform(
-                        drag.start_transform,
-                        document_delta,
-                    ));
-                }
-
                 if self.is_drawing {
                     let point = self.stroke_point_from_window(paint, next, *brush, pressure_state);
                     let smoothed_points = self.smoother.push(point);
@@ -347,14 +318,6 @@ impl PaintInputController {
                     return queued > 0;
                 }
 
-                true
-            }
-            WindowEvent::MouseInput {
-                state: ElementState::Released,
-                button: MouseButton::Left,
-                ..
-            } if self.transform_drag.is_some() => {
-                self.transform_drag = None;
                 true
             }
             WindowEvent::MouseInput {
@@ -407,15 +370,6 @@ impl PaintInputController {
                 (ElementState::Pressed, MouseButton::Left) if self.is_space_down => {
                     self.is_panning = true;
                     self.last_pan_pos = self.cursor_pos;
-                    true
-                }
-                (ElementState::Pressed, MouseButton::Left)
-                    if self.tool == EditorTool::Transform =>
-                {
-                    self.transform_drag = Some(TransformDrag {
-                        start_pointer: self.cursor_pos,
-                        start_transform: paint.active_layer_transform().unwrap_or_default(),
-                    });
                     true
                 }
                 (ElementState::Pressed, MouseButton::Left) => {
@@ -511,10 +465,9 @@ impl PaintInputController {
                 self.resize_origin = None;
                 self.resize_drag = None;
                 self.is_rotation_key_down = false;
-                let was_transforming = self.transform_drag.take().is_some();
                 let was_rotating = self.rotation_drag.take().is_some();
                 let was_sampling = self.eyedropper_drag.take().is_some();
-                self.end_stroke(paint, *brush) || was_sampling || was_rotating || was_transforming
+                self.end_stroke(paint, *brush) || was_sampling || was_rotating
             }
             _ => false,
         }
@@ -529,7 +482,6 @@ impl PaintInputController {
         self.resize_drag = None;
         self.is_rotation_key_down = false;
         self.rotation_drag = None;
-        self.transform_drag = None;
         self.eyedropper_drag = None;
         let ended = self.end_stroke(paint, brush);
         paint.commit_layer_transform() || ended
@@ -628,16 +580,6 @@ impl PaintInputController {
         self.is_panning = false;
         self.last_point = None;
         queued > 0 || was_active
-    }
-}
-
-fn translated_transform(start: LayerTransform, delta: [f32; 2]) -> LayerTransform {
-    LayerTransform {
-        translation: [
-            start.translation[0] + delta[0],
-            start.translation[1] + delta[1],
-        ],
-        ..start
     }
 }
 
@@ -783,27 +725,6 @@ mod tests {
 
         let released = 99.0_f32.to_radians();
         assert_eq!(snapped_rotation(released, snap), (released, None));
-    }
-
-    #[test]
-    fn transform_drag_uses_total_delta_from_its_origin() {
-        let start = LayerTransform {
-            translation: [12.0, -4.0],
-            scale: 2.0,
-            rotation: 0.5,
-        };
-
-        assert_eq!(
-            translated_transform(start, [8.0, 3.0]),
-            LayerTransform {
-                translation: [20.0, -1.0],
-                ..start
-            }
-        );
-        assert_eq!(
-            translated_transform(start, [9.0, 4.0]).translation,
-            [21.0, 0.0]
-        );
     }
 
     #[test]

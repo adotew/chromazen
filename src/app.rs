@@ -1252,8 +1252,6 @@ impl App {
         let is_resizing_brush = self.input.is_resizing_brush();
         let is_panning = self.input.is_panning();
         let is_rotating_canvas = self.input.is_rotating_canvas();
-        let is_transforming_layer = self.input.is_transforming_layer();
-        let transform_tool_active = self.input.is_transform_tool_active();
         let is_pan_modifier_active = self.input.is_pan_modifier_active();
         let is_eyedropper_active = self.input.is_eyedropper_active();
         let brush_pressure = self.pressure_state.brush_pressure();
@@ -1286,11 +1284,9 @@ impl App {
             .handle_platform_output(window, full_output.platform_output);
         if reference_resize_active {
             window.set_cursor(CursorIcon::NwseResize);
-        } else if reference_drag_active || is_panning || is_rotating_canvas || is_transforming_layer
-        {
+        } else if reference_drag_active || is_panning || is_rotating_canvas {
             window.set_cursor(CursorIcon::Grabbing);
-        } else if (is_pan_modifier_active || transform_tool_active) && !pointer_over_ui_or_reference
-        {
+        } else if is_pan_modifier_active && !pointer_over_ui_or_reference {
             window.set_cursor(CursorIcon::Grab);
         }
         let eyedropper_over_canvas = is_eyedropper_active && !pointer_over_ui_or_reference;

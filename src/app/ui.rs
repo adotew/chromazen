@@ -89,6 +89,7 @@ pub struct GuiLayer {
     canvas_size_constraints: CanvasSizeConstraints,
     new_artwork_dialog: Option<NewArtworkDialog>,
     canvas_crop: Option<CanvasCrop>,
+    layer_transform_drag: Option<LayerTransformDrag>,
     gallery: gallery::GalleryUi,
 }
 
@@ -212,6 +213,20 @@ struct CanvasCrop {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LayerTransformHandle {
+    Move,
+    Scale(CanvasCropHandle),
+    Rotate,
+}
+
+#[derive(Clone, Copy)]
+struct LayerTransformDrag {
+    handle: LayerTransformHandle,
+    start_transform: LayerTransform,
+    start_pointer: [f32; 2],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CanvasCropRequest {
     size: [u32; 2],
     origin: [i32; 2],
@@ -292,6 +307,7 @@ impl GuiLayer {
             canvas_size_constraints: paint.canvas_size_constraints(),
             new_artwork_dialog: None,
             canvas_crop: None,
+            layer_transform_drag: None,
             gallery: gallery::GalleryUi::default(),
         }
     }
@@ -1082,6 +1098,92 @@ impl GuiLayer {
         selected_tool
     }
 
+    fn show_layer_transform(
+        &mut self,
+        context: &egui::Context,
+        view: PaintViewSnapshot,
+        document_size: [u32; 2],
+        active: Option<LayerTransform>,
+        workspace_rect: egui::Rect,
+    ) {
+        let transform = active.unwrap_or_default();
+        let pixels_per_point = context.pixels_per_point();
+        let corners =
+            layer_transform_screen_corners(document_size, transform, view, pixels_per_point);
+        let handles = canvas_crop_handle_positions(corners);
+        let rotation_handle = layer_rotation_handle(corners);
+        let pointer = context.pointer_latest_pos();
+        let hovered_handle = pointer.and_then(|pointer| {
+            layer_transform_handle_at(pointer, corners, &handles, rotation_handle)
+        });
+        let cursor_handle = self
+            .layer_transform_drag
+            .map(|drag| drag.handle)
+            .or(hovered_handle);
+        let panning = context.input(|input| input.key_down(egui::Key::Space));
+        let response = egui::Area::new(egui::Id::new("layer transform overlay"))
+            .fixed_pos(workspace_rect.min)
+            .order(egui::Order::Foreground)
+            .show(context, |ui| {
+                let (overlay_rect, response) = ui.allocate_exact_size(
+                    workspace_rect.size(),
+                    if panning {
+                        egui::Sense::hover()
+                    } else {
+                        egui::Sense::click_and_drag()
+                    },
+                );
+                let painter = ui.painter().with_clip_rect(overlay_rect);
+                painter.add(egui::Shape::closed_line(
+                    corners.to_vec(),
+                    egui::Stroke::new(2.0, egui::Color32::from_gray(96)),
+                ));
+                let top_center = corners[0] + (corners[1] - corners[0]) * 0.5;
+                painter.line_segment(
+                    [top_center, rotation_handle],
+                    egui::Stroke::new(1.5, egui::Color32::from_gray(160)),
+                );
+                paint_resize_handles(&painter, &handles);
+                painter.circle_filled(rotation_handle, 7.0, egui::Color32::from_gray(232));
+                painter.circle_stroke(
+                    rotation_handle,
+                    7.0,
+                    egui::Stroke::new(1.5, egui::Color32::from_gray(72)),
+                );
+                response
+            })
+            .inner;
+        let response = if let Some(handle) = cursor_handle {
+            response.on_hover_cursor(layer_transform_cursor(handle))
+        } else {
+            response
+        };
+
+        if response.drag_started()
+            && let (Some(pointer), Some(handle)) = (pointer, hovered_handle)
+        {
+            self.layer_transform_drag = Some(LayerTransformDrag {
+                handle,
+                start_transform: transform,
+                start_pointer: pointer_document(pointer, view, pixels_per_point),
+            });
+        }
+        if response.dragged()
+            && let (Some(pointer), Some(drag)) = (pointer, self.layer_transform_drag)
+        {
+            let pointer = pointer_document(pointer, view, pixels_per_point);
+            self.commands
+                .push(AppCommand::SetLayerTransform(layer_transform_from_drag(
+                    drag,
+                    pointer,
+                    document_size,
+                )));
+        }
+        if response.drag_stopped() {
+            self.layer_transform_drag = None;
+        }
+    }
+
     fn show_transform_controls(&mut self, context: &egui::Context, active: Option<LayerTransform>) {
         let mut transform = active.unwrap_or_default();
         let mut scale_percent = transform.scale * 100.0;
@@ -1131,12 +1233,14 @@ impl GuiLayer {
                         .add_enabled(active.is_some(), egui::Button::new("Cancel"))
                         .clicked()
                     {
+                        self.layer_transform_drag = None;
                         self.commands.push(AppCommand::CancelLayerTransform);
                     }
                     if ui
                         .add_enabled(active.is_some(), egui::Button::new("Apply"))
                         .clicked()
                     {
+                        self.layer_transform_drag = None;
                         self.commands.push(AppCommand::ApplyLayerTransform);
                     }
                 });
@@ -1219,10 +1323,12 @@ impl GuiLayer {
                 if ui.ctx().input(|input| input.key_pressed(egui::Key::Enter))
                     && layer_transform.is_some()
                 {
+                    self.layer_transform_drag = None;
                     self.commands.push(AppCommand::ApplyLayerTransform);
                 }
                 if ui.ctx().input(|input| input.key_pressed(egui::Key::Escape)) {
                     if layer_transform.is_some() {
+                        self.layer_transform_drag = None;
                         self.commands.push(AppCommand::CancelLayerTransform);
                     } else {
                         self.color_window_open = false;
@@ -1234,13 +1340,15 @@ impl GuiLayer {
             let workspace_rect = ui.available_rect_before_wrap();
             self.show_workspace_references(ui.ctx(), references, workspace_view, workspace_rect);
             if tool == EditorTool::Transform {
-                paint_transform_pivot(
-                    ui,
+                self.show_layer_transform(
+                    ui.ctx(),
                     workspace_view,
                     document_size,
-                    layer_transform.unwrap_or_default(),
+                    layer_transform,
                     workspace_rect,
                 );
+            } else {
+                self.layer_transform_drag = None;
             }
 
             let selected_tool = egui::Area::new(egui::Id::new("tool rail"))
@@ -1437,7 +1545,7 @@ impl GuiLayer {
         let handle_positions = canvas_crop_handle_positions(screen_corners);
         let pointer = context.pointer_latest_pos();
         let hovered_handle = pointer.and_then(|pointer| {
-            let pointer_document = crop_pointer_document(pointer, view, pixels_per_point);
+            let pointer_document = pointer_document(pointer, view, pixels_per_point);
             canvas_crop_handle_at(pointer, pointer_document, rect, &handle_positions)
         });
         let cursor_handle = self
@@ -1473,17 +1581,7 @@ impl GuiLayer {
                     egui::Color32::from_white_alpha(8),
                     egui::Stroke::new(2.0, egui::Color32::from_gray(96)),
                 ));
-                for (_, position) in handle_positions {
-                    let handle_rect =
-                        egui::Rect::from_center_size(position, egui::Vec2::splat(14.0));
-                    painter.rect_filled(handle_rect, 3.0, egui::Color32::from_gray(232));
-                    painter.rect_stroke(
-                        handle_rect,
-                        2.0,
-                        egui::Stroke::new(1.5, egui::Color32::from_gray(72)),
-                        egui::StrokeKind::Inside,
-                    );
-                }
+                paint_resize_handles(&painter, &handle_positions);
                 painter.text(
                     egui::pos2(overlay_rect.center().x, overlay_rect.top() + 16.0),
                     egui::Align2::CENTER_TOP,
@@ -1505,7 +1603,7 @@ impl GuiLayer {
             && let Some(handle) = hovered_handle
             && let Some(crop) = self.canvas_crop.as_mut()
         {
-            let pointer_document = crop_pointer_document(pointer, view, pixels_per_point);
+            let pointer_document = pointer_document(pointer, view, pixels_per_point);
             crop.drag = Some(CanvasCropDrag {
                 handle,
                 start_rect: crop.rect,
@@ -1517,7 +1615,7 @@ impl GuiLayer {
             && let Some(crop) = self.canvas_crop.as_mut()
             && let Some(drag) = crop.drag
         {
-            let pointer_document = crop_pointer_document(pointer, view, pixels_per_point);
+            let pointer_document = pointer_document(pointer, view, pixels_per_point);
             crop.rect = canvas_crop_rect_from_drag(drag, pointer_document);
         }
         if response.drag_stopped()
@@ -1717,7 +1815,57 @@ fn canvas_crop_handle_positions(corners: [egui::Pos2; 4]) -> [(CanvasCropHandle,
     ]
 }
 
-fn crop_pointer_document(
+fn paint_resize_handles(painter: &egui::Painter, handles: &[(CanvasCropHandle, egui::Pos2); 8]) {
+    for (_, position) in handles {
+        let handle_rect = egui::Rect::from_center_size(*position, egui::Vec2::splat(14.0));
+        painter.rect_filled(handle_rect, 3.0, egui::Color32::from_gray(232));
+        painter.rect_stroke(
+            handle_rect,
+            2.0,
+            egui::Stroke::new(1.5, egui::Color32::from_gray(72)),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
+fn layer_transform_screen_corners(
+    size: [u32; 2],
+    transform: LayerTransform,
+    view: PaintViewSnapshot,
+    pixels_per_point: f32,
+) -> [egui::Pos2; 4] {
+    layer_transform_document_corners(size, transform).map(|point| {
+        let point = view.document_to_window(point);
+        egui::pos2(point[0] / pixels_per_point, point[1] / pixels_per_point)
+    })
+}
+
+fn layer_transform_document_corners(size: [u32; 2], transform: LayerTransform) -> [[f32; 2]; 4] {
+    let pivot = [size[0] as f32 * 0.5, size[1] as f32 * 0.5];
+    let (sin, cos) = transform.rotation.sin_cos();
+    [
+        [0.0, 0.0],
+        [size[0] as f32, 0.0],
+        [size[0] as f32, size[1] as f32],
+        [0.0, size[1] as f32],
+    ]
+    .map(|point| {
+        let x = (point[0] - pivot[0]) * transform.scale;
+        let y = (point[1] - pivot[1]) * transform.scale;
+        [
+            pivot[0] + transform.translation[0] + cos * x - sin * y,
+            pivot[1] + transform.translation[1] + sin * x + cos * y,
+        ]
+    })
+}
+
+fn layer_rotation_handle(corners: [egui::Pos2; 4]) -> egui::Pos2 {
+    let top_center = corners[0] + (corners[1] - corners[0]) * 0.5;
+    let center = corners[0] + (corners[2] - corners[0]) * 0.5;
+    top_center + (top_center - center).normalized() * 36.0
+}
+
+fn pointer_document(
     pointer: egui::Pos2,
     view: PaintViewSnapshot,
     pixels_per_point: f32,
@@ -1731,9 +1879,20 @@ fn canvas_crop_handle_at(
     rect: CanvasCropRect,
     handles: &[(CanvasCropHandle, egui::Pos2); 8],
 ) -> Option<CanvasCropHandle> {
+    resize_handle_at(pointer, handles)
+        .or_else(|| resize_edge_at(pointer, handles))
+        .or_else(|| {
+            rect.contains(pointer_document)
+                .then_some(CanvasCropHandle::Move)
+        })
+}
+
+fn resize_handle_at(
+    pointer: egui::Pos2,
+    handles: &[(CanvasCropHandle, egui::Pos2); 8],
+) -> Option<CanvasCropHandle> {
     const CORNER_HIT_RADIUS: f32 = 28.0;
     const HANDLE_HIT_RADIUS: f32 = 24.0;
-    const EDGE_HIT_RADIUS: f32 = 14.0;
     let nearest = |corner_only: bool, radius: f32| {
         handles
             .iter()
@@ -1745,28 +1904,93 @@ fn canvas_crop_handle_at(
             .min_by(|left, right| left.1.total_cmp(&right.1))
             .map(|(handle, _)| handle)
     };
-    nearest(true, CORNER_HIT_RADIUS)
-        .or_else(|| nearest(false, HANDLE_HIT_RADIUS))
-        .or_else(|| {
-            let edges = [
-                (CanvasCropHandle::Top, handles[0].1, handles[2].1),
-                (CanvasCropHandle::Right, handles[2].1, handles[4].1),
-                (CanvasCropHandle::Bottom, handles[6].1, handles[4].1),
-                (CanvasCropHandle::Left, handles[0].1, handles[6].1),
-            ];
-            edges
-                .into_iter()
-                .map(|(handle, start, end)| {
-                    (handle, point_segment_distance_sq(pointer, start, end))
-                })
-                .filter(|(_, distance)| *distance <= EDGE_HIT_RADIUS * EDGE_HIT_RADIUS)
-                .min_by(|left, right| left.1.total_cmp(&right.1))
-                .map(|(handle, _)| handle)
-        })
-        .or_else(|| {
-            rect.contains(pointer_document)
-                .then_some(CanvasCropHandle::Move)
-        })
+    nearest(true, CORNER_HIT_RADIUS).or_else(|| nearest(false, HANDLE_HIT_RADIUS))
+}
+
+fn resize_edge_at(
+    pointer: egui::Pos2,
+    handles: &[(CanvasCropHandle, egui::Pos2); 8],
+) -> Option<CanvasCropHandle> {
+    const EDGE_HIT_RADIUS: f32 = 14.0;
+    [
+        (CanvasCropHandle::Top, handles[0].1, handles[2].1),
+        (CanvasCropHandle::Right, handles[2].1, handles[4].1),
+        (CanvasCropHandle::Bottom, handles[6].1, handles[4].1),
+        (CanvasCropHandle::Left, handles[0].1, handles[6].1),
+    ]
+    .into_iter()
+    .map(|(handle, start, end)| (handle, point_segment_distance_sq(pointer, start, end)))
+    .filter(|(_, distance)| *distance <= EDGE_HIT_RADIUS * EDGE_HIT_RADIUS)
+    .min_by(|left, right| left.1.total_cmp(&right.1))
+    .map(|(handle, _)| handle)
+}
+
+fn layer_transform_handle_at(
+    pointer: egui::Pos2,
+    corners: [egui::Pos2; 4],
+    handles: &[(CanvasCropHandle, egui::Pos2); 8],
+    rotation_handle: egui::Pos2,
+) -> Option<LayerTransformHandle> {
+    (pointer.distance_sq(rotation_handle) <= 18.0 * 18.0)
+        .then_some(LayerTransformHandle::Rotate)
+        .or_else(|| resize_handle_at(pointer, handles).map(LayerTransformHandle::Scale))
+        .or_else(|| resize_edge_at(pointer, handles).map(LayerTransformHandle::Scale))
+        .or_else(|| point_in_quad(pointer, corners).then_some(LayerTransformHandle::Move))
+}
+
+fn point_in_quad(point: egui::Pos2, corners: [egui::Pos2; 4]) -> bool {
+    let crosses = std::array::from_fn::<_, 4, _>(|index| {
+        let start = corners[index];
+        let edge = corners[(index + 1) % 4] - start;
+        let offset = point - start;
+        edge.x * offset.y - edge.y * offset.x
+    });
+    crosses.iter().all(|cross| *cross >= 0.0) || crosses.iter().all(|cross| *cross <= 0.0)
+}
+
+fn layer_transform_from_drag(
+    drag: LayerTransformDrag,
+    pointer: [f32; 2],
+    size: [u32; 2],
+) -> LayerTransform {
+    let pivot = [
+        size[0] as f32 * 0.5 + drag.start_transform.translation[0],
+        size[1] as f32 * 0.5 + drag.start_transform.translation[1],
+    ];
+    match drag.handle {
+        LayerTransformHandle::Move => LayerTransform {
+            translation: [
+                drag.start_transform.translation[0] + pointer[0] - drag.start_pointer[0],
+                drag.start_transform.translation[1] + pointer[1] - drag.start_pointer[1],
+            ],
+            ..drag.start_transform
+        },
+        LayerTransformHandle::Scale(_) => {
+            let distance = |point: [f32; 2]| (point[0] - pivot[0]).hypot(point[1] - pivot[1]);
+            LayerTransform {
+                scale: (drag.start_transform.scale * distance(pointer)
+                    / distance(drag.start_pointer).max(f32::EPSILON))
+                .max(0.01),
+                ..drag.start_transform
+            }
+        }
+        LayerTransformHandle::Rotate => LayerTransform {
+            rotation: drag.start_transform.rotation
+                + angle_delta(
+                    pointer_angle(pivot, pointer),
+                    pointer_angle(pivot, drag.start_pointer),
+                ),
+            ..drag.start_transform
+        },
+    }
+}
+
+fn pointer_angle(center: [f32; 2], point: [f32; 2]) -> f32 {
+    (point[1] - center[1]).atan2(point[0] - center[0])
+}
+
+fn angle_delta(angle: f32, origin: f32) -> f32 {
+    (angle - origin + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
 fn canvas_crop_handle_is_corner(handle: CanvasCropHandle) -> bool {
@@ -1796,6 +2020,14 @@ fn canvas_crop_cursor(handle: CanvasCropHandle) -> egui::CursorIcon {
         CanvasCropHandle::Top | CanvasCropHandle::Bottom => egui::CursorIcon::ResizeVertical,
         CanvasCropHandle::TopLeft | CanvasCropHandle::BottomRight => egui::CursorIcon::ResizeNwSe,
         CanvasCropHandle::TopRight | CanvasCropHandle::BottomLeft => egui::CursorIcon::ResizeNeSw,
+    }
+}
+
+fn layer_transform_cursor(handle: LayerTransformHandle) -> egui::CursorIcon {
+    match handle {
+        LayerTransformHandle::Move => egui::CursorIcon::Grab,
+        LayerTransformHandle::Scale(handle) => canvas_crop_cursor(handle),
+        LayerTransformHandle::Rotate => egui::CursorIcon::Crosshair,
     }
 }
 
@@ -2259,37 +2491,6 @@ fn add_layer_button(ui: &mut egui::Ui) -> bool {
     response.on_hover_text("Add layer").clicked()
 }
 
-fn paint_transform_pivot(
-    ui: &egui::Ui,
-    view: PaintViewSnapshot,
-    document_size: [u32; 2],
-    transform: LayerTransform,
-    workspace_rect: egui::Rect,
-) {
-    let center = view.document_to_window([
-        document_size[0] as f32 * 0.5 + transform.translation[0],
-        document_size[1] as f32 * 0.5 + transform.translation[1],
-    ]);
-    let pixels_per_point = ui.ctx().pixels_per_point();
-    let center = egui::pos2(center[0] / pixels_per_point, center[1] / pixels_per_point);
-    if !workspace_rect.contains(center) {
-        return;
-    }
-    let painter = ui.painter().with_clip_rect(workspace_rect);
-    let shadow = egui::Stroke::new(3.0, egui::Color32::from_black_alpha(160));
-    let accent = egui::Stroke::new(1.0, egui::Color32::WHITE);
-    for stroke in [shadow, accent] {
-        painter.line_segment(
-            [center - egui::vec2(7.0, 0.0), center + egui::vec2(7.0, 0.0)],
-            stroke,
-        );
-        painter.line_segment(
-            [center - egui::vec2(0.0, 7.0), center + egui::vec2(0.0, 7.0)],
-            stroke,
-        );
-    }
-}
-
 fn show_tool_button(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -2617,6 +2818,49 @@ mod tests {
             canvas_crop_handle_at(egui::pos2(200.0, 100.0), [200.0, 100.0], rect, &handles),
             Some(CanvasCropHandle::Move)
         );
+    }
+
+    #[test]
+    fn transform_handles_move_scale_and_rotate_from_the_drag_origin() {
+        let start = LayerTransform {
+            translation: [10.0, -5.0],
+            scale: 2.0,
+            rotation: 0.25,
+        };
+        let size = [100, 100];
+        let drag = |handle, start_pointer| LayerTransformDrag {
+            handle,
+            start_transform: start,
+            start_pointer,
+        };
+
+        assert_eq!(
+            layer_transform_from_drag(
+                drag(LayerTransformHandle::Move, [20.0, 30.0]),
+                [35.0, 5.0],
+                size
+            )
+            .translation,
+            [25.0, -30.0]
+        );
+        assert_eq!(
+            layer_transform_from_drag(
+                drag(
+                    LayerTransformHandle::Scale(CanvasCropHandle::TopRight),
+                    [110.0, 45.0],
+                ),
+                [160.0, 45.0],
+                size,
+            )
+            .scale,
+            4.0
+        );
+        let rotated = layer_transform_from_drag(
+            drag(LayerTransformHandle::Rotate, [110.0, 45.0]),
+            [60.0, 95.0],
+            size,
+        );
+        assert!((rotated.rotation - (0.25 + std::f32::consts::FRAC_PI_2)).abs() < 0.0001);
     }
 
     #[test]
