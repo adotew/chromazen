@@ -22,6 +22,7 @@ use crate::{
 use super::{
     autosave::SaveStatus,
     command::AppCommand,
+    input::EditorTool,
     references::{ReferenceId, ReferenceImage},
 };
 
@@ -43,7 +44,7 @@ pub(crate) struct EyedropperIndicator {
 
 pub(crate) struct EditorUiState<'a> {
     pub(crate) layers: &'a LayerSnapshot,
-    pub(crate) tool: PaintTool,
+    pub(crate) tool: EditorTool,
     pub(crate) brush_resize_label: Option<BrushResizeLabel>,
     pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
     pub(crate) save_status: SaveStatus,
@@ -955,12 +956,17 @@ impl GuiLayer {
             });
     }
 
-    fn show_tool_rail(&mut self, ui: &mut egui::Ui, active_tool: PaintTool) -> Option<PaintTool> {
+    fn show_tool_rail(&mut self, ui: &mut egui::Ui, active_tool: EditorTool) -> Option<EditorTool> {
         const TOOL_HEIGHT: f32 = 40.0;
-        const TOOL_COUNT: usize = 3;
+        const TOOL_COUNT: usize = 4;
         const VERTICAL_PADDING: f32 = 6.0;
 
-        let tools = [PaintTool::Brush, PaintTool::Eraser, PaintTool::Smudge];
+        let tools = [
+            EditorTool::Brush,
+            EditorTool::Eraser,
+            EditorTool::Smudge,
+            EditorTool::Transform,
+        ];
         let button_count = TOOL_COUNT + 2;
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(
@@ -998,9 +1004,12 @@ impl GuiLayer {
                 }
                 continue;
             }
+            let Some(paint_tool) = tool.paint_tool() else {
+                continue;
+            };
 
             let popup_id = egui::Popup::default_response_id(&response);
-            let selected_brush = self.tool_brushes[tool_index(tool)].clone();
+            let selected_brush = self.tool_brushes[tool_index(paint_tool)].clone();
             let brushes = self.brushes.clone();
             egui::Popup::menu(&response)
                 .align(egui::RectAlign::LEFT_START)
@@ -1017,7 +1026,7 @@ impl GuiLayer {
                                 if response.clicked() {
                                     if !selected {
                                         self.commands.push(AppCommand::SwitchBrush {
-                                            tool,
+                                            tool: paint_tool,
                                             id: brush.id.clone(),
                                         });
                                     }
@@ -1085,9 +1094,11 @@ impl GuiLayer {
             references,
             workspace_view,
         } = state;
-        self.tool_sizes[tool_index(tool)] = self.brush.size;
+        if let Some(paint_tool) = tool.paint_tool() {
+            self.tool_sizes[tool_index(paint_tool)] = self.brush.size;
+            self.load_brush_preview(&self.tool_brushes[tool_index(paint_tool)].clone());
+        }
         self.sync_reference_textures(references);
-        self.load_brush_preview(&self.tool_brushes[tool_index(tool)].clone());
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
 
@@ -2165,27 +2176,33 @@ fn add_layer_button(ui: &mut egui::Ui) -> bool {
 fn show_tool_button(
     ui: &mut egui::Ui,
     rect: egui::Rect,
-    tool: PaintTool,
+    tool: EditorTool,
     selected: bool,
 ) -> egui::Response {
     let (icon, label, shortcut, accent) = match tool {
-        PaintTool::Brush => (
+        EditorTool::Brush => (
             egui::include_image!("../../assets/icons/paintbrush.svg"),
             "Brush",
             "B",
             egui::Color32::from_rgb(169, 186, 200),
         ),
-        PaintTool::Eraser => (
+        EditorTool::Eraser => (
             egui::include_image!("../../assets/icons/eraser.svg"),
             "Eraser",
             "E",
             egui::Color32::from_rgb(213, 170, 109),
         ),
-        PaintTool::Smudge => (
+        EditorTool::Smudge => (
             egui::include_image!("../../assets/icons/waves.svg"),
             "Smudge",
             "S",
             egui::Color32::from_rgb(177, 159, 204),
+        ),
+        EditorTool::Transform => (
+            egui::include_image!("../../assets/icons/transform.svg"),
+            "Transform",
+            "T",
+            egui::Color32::from_rgb(156, 198, 174),
         ),
     };
     let response = ui.interact(rect, ui.id().with(label), egui::Sense::click());

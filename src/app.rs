@@ -39,6 +39,7 @@ use self::{
     ui::{BrushResizeLabel, EditorUiState, EyedropperIndicator, GuiLayer},
 };
 use crate::{
+    paint::PaintTool,
     platform::{
         MacosPressureMonitor, PenEvent, PressureStateHandle, WaylandTabletMonitor,
         WindowsPenMonitor, WindowsPenRouter,
@@ -250,7 +251,9 @@ impl ApplicationHandler<AppEvent> for App {
                             true
                         }
                         KeyboardShortcut::CycleTool => {
-                            gui.remember_tool_size(self.input.tool());
+                            if let Some(tool) = self.input.tool().paint_tool() {
+                                gui.remember_tool_size(tool);
+                            }
                             if self.input.cycle_tool() {
                                 self.pending_commands
                                     .push(AppCommand::SelectTool(self.input.tool()));
@@ -325,7 +328,9 @@ impl ApplicationHandler<AppEvent> for App {
                         &self.pressure_state,
                     );
                     if self.input.tool() != previous_tool {
-                        gui.remember_tool_size(previous_tool);
+                        if let Some(tool) = previous_tool.paint_tool() {
+                            gui.remember_tool_size(tool);
+                        }
                         self.pending_commands
                             .push(AppCommand::SelectTool(self.input.tool()));
                     }
@@ -698,13 +703,16 @@ impl App {
                     if self.input.tool() != tool {
                         continue;
                     }
+                    let Some(paint_tool) = tool.paint_tool() else {
+                        continue;
+                    };
                     let id = self
                         .gui
                         .as_ref()
-                        .map(|gui| gui.brush_for_tool(tool).to_owned());
+                        .map(|gui| gui.brush_for_tool(paint_tool).to_owned());
                     if let Some(id) = id {
                         self.process_settings_commands(vec![SettingsCommand::SwitchBrush {
-                            tool,
+                            tool: paint_tool,
                             id,
                             reset_size: false,
                         }]);
@@ -807,7 +815,8 @@ impl App {
                         continue;
                     }
                     let paths = choose_abr_paths();
-                    self.brush_import.start(self.input.tool(), paths);
+                    let tool = self.input.tool().paint_tool().unwrap_or(PaintTool::Brush);
+                    self.brush_import.start(tool, paths);
                 }
                 AppCommand::SaveSettings => {
                     let Some((brush, tool_brushes, tool_sizes)) =
@@ -822,9 +831,8 @@ impl App {
                     }]);
                 }
                 AppCommand::ReloadConfiguration => {
-                    self.process_settings_commands(vec![SettingsCommand::ReloadFromDisk(
-                        self.input.tool(),
-                    )]);
+                    let tool = self.input.tool().paint_tool().unwrap_or(PaintTool::Brush);
+                    self.process_settings_commands(vec![SettingsCommand::ReloadFromDisk(tool)]);
                 }
                 AppCommand::ResetBrush => {
                     if let Some(gui) = self.gui.as_mut() {

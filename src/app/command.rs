@@ -1,5 +1,5 @@
 use crate::{
-    app::references::ReferenceId,
+    app::{input::EditorTool, references::ReferenceId},
     artwork::ArtworkId,
     paint::PaintTool,
     renderer::{DropEdge, LayerId},
@@ -21,7 +21,7 @@ pub(super) enum AppCommand {
         height: u32,
         origin: [i32; 2],
     },
-    SelectTool(PaintTool),
+    SelectTool(EditorTool),
     SelectLayer(LayerId),
     AddLayer,
     DeleteSelectedLayer,
