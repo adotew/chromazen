@@ -178,6 +178,10 @@ impl PaintInputController {
         self.transform_drag.is_some()
     }
 
+    pub(crate) fn is_transform_tool_active(&self) -> bool {
+        self.tool == EditorTool::Transform
+    }
+
     pub fn is_pan_modifier_active(&self) -> bool {
         self.is_space_down
     }

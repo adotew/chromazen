@@ -46,6 +46,7 @@ pub(crate) struct EditorUiState<'a> {
     pub(crate) layers: &'a LayerSnapshot,
     pub(crate) tool: EditorTool,
     pub(crate) layer_transform: Option<LayerTransform>,
+    pub(crate) document_size: [u32; 2],
     pub(crate) brush_resize_label: Option<BrushResizeLabel>,
     pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
     pub(crate) save_status: SaveStatus,
@@ -1147,6 +1148,7 @@ impl GuiLayer {
             layers,
             tool,
             layer_transform,
+            document_size,
             brush_resize_label,
             eyedropper_indicator,
             save_status,
@@ -1231,6 +1233,15 @@ impl GuiLayer {
 
             let workspace_rect = ui.available_rect_before_wrap();
             self.show_workspace_references(ui.ctx(), references, workspace_view, workspace_rect);
+            if tool == EditorTool::Transform {
+                paint_transform_pivot(
+                    ui,
+                    workspace_view,
+                    document_size,
+                    layer_transform.unwrap_or_default(),
+                    workspace_rect,
+                );
+            }
 
             let selected_tool = egui::Area::new(egui::Id::new("tool rail"))
                 .anchor(egui::Align2::RIGHT_TOP, egui::Vec2::ZERO)
@@ -2246,6 +2257,37 @@ fn add_layer_button(ui: &mut egui::Ui) -> bool {
     }
 
     response.on_hover_text("Add layer").clicked()
+}
+
+fn paint_transform_pivot(
+    ui: &egui::Ui,
+    view: PaintViewSnapshot,
+    document_size: [u32; 2],
+    transform: LayerTransform,
+    workspace_rect: egui::Rect,
+) {
+    let center = view.document_to_window([
+        document_size[0] as f32 * 0.5 + transform.translation[0],
+        document_size[1] as f32 * 0.5 + transform.translation[1],
+    ]);
+    let pixels_per_point = ui.ctx().pixels_per_point();
+    let center = egui::pos2(center[0] / pixels_per_point, center[1] / pixels_per_point);
+    if !workspace_rect.contains(center) {
+        return;
+    }
+    let painter = ui.painter().with_clip_rect(workspace_rect);
+    let shadow = egui::Stroke::new(3.0, egui::Color32::from_black_alpha(160));
+    let accent = egui::Stroke::new(1.0, egui::Color32::WHITE);
+    for stroke in [shadow, accent] {
+        painter.line_segment(
+            [center - egui::vec2(7.0, 0.0), center + egui::vec2(7.0, 0.0)],
+            stroke,
+        );
+        painter.line_segment(
+            [center - egui::vec2(0.0, 7.0), center + egui::vec2(0.0, 7.0)],
+            stroke,
+        );
+    }
 }
 
 fn show_tool_button(
