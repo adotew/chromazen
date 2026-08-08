@@ -578,6 +578,7 @@ impl App {
                         EditorUiState {
                             layers: &layer_snapshot,
                             tool: self.input.tool(),
+                            layer_transform: paint.active_layer_transform(),
                             brush_resize_label,
                             eyedropper_indicator,
                             save_status: status,
@@ -696,6 +697,21 @@ impl App {
                         && let Some(gui) = self.gui.as_mut()
                     {
                         gui.show_error("Chromazen couldn’t resize the canvas.", error);
+                    }
+                }
+                AppCommand::SetLayerTransform(transform) => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.update_layer_transform(transform);
+                    }
+                }
+                AppCommand::ApplyLayerTransform => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.commit_layer_transform();
+                    }
+                }
+                AppCommand::CancelLayerTransform => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.cancel_layer_transform();
                     }
                 }
                 AppCommand::SelectTool(tool) => {

@@ -15,7 +15,7 @@ use crate::{
     paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings, StrokeSmoothingOptions},
     renderer::{
         CanvasSizeConstraints, DEFAULT_CANVAS_SIZE, DropEdge, LayerId, LayerResourceId,
-        LayerSnapshot, PaintRenderer, PaintViewSnapshot, merge_down_target_index,
+        LayerSnapshot, LayerTransform, PaintRenderer, PaintViewSnapshot, merge_down_target_index,
     },
 };
 
@@ -45,6 +45,7 @@ pub(crate) struct EyedropperIndicator {
 pub(crate) struct EditorUiState<'a> {
     pub(crate) layers: &'a LayerSnapshot,
     pub(crate) tool: EditorTool,
+    pub(crate) layer_transform: Option<LayerTransform>,
     pub(crate) brush_resize_label: Option<BrushResizeLabel>,
     pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
     pub(crate) save_status: SaveStatus,
@@ -1080,10 +1081,72 @@ impl GuiLayer {
         selected_tool
     }
 
+    fn show_transform_controls(&mut self, context: &egui::Context, active: Option<LayerTransform>) {
+        let mut transform = active.unwrap_or_default();
+        let mut scale_percent = transform.scale * 100.0;
+        let mut rotation_degrees = transform.rotation.to_degrees();
+        egui::Window::new("Transform")
+            .id(egui::Id::new("layer transform controls"))
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 16.0))
+            .resizable(false)
+            .collapsible(false)
+            .show(context, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Scale");
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut scale_percent)
+                                .range(1.0..=10_000.0)
+                                .speed(1.0)
+                                .suffix("%"),
+                        )
+                        .changed()
+                    {
+                        transform.scale = scale_percent / 100.0;
+                        self.commands.push(AppCommand::SetLayerTransform(transform));
+                    }
+                    ui.label("Rotation");
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut rotation_degrees)
+                                .speed(0.5)
+                                .suffix("°"),
+                        )
+                        .changed()
+                    {
+                        transform.rotation = rotation_degrees.to_radians();
+                        self.commands.push(AppCommand::SetLayerTransform(transform));
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(active.is_some(), egui::Button::new("Reset"))
+                        .clicked()
+                    {
+                        self.commands
+                            .push(AppCommand::SetLayerTransform(LayerTransform::default()));
+                    }
+                    if ui
+                        .add_enabled(active.is_some(), egui::Button::new("Cancel"))
+                        .clicked()
+                    {
+                        self.commands.push(AppCommand::CancelLayerTransform);
+                    }
+                    if ui
+                        .add_enabled(active.is_some(), egui::Button::new("Apply"))
+                        .clicked()
+                    {
+                        self.commands.push(AppCommand::ApplyLayerTransform);
+                    }
+                });
+            });
+    }
+
     pub fn run_editor(&mut self, window: &Window, state: EditorUiState<'_>) -> egui::FullOutput {
         let EditorUiState {
             layers,
             tool,
+            layer_transform,
             brush_resize_label,
             eyedropper_indicator,
             save_status,
@@ -1150,11 +1213,20 @@ impl GuiLayer {
                 }
             }
 
-            if !ui.ctx().egui_wants_keyboard_input()
-                && ui.ctx().input(|input| input.key_pressed(egui::Key::Escape))
-            {
-                self.color_window_open = false;
-                self.layers_window_open = false;
+            if !ui.ctx().egui_wants_keyboard_input() {
+                if ui.ctx().input(|input| input.key_pressed(egui::Key::Enter))
+                    && layer_transform.is_some()
+                {
+                    self.commands.push(AppCommand::ApplyLayerTransform);
+                }
+                if ui.ctx().input(|input| input.key_pressed(egui::Key::Escape)) {
+                    if layer_transform.is_some() {
+                        self.commands.push(AppCommand::CancelLayerTransform);
+                    } else {
+                        self.color_window_open = false;
+                        self.layers_window_open = false;
+                    }
+                }
             }
 
             let workspace_rect = ui.available_rect_before_wrap();
@@ -1167,6 +1239,9 @@ impl GuiLayer {
                 .inner;
             if let Some(tool) = selected_tool {
                 self.commands.push(AppCommand::SelectTool(tool));
+            }
+            if tool == EditorTool::Transform {
+                self.show_transform_controls(ui.ctx(), layer_transform);
             }
 
             if let Some(label) = brush_resize_label {

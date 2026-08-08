@@ -2,7 +2,7 @@ use crate::{
     app::{input::EditorTool, references::ReferenceId},
     artwork::ArtworkId,
     paint::PaintTool,
-    renderer::{DropEdge, LayerId},
+    renderer::{DropEdge, LayerId, LayerTransform},
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -22,6 +22,9 @@ pub(super) enum AppCommand {
         origin: [i32; 2],
     },
     SelectTool(EditorTool),
+    SetLayerTransform(LayerTransform),
+    ApplyLayerTransform,
+    CancelLayerTransform,
     SelectLayer(LayerId),
     AddLayer,
     DeleteSelectedLayer,
