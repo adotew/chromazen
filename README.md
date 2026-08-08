@@ -112,9 +112,9 @@ Controls:
 - `T`: select Transform. The frame fits the painted pixels on the selected
   layer. Drag inside it to move, drag its square handles to scale freely, or
   drag the circular handle to rotate. Hold `Shift` while scaling to preserve
-  the current aspect ratio. Press `Enter` to bake the transform or `Escape` to
-  restore the original pixels; either returns to the previously selected paint
-  tool. Applied transforms are undoable.
+  the current aspect ratio. Press `T` again or `Enter` to bake the transform, or
+  `Escape` to restore the original pixels; each returns to the previously
+  selected paint tool. Applied transforms are undoable.
 - `Shift-Tab`: cycle through Brush, Eraser, and Smudge
 - Click an inactive tool button to select it; click the active tool again to
   open the shared floating brush library. Each tool remembers its own brush.
