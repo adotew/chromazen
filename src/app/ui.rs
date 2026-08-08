@@ -1094,24 +1094,6 @@ impl GuiLayer {
         selected_tool
     }
 
-    fn show_bottom_toolbar(
-        &mut self,
-        ui: &mut egui::Ui,
-        active_tool: EditorTool,
-    ) -> Option<EditorTool> {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(52.0, 52.0), egui::Sense::hover());
-        paint_rounded_panel(ui, rect, egui::CornerRadius::same(16));
-        let button_rect = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(40.0));
-        let response = show_tool_button(
-            ui,
-            button_rect,
-            EditorTool::Transform,
-            active_tool == EditorTool::Transform,
-        );
-        (response.clicked() && active_tool != EditorTool::Transform)
-            .then_some(EditorTool::Transform)
-    }
-
     fn show_layer_transform(
         &mut self,
         context: &egui::Context,
@@ -1284,13 +1266,13 @@ impl GuiLayer {
 
             if !ui.ctx().egui_wants_keyboard_input() {
                 if ui.ctx().input(|input| input.key_pressed(egui::Key::Enter))
-                    && layer_transform.is_some()
+                    && tool == EditorTool::Transform
                 {
                     self.layer_transform_drag = None;
                     self.commands.push(AppCommand::ApplyLayerTransform);
                 }
                 if ui.ctx().input(|input| input.key_pressed(egui::Key::Escape)) {
-                    if layer_transform.is_some() {
+                    if tool == EditorTool::Transform {
                         self.layer_transform_drag = None;
                         self.commands.push(AppCommand::CancelLayerTransform);
                     } else {
@@ -1322,15 +1304,6 @@ impl GuiLayer {
             if let Some(tool) = selected_tool {
                 self.commands.push(AppCommand::SelectTool(tool));
             }
-            let selected_tool = egui::Area::new(egui::Id::new("bottom tool rail"))
-                .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -16.0))
-                .order(egui::Order::Foreground)
-                .show(ui.ctx(), |ui| self.show_bottom_toolbar(ui, tool))
-                .inner;
-            if let Some(tool) = selected_tool {
-                self.commands.push(AppCommand::SelectTool(tool));
-            }
-
             if let Some(label) = brush_resize_label {
                 show_brush_resize_label(ui, label, self.brush.size);
             }

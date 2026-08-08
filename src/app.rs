@@ -30,7 +30,7 @@ use self::{
     command::AppCommand,
     export::{ExportController, choose_export_path},
     gallery::GalleryController,
-    input::{KeyboardShortcut, PaintInputController},
+    input::{EditorTool, KeyboardShortcut, PaintInputController},
     menu::NativeMenu,
     reference_import::{ReferenceImportController, choose_reference_paths},
     reference_load::ReferenceLoadController,
@@ -745,32 +745,15 @@ impl App {
                     if let Some(paint) = self.paint.as_mut() {
                         paint.commit_layer_transform();
                     }
+                    self.restore_previous_paint_tool();
                 }
                 AppCommand::CancelLayerTransform => {
                     if let Some(paint) = self.paint.as_mut() {
                         paint.cancel_layer_transform();
                     }
+                    self.restore_previous_paint_tool();
                 }
-                AppCommand::SelectTool(tool) => {
-                    self.input.select_tool(tool);
-                    if self.input.tool() != tool {
-                        continue;
-                    }
-                    let Some(paint_tool) = tool.paint_tool() else {
-                        continue;
-                    };
-                    let id = self
-                        .gui
-                        .as_ref()
-                        .map(|gui| gui.brush_for_tool(paint_tool).to_owned());
-                    if let Some(id) = id {
-                        self.process_settings_commands(vec![SettingsCommand::SwitchBrush {
-                            tool: paint_tool,
-                            id,
-                            reset_size: false,
-                        }]);
-                    }
-                }
+                AppCommand::SelectTool(tool) => self.select_editor_tool(tool),
                 AppCommand::SelectLayer(id) => {
                     if let Some(paint) = self.paint.as_mut() {
                         paint.select_layer(id);
@@ -970,6 +953,31 @@ impl App {
         }
         self.sync_history_menu();
         true
+    }
+
+    fn restore_previous_paint_tool(&mut self) {
+        self.select_editor_tool(self.input.previous_paint_tool());
+    }
+
+    fn select_editor_tool(&mut self, tool: EditorTool) {
+        self.input.select_tool(tool);
+        if self.input.tool() != tool {
+            return;
+        }
+        let Some(paint_tool) = tool.paint_tool() else {
+            return;
+        };
+        let id = self
+            .gui
+            .as_ref()
+            .map(|gui| gui.brush_for_tool(paint_tool).to_owned());
+        if let Some(id) = id {
+            self.process_settings_commands(vec![SettingsCommand::SwitchBrush {
+                tool: paint_tool,
+                id,
+                reset_size: false,
+            }]);
+        }
     }
 
     fn process_brush_import_completion(&mut self) -> bool {

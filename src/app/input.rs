@@ -125,11 +125,16 @@ pub struct PaintInputController {
     smoothing_options: StrokeSmoothingOptions,
     modifiers: ModifiersState,
     tool: EditorTool,
+    previous_paint_tool: PaintTool,
 }
 
 impl PaintInputController {
     pub fn tool(&self) -> EditorTool {
         self.tool
+    }
+
+    pub(crate) fn previous_paint_tool(&self) -> EditorTool {
+        self.previous_paint_tool.into()
     }
 
     pub(crate) fn cursor_position(&self) -> [f32; 2] {
@@ -227,6 +232,9 @@ impl PaintInputController {
     pub fn select_tool(&mut self, tool: EditorTool) -> bool {
         if self.is_drawing || self.tool == tool {
             return false;
+        }
+        if let Some(tool) = self.tool.paint_tool() {
+            self.previous_paint_tool = tool;
         }
         self.tool = tool;
         true
@@ -902,6 +910,14 @@ mod tests {
         input.is_drawing = true;
         assert!(!input.select_tool_for_key(KeyCode::KeyB));
         assert_eq!(input.tool(), EditorTool::Eraser);
+    }
+
+    #[test]
+    fn transform_remembers_the_previous_paint_tool() {
+        let mut input = PaintInputController::default();
+        input.select_tool(EditorTool::Eraser);
+        input.select_tool(EditorTool::Transform);
+        assert_eq!(input.previous_paint_tool(), EditorTool::Eraser);
     }
 
     #[test]
