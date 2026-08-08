@@ -636,6 +636,30 @@ impl App {
             {
                 continue;
             }
+            if matches!(
+                &command,
+                AppCommand::SelectTool(_)
+                    | AppCommand::SelectLayer(_)
+                    | AppCommand::AddLayer
+                    | AppCommand::DeleteSelectedLayer
+                    | AppCommand::RenameLayer { .. }
+                    | AppCommand::MergeLayerDown(_)
+                    | AppCommand::SetLayerClipped { .. }
+                    | AppCommand::SetLayerVisibility { .. }
+                    | AppCommand::SetLayerOpacity { .. }
+                    | AppCommand::CommitLayerOpacity { .. }
+                    | AppCommand::MoveLayer { .. }
+                    | AppCommand::SetBackgroundColor(_)
+                    | AppCommand::CommitBackgroundColor { .. }
+                    | AppCommand::ResizeCanvas { .. }
+                    | AppCommand::CreateArtwork { .. }
+                    | AppCommand::OpenArtwork(_)
+                    | AppCommand::SaveArtwork
+                    | AppCommand::ExportPng
+                    | AppCommand::ShowGallery
+            ) {
+                self.finish_editor_interaction();
+            }
             match command {
                 AppCommand::Undo => self.undo(),
                 AppCommand::Redo => self.redo(),
@@ -1168,13 +1192,17 @@ impl App {
     }
 
     fn undo(&mut self) {
-        if let Some(paint) = self.paint.as_mut() {
+        if let Some(paint) = self.paint.as_mut()
+            && !paint.cancel_layer_transform()
+        {
             paint.undo();
         }
     }
 
     fn redo(&mut self) {
-        if let Some(paint) = self.paint.as_mut() {
+        if let Some(paint) = self.paint.as_mut()
+            && !paint.cancel_layer_transform()
+        {
             paint.redo();
         }
     }

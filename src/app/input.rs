@@ -527,7 +527,8 @@ impl PaintInputController {
         self.rotation_drag = None;
         self.transform_drag = None;
         self.eyedropper_drag = None;
-        self.end_stroke(paint, brush)
+        let ended = self.end_stroke(paint, brush);
+        paint.commit_layer_transform() || ended
     }
 
     fn sample_color_at(

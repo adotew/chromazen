@@ -1115,14 +1115,14 @@ impl PaintRenderer {
 
     pub(crate) fn set_background_color(&mut self, color: [u8; 3]) {
         let color = opaque_color(color);
-        if self.active_stroke.is_none() && self.background_color != color {
+        if self.can_replace_document() && self.background_color != color {
             self.background_color = color;
             self.mark_metadata_changed();
         }
     }
 
     pub(crate) fn commit_background_color(&mut self, before: [u8; 3], after: [u8; 3]) {
-        if self.active_stroke.is_some() {
+        if !self.can_replace_document() {
             return;
         }
         let before = opaque_color(before);
@@ -1611,7 +1611,7 @@ impl PaintRenderer {
     }
 
     pub fn clear_canvas(&mut self) {
-        if self.active_stroke.is_some() {
+        if !self.can_replace_document() {
             return;
         }
         self.stamp_queue.clear();
