@@ -277,7 +277,7 @@ pub struct PaintRenderer {
     stamp_queue: StampQueue,
     active_stroke: Option<ActiveStroke>,
     active_transform: Option<ActiveLayerTransform>,
-    content_bounds_cache: Option<(LayerId, Option<LayerContentBounds>)>,
+    content_bounds_cache: Option<(LayerId, LayerResourceId, Option<LayerContentBounds>)>,
     history: PaintHistory,
     view: PaintView,
     document_generation: u64,
@@ -522,8 +522,10 @@ impl PaintRenderer {
         }
         let layer_index = self.selected_layer_index()?;
         let layer_id = self.layers[layer_index].id;
-        if let Some((cached_id, bounds)) = self.content_bounds_cache
+        let layer_resource_id = self.layers[layer_index].resource_id;
+        if let Some((cached_id, cached_resource_id, bounds)) = self.content_bounds_cache
             && cached_id == layer_id
+            && cached_resource_id == layer_resource_id
         {
             return bounds;
         }
@@ -538,7 +540,7 @@ impl PaintRenderer {
         .ok()
         .and_then(|layers| layers.into_iter().next())
         .and_then(|(_, image)| alpha_content_bounds(&image));
-        self.content_bounds_cache = Some((layer_id, bounds));
+        self.content_bounds_cache = Some((layer_id, layer_resource_id, bounds));
         bounds
     }
 
