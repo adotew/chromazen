@@ -116,8 +116,6 @@ struct LayerSettingsUniform {
 struct TransformUniform {
     source_from_destination_x: [f32; 4],
     source_from_destination_y: [f32; 4],
-    source_dims: [f32; 2],
-    padding: [f32; 2],
 }
 
 #[repr(C)]
@@ -201,7 +199,7 @@ impl LayerTransform {
             && self.rotation.abs() <= f32::EPSILON
     }
 
-    fn uniform(self, size: [u32; 2], pivot: [f32; 2]) -> TransformUniform {
+    fn uniform(self, pivot: [f32; 2]) -> TransformUniform {
         let (sin, cos) = self.rotation.sin_cos();
         let a = cos / self.scale[0];
         let b = sin / self.scale[0];
@@ -214,8 +212,6 @@ impl LayerTransform {
         TransformUniform {
             source_from_destination_x: [a, b, pivot[0] - a * origin[0] - b * origin[1], 0.0],
             source_from_destination_y: [c, d, pivot[1] - c * origin[0] - d * origin[1], 0.0],
-            source_dims: [size[0] as f32, size[1] as f32],
-            padding: [0.0; 2],
         }
     }
 }
@@ -622,7 +618,7 @@ impl PaintRenderer {
             .bounds
             .center();
         self.resources
-            .write_transform(self.gpu.queue(), transform, self.document_size, pivot);
+            .write_transform(self.gpu.queue(), transform, pivot);
         let mut encoder =
             self.gpu
                 .device()
@@ -2704,28 +2700,28 @@ mod tests {
             ]
         }
 
-        let identity = LayerTransform::default().uniform([100, 80], [50.0, 40.0]);
+        let identity = LayerTransform::default().uniform([50.0, 40.0]);
         assert_eq!(map(identity, [20.5, 30.5]), [20.5, 30.5]);
 
         let translated = LayerTransform {
             translation: [10.0, -5.0],
             ..Default::default()
         }
-        .uniform([100, 80], [50.0, 40.0]);
+        .uniform([50.0, 40.0]);
         assert_eq!(map(translated, [30.5, 25.5]), [20.5, 30.5]);
 
         let scaled = LayerTransform {
             scale: [2.0, 4.0],
             ..Default::default()
         }
-        .uniform([100, 80], [50.0, 40.0]);
+        .uniform([50.0, 40.0]);
         assert_eq!(map(scaled, [70.0, 80.0]), [60.0, 50.0]);
 
         let rotated = LayerTransform {
             rotation: std::f32::consts::FRAC_PI_2,
             ..Default::default()
         }
-        .uniform([100, 80], [50.0, 40.0]);
+        .uniform([50.0, 40.0]);
         let source = map(rotated, [50.0, 50.0]);
         assert!((source[0] - 60.0).abs() < 0.0001);
         assert!((source[1] - 40.0).abs() < 0.0001);

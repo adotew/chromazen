@@ -4,8 +4,6 @@
 struct Transform {
   sourceFromDestinationX: vec4f,
   sourceFromDestinationY: vec4f,
-  sourceDims: vec2f,
-  padding: vec2f,
 };
 
 @vertex

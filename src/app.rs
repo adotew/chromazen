@@ -737,7 +737,9 @@ impl App {
                     }
                 }
                 AppCommand::SetLayerTransform(transform) => {
-                    if let Some(paint) = self.paint.as_mut() {
+                    if self.input.tool() == EditorTool::Transform
+                        && let Some(paint) = self.paint.as_mut()
+                    {
                         paint.update_layer_transform(transform);
                     }
                 }

@@ -1,10 +1,10 @@
 use wgpu::util::DeviceExt;
 
 use super::layers::{LayerId, LayerProperties, LayerResourceId, PaintLayer};
-use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
+use super::stamps::{StampRaw, MAX_STAMPS_PER_FRAME};
 use super::{
-    CursorRaw, DOCUMENT_FORMAT, LAYER_PREVIEW_SIZE, LayerPreviewUniform, LayerSettingsUniform,
-    LayerTransform, PaintUniform, STROKE_MASK_FORMAT, StrokeUniform, ViewUniform,
+    CursorRaw, LayerPreviewUniform, LayerSettingsUniform, LayerTransform, PaintUniform,
+    StrokeUniform, ViewUniform, DOCUMENT_FORMAT, LAYER_PREVIEW_SIZE, STROKE_MASK_FORMAT,
 };
 
 pub(crate) struct RenderResources {
@@ -115,10 +115,10 @@ impl RenderResources {
         let transform_uniform_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("layer transform uniform buffer"),
-                contents: bytemuck::bytes_of(&LayerTransform::default().uniform(
-                    document_size,
-                    [document_size[0] as f32 * 0.5, document_size[1] as f32 * 0.5],
-                )),
+                contents: bytemuck::bytes_of(
+                    &LayerTransform::default()
+                        .uniform([document_size[0] as f32 * 0.5, document_size[1] as f32 * 0.5]),
+                ),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
 
@@ -1122,13 +1122,12 @@ impl RenderResources {
         &self,
         queue: &wgpu::Queue,
         transform: LayerTransform,
-        size: [u32; 2],
         pivot: [f32; 2],
     ) {
         queue.write_buffer(
             &self.transform_uniform_buffer,
             0,
-            bytemuck::bytes_of(&transform.uniform(size, pivot)),
+            bytemuck::bytes_of(&transform.uniform(pivot)),
         );
     }
 

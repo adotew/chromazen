@@ -1011,7 +1011,7 @@ impl GuiLayer {
                 egui::pos2(body.left(), body.top() + index as f32 * TOOL_HEIGHT),
                 egui::vec2(TOOL_RAIL_WIDTH, TOOL_HEIGHT),
             );
-            let response = show_tool_button(ui, tool_rect, tool, tool == active_tool);
+            let response = show_tool_button(ui, tool_rect, paint_tool, tool == active_tool);
             if tool != active_tool {
                 if response.clicked() {
                     egui::Popup::close_all(ui.ctx());
@@ -2484,33 +2484,27 @@ fn add_layer_button(ui: &mut egui::Ui) -> bool {
 fn show_tool_button(
     ui: &mut egui::Ui,
     rect: egui::Rect,
-    tool: EditorTool,
+    tool: PaintTool,
     selected: bool,
 ) -> egui::Response {
     let (icon, label, shortcut, accent) = match tool {
-        EditorTool::Paint(PaintTool::Brush) => (
+        PaintTool::Brush => (
             egui::include_image!("../../assets/icons/paintbrush.svg"),
             "Brush",
             "B",
             egui::Color32::from_rgb(169, 186, 200),
         ),
-        EditorTool::Paint(PaintTool::Eraser) => (
+        PaintTool::Eraser => (
             egui::include_image!("../../assets/icons/eraser.svg"),
             "Eraser",
             "E",
             egui::Color32::from_rgb(213, 170, 109),
         ),
-        EditorTool::Paint(PaintTool::Smudge) => (
+        PaintTool::Smudge => (
             egui::include_image!("../../assets/icons/waves.svg"),
             "Smudge",
             "S",
             egui::Color32::from_rgb(177, 159, 204),
-        ),
-        EditorTool::Transform => (
-            egui::include_image!("../../assets/icons/transform.svg"),
-            "Transform",
-            "T",
-            egui::Color32::from_rgb(156, 198, 174),
         ),
     };
     let response = ui.interact(rect, ui.id().with(label), egui::Sense::click());
