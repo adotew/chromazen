@@ -77,21 +77,22 @@ pub(super) enum KeyboardShortcut {
     CycleTool,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EditorTool {
-    #[default]
-    Brush,
-    Eraser,
-    Smudge,
+    Paint(PaintTool),
     Transform,
+}
+
+impl Default for EditorTool {
+    fn default() -> Self {
+        Self::Paint(PaintTool::default())
+    }
 }
 
 impl EditorTool {
     pub(crate) fn paint_tool(self) -> Option<PaintTool> {
         match self {
-            Self::Brush => Some(PaintTool::Brush),
-            Self::Eraser => Some(PaintTool::Eraser),
-            Self::Smudge => Some(PaintTool::Smudge),
+            Self::Paint(tool) => Some(tool),
             Self::Transform => None,
         }
     }
@@ -99,11 +100,7 @@ impl EditorTool {
 
 impl From<PaintTool> for EditorTool {
     fn from(tool: PaintTool) -> Self {
-        match tool {
-            PaintTool::Brush => Self::Brush,
-            PaintTool::Eraser => Self::Eraser,
-            PaintTool::Smudge => Self::Smudge,
-        }
+        Self::Paint(tool)
     }
 }
 
@@ -242,9 +239,9 @@ impl PaintInputController {
 
     pub fn cycle_tool(&mut self) -> bool {
         let tool = match self.tool {
-            EditorTool::Brush => EditorTool::Eraser,
-            EditorTool::Eraser => EditorTool::Smudge,
-            EditorTool::Smudge | EditorTool::Transform => EditorTool::Brush,
+            EditorTool::Paint(PaintTool::Brush) => PaintTool::Eraser.into(),
+            EditorTool::Paint(PaintTool::Eraser) => PaintTool::Smudge.into(),
+            EditorTool::Paint(PaintTool::Smudge) | EditorTool::Transform => PaintTool::Brush.into(),
         };
         self.select_tool(tool)
     }
@@ -663,9 +660,9 @@ fn editor_tool_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<Editor
         return None;
     }
     match key {
-        KeyCode::KeyB => Some(EditorTool::Brush),
-        KeyCode::KeyE => Some(EditorTool::Eraser),
-        KeyCode::KeyS => Some(EditorTool::Smudge),
+        KeyCode::KeyB => Some(PaintTool::Brush.into()),
+        KeyCode::KeyE => Some(PaintTool::Eraser.into()),
+        KeyCode::KeyS => Some(PaintTool::Smudge.into()),
         KeyCode::KeyT => Some(EditorTool::Transform),
         _ => None,
     }
@@ -813,11 +810,11 @@ mod tests {
     fn cycles_tools_and_wraps() {
         let mut input = PaintInputController::default();
         assert!(input.cycle_tool());
-        assert_eq!(input.tool(), EditorTool::Eraser);
+        assert_eq!(input.tool(), PaintTool::Eraser.into());
         assert!(input.cycle_tool());
-        assert_eq!(input.tool(), EditorTool::Smudge);
+        assert_eq!(input.tool(), PaintTool::Smudge.into());
         assert!(input.cycle_tool());
-        assert_eq!(input.tool(), EditorTool::Brush);
+        assert_eq!(input.tool(), PaintTool::Brush.into());
     }
 
     #[test]
@@ -827,7 +824,7 @@ mod tests {
             ..Default::default()
         };
         assert!(!input.cycle_tool());
-        assert_eq!(input.tool(), EditorTool::Brush);
+        assert_eq!(input.tool(), PaintTool::Brush.into());
     }
 
     #[test]
@@ -881,15 +878,15 @@ mod tests {
     fn maps_tool_shortcuts() {
         assert_eq!(
             editor_tool_for_key(KeyCode::KeyB, ModifiersState::empty()),
-            Some(EditorTool::Brush)
+            Some(PaintTool::Brush.into())
         );
         assert_eq!(
             editor_tool_for_key(KeyCode::KeyE, ModifiersState::SHIFT),
-            Some(EditorTool::Eraser)
+            Some(PaintTool::Eraser.into())
         );
         assert_eq!(
             editor_tool_for_key(KeyCode::KeyS, ModifiersState::empty()),
-            Some(EditorTool::Smudge)
+            Some(PaintTool::Smudge.into())
         );
         assert_eq!(
             editor_tool_for_key(KeyCode::KeyT, ModifiersState::empty()),
@@ -907,22 +904,22 @@ mod tests {
     #[test]
     fn brush_is_default_and_reselecting_it_is_a_no_op() {
         let mut input = PaintInputController::default();
-        assert_eq!(input.tool(), EditorTool::Brush);
+        assert_eq!(input.tool(), PaintTool::Brush.into());
         assert!(!input.select_tool_for_key(KeyCode::KeyB));
         assert!(input.select_tool_for_key(KeyCode::KeyE));
         input.is_drawing = true;
         assert!(!input.select_tool_for_key(KeyCode::KeyB));
-        assert_eq!(input.tool(), EditorTool::Eraser);
+        assert_eq!(input.tool(), PaintTool::Eraser.into());
     }
 
     #[test]
     fn transform_remembers_the_previous_paint_tool() {
         let mut input = PaintInputController::default();
-        input.select_tool(EditorTool::Eraser);
+        input.select_tool(PaintTool::Eraser.into());
         input.select_tool_for_key(KeyCode::KeyT);
-        assert_eq!(input.previous_paint_tool(), EditorTool::Eraser);
+        assert_eq!(input.previous_paint_tool(), PaintTool::Eraser.into());
         input.select_tool_for_key(KeyCode::KeyT);
-        assert_eq!(input.tool(), EditorTool::Eraser);
+        assert_eq!(input.tool(), PaintTool::Eraser.into());
     }
 
     #[test]

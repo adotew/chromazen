@@ -980,7 +980,7 @@ impl GuiLayer {
         const TOOL_COUNT: usize = 3;
         const VERTICAL_PADDING: f32 = 6.0;
 
-        let tools = [EditorTool::Brush, EditorTool::Eraser, EditorTool::Smudge];
+        let tools = [PaintTool::Brush, PaintTool::Eraser, PaintTool::Smudge];
         let button_count = TOOL_COUNT + 2;
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(
@@ -1005,7 +1005,8 @@ impl GuiLayer {
         );
 
         let mut selected_tool = None;
-        for (index, tool) in tools.into_iter().enumerate() {
+        for (index, paint_tool) in tools.into_iter().enumerate() {
+            let tool = EditorTool::from(paint_tool);
             let tool_rect = egui::Rect::from_min_size(
                 egui::pos2(body.left(), body.top() + index as f32 * TOOL_HEIGHT),
                 egui::vec2(TOOL_RAIL_WIDTH, TOOL_HEIGHT),
@@ -1018,9 +1019,6 @@ impl GuiLayer {
                 }
                 continue;
             }
-            let Some(paint_tool) = tool.paint_tool() else {
-                continue;
-            };
 
             let popup_id = egui::Popup::default_response_id(&response);
             let selected_brush = self.tool_brushes[tool_index(paint_tool)].clone();
@@ -2490,19 +2488,19 @@ fn show_tool_button(
     selected: bool,
 ) -> egui::Response {
     let (icon, label, shortcut, accent) = match tool {
-        EditorTool::Brush => (
+        EditorTool::Paint(PaintTool::Brush) => (
             egui::include_image!("../../assets/icons/paintbrush.svg"),
             "Brush",
             "B",
             egui::Color32::from_rgb(169, 186, 200),
         ),
-        EditorTool::Eraser => (
+        EditorTool::Paint(PaintTool::Eraser) => (
             egui::include_image!("../../assets/icons/eraser.svg"),
             "Eraser",
             "E",
             egui::Color32::from_rgb(213, 170, 109),
         ),
-        EditorTool::Smudge => (
+        EditorTool::Paint(PaintTool::Smudge) => (
             egui::include_image!("../../assets/icons/waves.svg"),
             "Smudge",
             "S",
