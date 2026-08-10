@@ -12,7 +12,7 @@ use winit::window::Window;
 use crate::{
     artwork::ArtworkSummary,
     config::{AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset},
-    paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings, StrokeSmoothingOptions},
+    paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings},
     renderer::{
         CanvasSizeConstraints, DEFAULT_CANVAS_SIZE, DropEdge, LayerContentBounds, LayerId,
         LayerResourceId, LayerSnapshot, LayerTransform, PaintRenderer, PaintViewSnapshot,
@@ -64,7 +64,6 @@ pub struct GuiLayer {
     pub state: EguiWinitState,
     pub renderer: EguiRenderer,
     pub brush: BrushSettings,
-    pub stroke_smoothing: StrokeSmoothingOptions,
     tool_brushes: [String; 3],
     tool_sizes: [f32; 3],
     brushes: Vec<crate::config::BrushSummary>,
@@ -272,9 +271,6 @@ impl GuiLayer {
             state,
             renderer,
             brush: brush_settings_from_config(&config.brush, brush_preset),
-            stroke_smoothing: StrokeSmoothingOptions {
-                strength: config.smoothing.strength,
-            },
             tool_brushes: [
                 brush_preset.id.clone(),
                 config.eraser_brush.clone(),
@@ -1684,7 +1680,6 @@ impl GuiLayer {
         self.brush.color = brush_color(&config.brush);
         self.brush.size = self.tool_sizes[tool_index(active_tool)]
             .clamp(*self.size_range.start(), *self.size_range.end());
-        self.stroke_smoothing.strength = config.smoothing.strength;
         self.context.request_repaint();
     }
 

@@ -32,7 +32,6 @@ pub(crate) struct AppConfig {
     pub(crate) eraser_size: f32,
     pub(crate) smudge_size: f32,
     pub(crate) brush: CurrentBrushConfig,
-    pub(crate) smoothing: SmoothingConfig,
 }
 
 impl Default for AppConfig {
@@ -45,7 +44,6 @@ impl Default for AppConfig {
             eraser_size: CurrentBrushConfig::default().size,
             smudge_size: CurrentBrushConfig::default().size,
             brush: CurrentBrushConfig::default(),
-            smoothing: SmoothingConfig::default(),
         }
     }
 }
@@ -101,29 +99,6 @@ impl AppConfig {
                     "{name} must be finite and greater than zero"
                 )));
             }
-        }
-        self.smoothing.validate()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub(crate) struct SmoothingConfig {
-    pub(crate) strength: f32,
-}
-
-impl Default for SmoothingConfig {
-    fn default() -> Self {
-        Self { strength: 0.8 }
-    }
-}
-
-impl SmoothingConfig {
-    fn validate(&self) -> Result<(), ConfigError> {
-        if !self.strength.is_finite() || self.strength <= 0.0 || self.strength > 1.0 {
-            return Err(ConfigError::new(
-                "smoothing.strength must be greater than 0 and at most 1",
-            ));
         }
         Ok(())
     }
@@ -316,7 +291,6 @@ mod tests {
         assert_eq!(config.brush.size, 425.0);
         assert_eq!(config.brush.color, CurrentBrushConfig::default().color);
         assert_eq!(config.active_brush, "charcoal");
-        assert_eq!(config.smoothing, SmoothingConfig::default());
     }
 
     #[test]
@@ -383,22 +357,6 @@ mod tests {
         let error = store.load_app_config().expect_err("future schema");
 
         assert!(error.to_string().contains("unsupported schema_version 2"));
-    }
-
-    #[test]
-    fn invalid_smoothing_strength_is_rejected() {
-        let temp = tempfile::tempdir().expect("temp directory");
-        let store = ConfigStore::from_root(temp.path());
-        for strength in [0.0, 1.5] {
-            fs::write(
-                store.config_path(),
-                format!("[smoothing]\nstrength = {strength}\n"),
-            )
-            .expect("write config");
-
-            let error = store.load_app_config().expect_err("invalid config");
-            assert!(error.to_string().contains("smoothing.strength"));
-        }
     }
 
     #[test]

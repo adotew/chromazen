@@ -7,7 +7,7 @@ use winit::{
 };
 
 use crate::{
-    paint::{BrushSettings, PaintTool, StrokePoint, StrokeSmoother, StrokeSmoothingOptions},
+    paint::{BrushSettings, PaintTool, StrokePoint, StrokeSmoother},
     platform::{PenEvent, PressureStateHandle},
     renderer::PaintRenderer,
 };
@@ -119,7 +119,6 @@ pub struct PaintInputController {
     last_point: Option<StrokePoint>,
     last_pan_pos: [f32; 2],
     smoother: StrokeSmoother,
-    smoothing_options: StrokeSmoothingOptions,
     modifiers: ModifiersState,
     tool: EditorTool,
     previous_paint_tool: PaintTool,
@@ -270,7 +269,6 @@ impl PaintInputController {
         paint: &mut PaintRenderer,
         brush: &mut BrushSettings,
         brush_size_range: std::ops::RangeInclusive<f32>,
-        smoothing_options: StrokeSmoothingOptions,
         pressure_state: &PressureStateHandle,
     ) -> bool {
         match event {
@@ -395,9 +393,7 @@ impl PaintInputController {
                     }
                     self.is_drawing = true;
                     self.last_point = Some(point);
-                    self.smoothing_options = smoothing_options;
-                    self.smoother
-                        .begin_with_strength(point, smoothing_options.strength);
+                    self.smoother.begin(point);
                     tool != PaintTool::Smudge && paint.queue_stamp(point)
                 }
                 (ElementState::Pressed, MouseButton::Middle | MouseButton::Right) => {

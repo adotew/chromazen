@@ -58,13 +58,7 @@ to create or update it atomically:
 - macOS: `~/Library/Application Support/chromazen/config.toml`
 - Windows: the user's roaming application-data directory
 
-Stroke smoothing is always enabled. Its global strength applies to every brush
-preset and is configured in `config.toml`:
-
-```toml
-[smoothing]
-strength = 0.8 # greater than 0.0, up to 1.0
-```
+Centripetal Catmull–Rom stroke smoothing is always enabled at 100% for every brush.
 
 Custom brush presets can be installed under `brushes/<id>/` in that directory:
 

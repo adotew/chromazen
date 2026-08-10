@@ -324,7 +324,6 @@ impl ApplicationHandler<AppEvent> for App {
                         paint,
                         &mut gui.brush,
                         brush_size_range,
-                        gui.stroke_smoothing,
                         &self.pressure_state,
                     );
                     if self.input.tool() != previous_tool {
