@@ -27,7 +27,7 @@ use super::{
     references::{ReferenceId, ReferenceImage},
 };
 
-const TOOL_RAIL_WIDTH: f32 = 42.0;
+const TOOL_RAIL_THICKNESS: f32 = 42.0;
 const LAYER_PANEL_WIDTH: f32 = 300.0;
 const LAYER_LIST_MAX_HEIGHT: f32 = 440.0;
 
@@ -972,40 +972,31 @@ impl GuiLayer {
     }
 
     fn show_tool_rail(&mut self, ui: &mut egui::Ui, active_tool: EditorTool) -> Option<EditorTool> {
-        const TOOL_HEIGHT: f32 = 40.0;
+        const TOOL_WIDTH: f32 = 40.0;
         const TOOL_COUNT: usize = 3;
-        const VERTICAL_PADDING: f32 = 6.0;
+        const HORIZONTAL_PADDING: f32 = 6.0;
 
         let tools = [PaintTool::Brush, PaintTool::Eraser, PaintTool::Smudge];
         let button_count = TOOL_COUNT + 2;
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(
-                TOOL_RAIL_WIDTH,
-                TOOL_HEIGHT * button_count as f32 + 2.0 * VERTICAL_PADDING,
+                TOOL_WIDTH * button_count as f32 + 2.0 * HORIZONTAL_PADDING,
+                TOOL_RAIL_THICKNESS,
             ),
             egui::Sense::hover(),
         );
-        paint_rounded_panel(
-            ui,
-            rect,
-            egui::CornerRadius {
-                nw: 0,
-                ne: 0,
-                sw: 16,
-                se: 0,
-            },
-        );
+        paint_rounded_panel(ui, rect, egui::CornerRadius::same(16));
         let body = egui::Rect::from_min_max(
-            egui::pos2(rect.left(), rect.top() + VERTICAL_PADDING),
-            egui::pos2(rect.right(), rect.bottom() - VERTICAL_PADDING),
+            egui::pos2(rect.left() + HORIZONTAL_PADDING, rect.top()),
+            egui::pos2(rect.right() - HORIZONTAL_PADDING, rect.bottom()),
         );
 
         let mut selected_tool = None;
         for (index, paint_tool) in tools.into_iter().enumerate() {
             let tool = EditorTool::from(paint_tool);
             let tool_rect = egui::Rect::from_min_size(
-                egui::pos2(body.left(), body.top() + index as f32 * TOOL_HEIGHT),
-                egui::vec2(TOOL_RAIL_WIDTH, TOOL_HEIGHT),
+                egui::pos2(body.left() + index as f32 * TOOL_WIDTH, body.top()),
+                egui::vec2(TOOL_WIDTH, TOOL_RAIL_THICKNESS),
             );
             let response = show_tool_button(ui, tool_rect, paint_tool, tool == active_tool);
             if tool != active_tool {
@@ -1020,7 +1011,7 @@ impl GuiLayer {
             let selected_brush = self.tool_brushes[tool_index(paint_tool)].clone();
             let brushes = self.brushes.clone();
             egui::Popup::menu(&response)
-                .align(egui::RectAlign::LEFT_START)
+                .align(egui::RectAlign::BOTTOM_START)
                 .width(300.0)
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| {
@@ -1050,10 +1041,10 @@ impl GuiLayer {
         }
 
         {
-            let separator_y = body.top() + TOOL_COUNT as f32 * TOOL_HEIGHT;
+            let separator_x = body.left() + TOOL_COUNT as f32 * TOOL_WIDTH;
             let layers_rect = egui::Rect::from_min_size(
-                egui::pos2(body.left(), separator_y),
-                egui::vec2(TOOL_RAIL_WIDTH, TOOL_HEIGHT),
+                egui::pos2(separator_x, body.top()),
+                egui::vec2(TOOL_WIDTH, TOOL_RAIL_THICKNESS),
             );
             let layers_response = ui
                 .interact(layers_rect, ui.id().with("Layers"), egui::Sense::click())
@@ -1075,7 +1066,7 @@ impl GuiLayer {
                 self.layers_window_open = !self.layers_window_open;
             }
 
-            let color_rect = layers_rect.translate(egui::vec2(0.0, TOOL_HEIGHT));
+            let color_rect = layers_rect.translate(egui::vec2(TOOL_WIDTH, 0.0));
             let color_response = ui
                 .interact(color_rect, ui.id().with("Color"), egui::Sense::click())
                 .on_hover_text("Color");
@@ -1291,7 +1282,7 @@ impl GuiLayer {
             }
 
             let selected_tool = egui::Area::new(egui::Id::new("tool rail"))
-                .anchor(egui::Align2::RIGHT_TOP, egui::Vec2::ZERO)
+                .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 12.0))
                 .order(egui::Order::Foreground)
                 .show(ui.ctx(), |ui| self.show_tool_rail(ui, tool))
                 .inner;
