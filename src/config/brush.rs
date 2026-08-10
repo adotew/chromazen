@@ -66,6 +66,14 @@ impl BrushPreset {
         validate_finite_at_least("spacing.minimum", self.spacing.minimum, 1.0)?;
         validate_unit("pressure.min_size", self.pressure.min_size)?;
         validate_unit("pressure.min_opacity", self.pressure.min_opacity)?;
+        validate_finite_positive(
+            "pressure.full_opacity_pressure",
+            self.pressure.full_opacity_pressure,
+        )?;
+        validate_unit(
+            "pressure.full_opacity_pressure",
+            self.pressure.full_opacity_pressure,
+        )?;
         validate_finite_positive("pressure.opacity_gamma", self.pressure.opacity_gamma)?;
         validate_stamp_path(&self.stamp)
     }
@@ -110,6 +118,7 @@ impl Default for SpacingConfig {
 pub(crate) struct PressureConfig {
     pub(crate) min_size: f32,
     pub(crate) min_opacity: f32,
+    pub(crate) full_opacity_pressure: f32,
     pub(crate) opacity_gamma: f32,
 }
 
@@ -118,6 +127,7 @@ impl Default for PressureConfig {
         Self {
             min_size: 0.45,
             min_opacity: 0.08,
+            full_opacity_pressure: 0.8,
             opacity_gamma: 1.35,
         }
     }
@@ -156,6 +166,7 @@ impl LoadedBrushPreset {
                 pressure: PressureConfig {
                     min_size: 0.25,
                     min_opacity: 0.01,
+                    full_opacity_pressure: 0.8,
                     opacity_gamma: 2.4,
                 },
                 ..BrushPreset::default()

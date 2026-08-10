@@ -1658,6 +1658,7 @@ impl GuiLayer {
         self.brush.pressure = PressureSettings {
             min_size: preset.pressure.min_size,
             min_opacity: preset.pressure.min_opacity,
+            full_opacity_pressure: preset.pressure.full_opacity_pressure,
             opacity_gamma: preset.pressure.opacity_gamma,
         };
         self.brush.spacing = BrushSpacing {
@@ -2714,6 +2715,7 @@ fn brush_settings_from_config(
         pressure: PressureSettings {
             min_size: preset.pressure.min_size,
             min_opacity: preset.pressure.min_opacity,
+            full_opacity_pressure: preset.pressure.full_opacity_pressure,
             opacity_gamma: preset.pressure.opacity_gamma,
         },
         spacing: BrushSpacing {

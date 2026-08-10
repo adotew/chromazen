@@ -394,6 +394,7 @@ mod tests {
         assert_eq!(sketch.preset.spacing.ratio, 0.08);
         assert_eq!(sketch.preset.pressure.min_size, 0.25);
         assert_eq!(sketch.preset.pressure.min_opacity, 0.01);
+        assert_eq!(sketch.preset.pressure.full_opacity_pressure, 0.8);
         assert_eq!(sketch.preset.pressure.opacity_gamma, 2.4);
         assert!(charcoal.stamp_image.is_none());
         assert!(sketch.stamp_image.is_none());
@@ -407,6 +408,18 @@ mod tests {
         let error = preset.validate().expect_err("subpixel spacing");
 
         assert!(error.to_string().contains("spacing.minimum"));
+    }
+
+    #[test]
+    fn full_opacity_pressure_must_be_positive_and_at_most_one() {
+        for pressure in [0.0, 1.1] {
+            let mut preset = brush::BrushPreset::default();
+            preset.pressure.full_opacity_pressure = pressure;
+
+            let error = preset.validate().expect_err("invalid pressure threshold");
+
+            assert!(error.to_string().contains("pressure.full_opacity_pressure"));
+        }
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use image::{Rgba, RgbaImage, imageops::FilterType};
+use image::{imageops::FilterType, Rgba, RgbaImage};
 
 use crate::config::BrushSummary;
 
@@ -29,9 +29,10 @@ pub(super) fn generate(brush: &BrushSummary) -> Result<egui::ColorImage, String>
         let pressure_scale =
             brush.preview.pressure.min_size + (1.0 - brush.preview.pressure.min_size) * pressure;
         let radius = MAX_RADIUS * pressure_scale;
+        let opacity_pressure = (pressure / brush.preview.pressure.full_opacity_pressure).min(1.0);
         let opacity = brush.preview.pressure.min_opacity
             + (1.0 - brush.preview.pressure.min_opacity)
-                * pressure.powf(brush.preview.pressure.opacity_gamma);
+                * opacity_pressure.powf(brush.preview.pressure.opacity_gamma);
         let y = HEIGHT as f32 * 0.5 + (t * std::f32::consts::TAU).sin() * 3.0;
         paint_stamp(&mut preview, &stamp, aspect, x, y, radius, opacity);
         x += (radius * brush.preview.spacing.ratio)

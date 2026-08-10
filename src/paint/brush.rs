@@ -50,6 +50,7 @@ impl BrushSettings {
 pub(crate) struct PressureSettings {
     pub(crate) min_size: f32,
     pub(crate) min_opacity: f32,
+    pub(crate) full_opacity_pressure: f32,
     pub(crate) opacity_gamma: f32,
 }
 
@@ -58,6 +59,7 @@ impl Default for PressureSettings {
         Self {
             min_size: 0.45,
             min_opacity: 0.08,
+            full_opacity_pressure: 0.8,
             opacity_gamma: 1.35,
         }
     }
@@ -93,7 +95,7 @@ fn pressure_radius(brush_size: f32, pressure: f32, settings: PressureSettings) -
 }
 
 fn pressure_opacity(pressure: f32, settings: PressureSettings) -> f32 {
-    let pressure = pressure.clamp(0.0, 1.0);
+    let pressure = (pressure.clamp(0.0, 1.0) / settings.full_opacity_pressure).min(1.0);
     settings.min_opacity + (1.0 - settings.min_opacity) * pressure.powf(settings.opacity_gamma)
 }
 
@@ -130,10 +132,12 @@ mod tests {
         let settings = PressureSettings {
             min_size: 0.2,
             min_opacity: 0.4,
+            full_opacity_pressure: 0.8,
             opacity_gamma: 2.0,
         };
 
         assert_eq!(pressure_radius(100.0, 0.0, settings), 10.0);
         assert_eq!(pressure_opacity(0.0, settings), 0.4);
+        assert_eq!(pressure_opacity(0.8, settings), 1.0);
     }
 }

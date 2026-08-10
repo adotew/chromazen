@@ -71,7 +71,8 @@ brushes/pencil/
 Set `active_brush = "pencil"` in `config.toml` for the Brush tool. The Eraser
 and Smudge selections are stored as `eraser_brush` and `smudge_brush`. The
 preset's `stamp` path is resolved relative to `brush.toml`; invalid presets
-fall back to the bundled charcoal brush.
+fall back to the bundled charcoal brush. `pressure.full_opacity_pressure`
+defaults to `0.8`; lower values reach full opacity with less pen pressure.
 
 On macOS and Windows, Photoshop `.abr` files can be imported from
 **File → Import Photoshop Brushes…**. Importing is a one-time conversion into
