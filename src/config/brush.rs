@@ -11,8 +11,11 @@ use super::ConfigError;
 
 pub(crate) const DEFAULT_BRUSH_ID: &str = "charcoal";
 pub(crate) const SKETCH_ID: &str = "sketch";
+pub(crate) const ROUNDED_ID: &str = "rounded";
+pub(crate) const RECTANGLE_ID: &str = "rectangle";
 const BRUSH_SCHEMA_VERSION: u32 = 1;
 const MAX_STAMP_DIMENSION: u32 = 4096;
+const MIN_BRUSH_SPACING: f32 = 0.25;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -63,7 +66,7 @@ impl BrushPreset {
             ));
         }
         validate_finite_non_negative("spacing.ratio", self.spacing.ratio)?;
-        validate_finite_at_least("spacing.minimum", self.spacing.minimum, 1.0)?;
+        validate_finite_at_least("spacing.minimum", self.spacing.minimum, MIN_BRUSH_SPACING)?;
         validate_unit("pressure.min_size", self.pressure.min_size)?;
         validate_unit("pressure.min_opacity", self.pressure.min_opacity)?;
         validate_finite_positive(
@@ -174,6 +177,45 @@ impl LoadedBrushPreset {
             stamp_image: None,
         }
     }
+
+    pub(crate) fn bundled_rounded() -> Self {
+        Self::bundled_stamp(ROUNDED_ID, "Rounded", 60.0, 0.001)
+    }
+
+    pub(crate) fn bundled_rectangle() -> Self {
+        Self::bundled_stamp(RECTANGLE_ID, "Rectangle", 80.0, 0.001)
+    }
+
+    fn bundled_stamp(id: &str, name: &str, default_size: f32, spacing: f32) -> Self {
+        Self {
+            id: id.to_owned(),
+            preset: BrushPreset {
+                name: name.to_owned(),
+                stamp: format!("{id}.png"),
+                size: SizeConfig {
+                    default: default_size,
+                    ..SizeConfig::default()
+                },
+                spacing: SpacingConfig {
+                    ratio: spacing,
+                    minimum: 0.5,
+                },
+                ..BrushPreset::default()
+            },
+            stamp_image: Some(load_bundled_stamp(id).expect("bundled brush stamp is valid")),
+        }
+    }
+}
+
+fn load_bundled_stamp(id: &str) -> Result<RgbaImage, ConfigError> {
+    let bytes: &[u8] = match id {
+        ROUNDED_ID => include_bytes!("../../assets/rounded.png"),
+        RECTANGLE_ID => include_bytes!("../../assets/rectangle.png"),
+        _ => include_bytes!("../../assets/charcoal.png"),
+    };
+    image::load_from_memory(bytes)
+        .map(image::DynamicImage::into_rgba8)
+        .map_err(|error| ConfigError::new(format!("failed to decode bundled brush: {error}")))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -209,9 +251,7 @@ impl BrushSummary {
         if let Some(path) = &self.preview.stamp_path {
             return decode_stamp(path);
         }
-        image::load_from_memory(include_bytes!("../../assets/charcoal.png"))
-            .map(image::DynamicImage::into_rgba8)
-            .map_err(|error| ConfigError::new(format!("failed to decode bundled brush: {error}")))
+        load_bundled_stamp(&self.id)
     }
 }
 
@@ -228,6 +268,16 @@ impl Default for BrushCatalog {
                 BrushSummary::new(
                     SKETCH_ID.to_owned(),
                     LoadedBrushPreset::bundled_sketch().preset,
+                    None,
+                ),
+                BrushSummary::new(
+                    ROUNDED_ID.to_owned(),
+                    LoadedBrushPreset::bundled_rounded().preset,
+                    None,
+                ),
+                BrushSummary::new(
+                    RECTANGLE_ID.to_owned(),
+                    LoadedBrushPreset::bundled_rectangle().preset,
                     None,
                 ),
             ],

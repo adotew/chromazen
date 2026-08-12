@@ -11,7 +11,7 @@ Implemented:
 - full-resolution flattened PNG export
 - custom canvas dimensions up to the renderer's safe texture and pixel limits
 - per-artwork reference images arranged in the workspace outside or over the canvas
-- bundled charcoal brush using the original stamp PNG
+- bundled charcoal, sketch, rounded, and rectangle presets
 - pressure-sensitive brush size/opacity on macOS via AppKit events, Windows
   via Windows Ink pointer events, and Linux Wayland via the tablet-v2 protocol
 - Linux X11, WinTab-only tablet configurations, and mouse fallback input remain

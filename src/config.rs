@@ -6,7 +6,9 @@ use std::{
 };
 
 use atomic_write_file::AtomicWriteFile;
-use brush::{DEFAULT_BRUSH_ID, SKETCH_ID, discover_user_brushes, load_user_brush};
+use brush::{
+    DEFAULT_BRUSH_ID, RECTANGLE_ID, ROUNDED_ID, SKETCH_ID, discover_user_brushes, load_user_brush,
+};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
@@ -175,6 +177,8 @@ impl ConfigStore {
             match id {
                 DEFAULT_BRUSH_ID => return Ok(LoadedBrushPreset::bundled_charcoal()),
                 SKETCH_ID => return Ok(LoadedBrushPreset::bundled_sketch()),
+                ROUNDED_ID => return Ok(LoadedBrushPreset::bundled_rounded()),
+                RECTANGLE_ID => return Ok(LoadedBrushPreset::bundled_rectangle()),
                 _ => {}
             }
         }
@@ -386,6 +390,8 @@ mod tests {
 
         let charcoal = store.load_brush("charcoal").expect("charcoal brush");
         let sketch = store.load_brush("sketch").expect("sketch brush");
+        let rounded = store.load_brush("rounded").expect("rounded brush");
+        let rectangle = store.load_brush("rectangle").expect("rectangle brush");
 
         assert_eq!(charcoal.id, "charcoal");
         assert_eq!(charcoal.preset.spacing.ratio, 0.03);
@@ -396,17 +402,42 @@ mod tests {
         assert_eq!(sketch.preset.pressure.min_opacity, 0.01);
         assert_eq!(sketch.preset.pressure.full_opacity_pressure, 0.8);
         assert_eq!(sketch.preset.pressure.opacity_gamma, 2.4);
+        assert_eq!(rounded.preset.spacing.minimum, 0.5);
+        assert_eq!(rectangle.preset.spacing.minimum, 0.5);
+        assert_eq!(
+            rounded.stamp_image.as_ref().unwrap().dimensions(),
+            (128, 128)
+        );
+        assert_eq!(
+            rectangle.stamp_image.as_ref().unwrap().dimensions(),
+            (192, 96)
+        );
+        assert_eq!(rounded.stamp_image.as_ref().unwrap().get_pixel(0, 0)[3], 0);
+        assert_eq!(
+            rectangle.stamp_image.as_ref().unwrap().get_pixel(0, 0)[3],
+            255
+        );
         assert!(charcoal.stamp_image.is_none());
         assert!(sketch.stamp_image.is_none());
+        assert_eq!(
+            store
+                .discover_brushes()
+                .brushes
+                .into_iter()
+                .map(|brush| brush.id)
+                .collect::<Vec<_>>(),
+            ["charcoal", "sketch", "rounded", "rectangle"]
+        );
     }
 
     #[test]
-    fn subpixel_minimum_brush_spacing_is_rejected() {
+    fn subpixel_minimum_brush_spacing_has_a_safe_floor() {
         let mut preset = brush::BrushPreset::default();
         preset.spacing.minimum = 0.5;
+        preset.validate().expect("half-pixel spacing");
 
-        let error = preset.validate().expect_err("subpixel spacing");
-
+        preset.spacing.minimum = 0.24;
+        let error = preset.validate().expect_err("spacing below safe floor");
         assert!(error.to_string().contains("spacing.minimum"));
     }
 
