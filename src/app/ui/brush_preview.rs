@@ -1,4 +1,4 @@
-use image::{imageops::FilterType, Rgba, RgbaImage};
+use image::{Rgba, RgbaImage, imageops::FilterType};
 
 use crate::config::BrushSummary;
 

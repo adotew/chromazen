@@ -2129,37 +2129,45 @@ fn show_save_blocker(
         });
 }
 
+/// Allocates a full-width row and paints the selection chrome shared by the
+/// brush and layer rows. Callers paint their own contents on top.
+fn selectable_row(
+    ui: &mut egui::Ui,
+    height: f32,
+    sense: egui::Sense,
+    selected: bool,
+) -> (egui::Rect, egui::Response) {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), sense);
+    let dark_mode = ui.visuals().dark_mode;
+    let fill = if selected {
+        if dark_mode {
+            egui::Color32::from_rgb(34, 39, 46)
+        } else {
+            egui::Color32::from_gray(224)
+        }
+    } else if response.hovered() {
+        if dark_mode {
+            egui::Color32::from_rgb(24, 28, 34)
+        } else {
+            egui::Color32::from_gray(240)
+        }
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    ui.painter().rect_filled(rect, 12, fill);
+    (rect, response)
+}
+
 fn show_brush_row(
     ui: &mut egui::Ui,
     name: &str,
     texture_id: Option<egui::TextureId>,
     selected: bool,
 ) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 58.0), egui::Sense::click());
+    let (rect, response) = selectable_row(ui, 58.0, egui::Sense::click(), selected);
     let dark_mode = ui.visuals().dark_mode;
-    let fill = if selected {
-        egui::Color32::from_gray(if dark_mode { 58 } else { 224 })
-    } else if response.hovered() {
-        egui::Color32::from_gray(if dark_mode { 42 } else { 240 })
-    } else {
-        egui::Color32::TRANSPARENT
-    };
-    let stroke = selected.then(|| {
-        egui::Stroke::new(
-            1.0_f32,
-            egui::Color32::from_gray(if dark_mode { 110 } else { 155 }),
-        )
-    });
     let visuals = ui.style().interact(&response);
     let painter = ui.painter();
-    painter.rect(
-        rect,
-        10,
-        fill,
-        stroke.unwrap_or(egui::Stroke::NONE),
-        egui::StrokeKind::Inside,
-    );
 
     painter
         .with_clip_rect(egui::Rect::from_min_max(
@@ -2230,7 +2238,7 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
     } else {
         egui::Sense::click()
     };
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 60.0), sense);
+    let (rect, response) = selectable_row(ui, 60.0, sense, selected);
     if let Some(layer_id) = drag_id {
         response.dnd_set_drag_payload(layer_id);
     }
@@ -2257,23 +2265,7 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
     });
     let visuals = ui.style().interact(&response);
     let dark_mode = ui.visuals().dark_mode;
-    let fill = if selected {
-        if dark_mode {
-            egui::Color32::from_rgb(34, 39, 46)
-        } else {
-            egui::Color32::from_gray(224)
-        }
-    } else if response.hovered() {
-        if dark_mode {
-            egui::Color32::from_rgb(24, 28, 34)
-        } else {
-            egui::Color32::from_gray(240)
-        }
-    } else {
-        egui::Color32::TRANSPARENT
-    };
     let painter = ui.painter();
-    painter.rect_filled(rect, 12, fill);
 
     if let (Some(visible), Some(visibility)) = (visible, &visibility) {
         let icon = if visible {
