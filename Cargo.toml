@@ -25,7 +25,11 @@ wasm-bindgen-futures = "0.4.56"
 web-sys = { version = "0.3.83", features = [
   "Document",
   "Element",
+  "Event",
+  "EventTarget",
   "HtmlCanvasElement",
+  "MouseEvent",
+  "PointerEvent",
   "Window",
 ] }
 

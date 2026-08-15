@@ -23,7 +23,24 @@ use crate::{
 };
 
 enum WebEvent {
-    RendererReady(Result<PaintRenderer, String>),
+    RendererReady(Box<Result<PaintRenderer, String>>),
+    PenPointer(PenPointerEvent),
+}
+
+#[derive(Clone, Copy)]
+struct PenPointerEvent {
+    phase: PenPhase,
+    pointer_id: i32,
+    pressure: f32,
+    position: [f32; 2],
+}
+
+#[derive(Clone, Copy)]
+enum PenPhase {
+    Started,
+    Moved,
+    Ended,
+    Cancelled,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -182,6 +199,7 @@ struct WebInput {
     last_point: Option<StrokePoint>,
     smoother: StrokeSmoother,
     active_touch: Option<u64>,
+    active_pen: Option<i32>,
 }
 
 impl WebInput {
@@ -249,6 +267,7 @@ impl WebInput {
         let changed = self.end_stroke(paint, brush) || self.panning;
         self.panning = false;
         self.active_touch = None;
+        self.active_pen = None;
         changed
     }
 }
@@ -265,6 +284,7 @@ struct WebApp {
     modifiers: ModifiersState,
     initializing: bool,
     pending_surface_size: Option<PhysicalSize<u32>>,
+    pen_event_bridges: Vec<Closure<dyn FnMut(web_sys::PointerEvent)>>,
 }
 
 impl WebApp {
@@ -282,6 +302,94 @@ impl WebApp {
             modifiers: ModifiersState::empty(),
             initializing: false,
             pending_surface_size: None,
+            pen_event_bridges: Vec::new(),
+        }
+    }
+
+    fn install_pen_event_bridges(
+        &mut self,
+        canvas: &web_sys::HtmlCanvasElement,
+    ) -> Result<(), JsValue> {
+        for (event_name, phase) in [
+            ("pointerdown", PenPhase::Started),
+            ("pointermove", PenPhase::Moved),
+            ("pointerup", PenPhase::Ended),
+            ("pointercancel", PenPhase::Cancelled),
+        ] {
+            let event_canvas = canvas.clone();
+            let proxy = self.proxy.clone();
+            let bridge = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
+                move |event: web_sys::PointerEvent| {
+                    if event.pointer_type() != "pen" {
+                        return;
+                    }
+
+                    event.prevent_default();
+                    event.stop_immediate_propagation();
+
+                    if event_name == "pointerdown" {
+                        let _ = event_canvas.set_pointer_capture(event.pointer_id());
+                    }
+                    let scale = web_sys::window().map_or(1.0, |window| window.device_pixel_ratio());
+                    let _ = proxy.send_event(WebEvent::PenPointer(PenPointerEvent {
+                        phase,
+                        pointer_id: event.pointer_id(),
+                        pressure: event.pressure().clamp(0.0, 1.0),
+                        position: [
+                            event.offset_x() as f32 * scale as f32,
+                            event.offset_y() as f32 * scale as f32,
+                        ],
+                    }));
+                    if matches!(phase, PenPhase::Ended | PenPhase::Cancelled) {
+                        let _ = event_canvas.release_pointer_capture(event.pointer_id());
+                    }
+                },
+            );
+            canvas.add_event_listener_with_callback_and_bool(
+                event_name,
+                bridge.as_ref().unchecked_ref(),
+                true,
+            )?;
+            self.pen_event_bridges.push(bridge);
+        }
+        Ok(())
+    }
+
+    fn handle_pen_pointer(&mut self, event: PenPointerEvent) -> bool {
+        let Some(paint) = self.paint.as_mut() else {
+            return false;
+        };
+        self.input.cursor = event.position;
+        self.input.cursor_inside = true;
+        let pressure = event.pressure.clamp(0.01, 1.0);
+        match event.phase {
+            PenPhase::Started
+                if self.input.active_pen.is_none()
+                    && self.input.active_touch.is_none()
+                    && !self.input.drawing =>
+            {
+                // The browser toolbar is drawn inside the canvas rather than as DOM. Keep Pencil
+                // presses in its top area from starting a hidden stroke behind those controls.
+                let toolbar_guard = web_sys::window()
+                    .map_or(96.0, |window| 96.0 * window.device_pixel_ratio())
+                    as f32;
+                if event.position[1] <= toolbar_guard {
+                    return false;
+                }
+                self.input.active_pen = Some(event.pointer_id);
+                self.input
+                    .begin_stroke(paint, self.tool, self.brush, event.position, pressure)
+            }
+            PenPhase::Moved if self.input.active_pen == Some(event.pointer_id) => self
+                .input
+                .move_stroke(paint, self.brush, event.position, pressure),
+            PenPhase::Ended | PenPhase::Cancelled
+                if self.input.active_pen == Some(event.pointer_id) =>
+            {
+                self.input.active_pen = None;
+                self.input.end_stroke(paint, self.brush)
+            }
+            _ => false,
         }
     }
 
@@ -571,6 +679,13 @@ impl ApplicationHandler<WebEvent> for WebApp {
             set_status("Could not find the #chromazen-canvas element.", true);
             return;
         };
+        if let Err(error) = self.install_pen_event_bridges(&canvas) {
+            set_status(
+                &format!("Could not enable Apple Pencil input: {error:?}"),
+                true,
+            );
+            return;
+        }
         let attributes = WindowAttributes::default()
             .with_title("Chromazen")
             .with_canvas(Some(canvas))
@@ -592,34 +707,45 @@ impl ApplicationHandler<WebEvent> for WebApp {
         let preset = self.brush_kind.load();
         wasm_bindgen_futures::spawn_local(async move {
             let renderer = PaintRenderer::new(window, &preset).await;
-            let _ = proxy.send_event(WebEvent::RendererReady(renderer));
+            let _ = proxy.send_event(WebEvent::RendererReady(Box::new(renderer)));
         });
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: WebEvent) {
-        self.initializing = false;
         match event {
-            WebEvent::RendererReady(Ok(mut paint)) => {
-                let Some(window) = self.window.as_ref() else {
-                    return;
-                };
-                // The first ResizeObserver notification can arrive while WebGPU is still
-                // initializing. Apply the remembered size so the surface does not stay at
-                // winit's temporary 1x1 backing size.
-                if let Some(size) = self.pending_surface_size
-                    && size.width > 0
-                    && size.height > 0
-                {
-                    paint.resize(size);
-                    paint.fit_to_screen();
+            WebEvent::RendererReady(result) => {
+                self.initializing = false;
+                match *result {
+                    Ok(mut paint) => {
+                        let Some(window) = self.window.as_ref() else {
+                            return;
+                        };
+                        // The first ResizeObserver notification can arrive while WebGPU is still
+                        // initializing. Apply the remembered size so the surface does not stay at
+                        // winit's temporary 1x1 backing size.
+                        if let Some(size) = self.pending_surface_size
+                            && size.width > 0
+                            && size.height > 0
+                        {
+                            paint.resize(size);
+                            paint.fit_to_screen();
+                        }
+                        self.gui = Some(WebGui::new(window, &paint));
+                        self.paint = Some(paint);
+                        set_status("", false);
+                        window.request_redraw();
+                    }
+                    Err(error) => {
+                        set_status(&format!("WebGPU initialization failed: {error}"), true);
+                    }
                 }
-                self.gui = Some(WebGui::new(window, &paint));
-                self.paint = Some(paint);
-                set_status("", false);
-                window.request_redraw();
             }
-            WebEvent::RendererReady(Err(error)) => {
-                set_status(&format!("WebGPU initialization failed: {error}"), true);
+            WebEvent::PenPointer(event) => {
+                if self.handle_pen_pointer(event)
+                    && let Some(window) = self.window.as_ref()
+                {
+                    window.request_redraw();
+                }
             }
         }
     }
