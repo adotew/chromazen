@@ -1,25 +1,32 @@
 use std::{
     error::Error,
-    fmt, fs,
-    io::Write,
+    fmt,
     path::{Path, PathBuf},
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 use atomic_write_file::AtomicWriteFile;
 use brush::{
     DEFAULT_BRUSH_ID, RECTANGLE_ID, ROUNDED_ID, SKETCH_ID, discover_user_brushes, load_user_brush,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
+use std::{fs, io::Write};
 
 use crate::paint::PaintTool;
+#[cfg(not(target_arch = "wasm32"))]
 mod abr;
 mod brush;
+#[cfg(not(target_arch = "wasm32"))]
 mod brush_import;
 
 pub(crate) use brush::{BrushCatalog, BrushSummary, LoadedBrushPreset};
 
+#[cfg(not(target_arch = "wasm32"))]
 const APP_NAME: &str = "Chromazen";
+#[cfg(not(target_arch = "wasm32"))]
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 
@@ -140,10 +147,12 @@ impl CurrentBrushConfig {
 }
 
 #[derive(Clone, Debug)]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct ConfigStore {
     root: PathBuf,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ConfigStore {
     pub(crate) fn discover() -> Result<Self, ConfigError> {
         let project_dirs = ProjectDirs::from("", "", APP_NAME).ok_or_else(|| {
@@ -227,6 +236,7 @@ impl ConfigStore {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), ConfigError> {
     let mut file = AtomicWriteFile::options()
         .open(path)

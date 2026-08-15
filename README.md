@@ -50,6 +50,26 @@ Run:
 cargo run --release
 ```
 
+## Browser build (WebGPU)
+
+The browser build opens directly into a temporary 2048 × 2048 canvas. Painting,
+eraser, smudge, the four bundled brushes, color and size controls, undo/redo,
+zoom, and pan are available. Browser pen events use pressure when the browser and
+device expose it. Artwork persistence, gallery, imports, references, and export
+are intentionally disabled in this build.
+
+Install the matching `wasm-bindgen` command once, then build and serve:
+
+```bash
+cargo install wasm-bindgen-cli --version 0.2.126 --locked
+./scripts/build-web.sh
+python3 -m http.server 8080 --directory web
+```
+
+Open <http://localhost:8080> in a WebGPU-capable browser. Do not open
+`web/index.html` directly from the filesystem; the generated WASM module must be
+served over HTTP.
+
 Settings are loaded from `config.toml` in the platform configuration directory.
 On macOS and Windows, use **Settings → Save Settings** in the native menu bar
 to create or update it atomically:

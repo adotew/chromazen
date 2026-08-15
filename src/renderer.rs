@@ -36,7 +36,12 @@ use crate::{
     paint::{BrushSpacing, PaintTool, StrokePoint},
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const DEFAULT_CANVAS_SIZE: [u32; 2] = [4000, 4000];
+// Keep the initial browser allocation modest. The renderer maintains several full-size GPU
+// textures for layers, smudging, previews, and undo history.
+#[cfg(target_arch = "wasm32")]
+pub(crate) const DEFAULT_CANVAS_SIZE: [u32; 2] = [2048, 2048];
 const MAX_CANVAS_DIMENSION: u32 = 8192;
 // Caps the baseline layer, history, smudge, and mask allocations to a safe working set.
 const MAX_CANVAS_PIXELS: u64 = 32 * 1024 * 1024;
@@ -290,6 +295,10 @@ impl PaintRenderer {
         brush_preset: &LoadedBrushPreset,
     ) -> Result<Self, String> {
         let gpu = GpuContext::new(window).await?;
+        #[cfg(target_arch = "wasm32")]
+        gpu.device().on_uncaptured_error(Arc::new(|error| {
+            crate::web_app::report_gpu_error(error);
+        }));
         let device = gpu.device();
         let queue = gpu.queue();
         let surface_format = gpu.surface_format();

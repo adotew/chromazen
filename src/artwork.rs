@@ -1,11 +1,15 @@
 mod format;
+#[cfg(not(target_arch = "wasm32"))]
 mod raster;
+#[cfg(not(target_arch = "wasm32"))]
 mod store;
 
 pub(crate) use format::{
     DOCUMENT_SCHEMA_VERSION, DocumentManifest, LayerManifest, ReferenceManifest,
 };
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use raster::{CompositeLayer, encode_png, flatten_premultiplied_layers};
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use store::{
     ArtworkId, ArtworkStore, ArtworkSummary, LayerSource, LayerWrite, ReferenceSource,
     ReferenceWrite, RevisionWrite,

@@ -86,4 +86,5 @@ fn fs(in: VertexOut) -> @location(0) vec4f {
     return vec4f(0.04, 0.04, 0.04, 0.8);
   }
   discard;
+  return vec4f(0.0);
 }
