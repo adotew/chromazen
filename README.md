@@ -87,6 +87,7 @@ Chromazen's pressure and spacing defaults.
 
 Controls:
 
+- Press `?` or choose **Help → Keyboard Shortcuts** to view the shortcut reference
 - Left drag: use the selected tool on the selected paint layer
 - Pressure-sensitive pens are supported on macOS, Windows Ink, and Linux
   Wayland. Enable Windows Ink in the tablet driver on Windows. Linux X11 and

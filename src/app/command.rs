@@ -78,6 +78,7 @@ pub(super) enum AppCommand {
     ReloadConfiguration,
     ResetBrush,
     OpenConfigDirectory,
+    ShowShortcuts,
     NewArtwork,
     CreateArtwork {
         width: u32,

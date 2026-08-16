@@ -879,6 +879,11 @@ impl App {
                 AppCommand::OpenConfigDirectory => {
                     self.process_settings_commands(vec![SettingsCommand::OpenConfigDirectory]);
                 }
+                AppCommand::ShowShortcuts => {
+                    if let Some(gui) = self.gui.as_mut() {
+                        gui.open_shortcuts_dialog();
+                    }
+                }
                 AppCommand::NewArtwork => {
                     if !self.navigation_pending()
                         && let Some(gui) = self.gui.as_mut()

@@ -33,6 +33,7 @@ mod imp {
     const RELOAD_CONFIGURATION_ID: &str = "chromazen.settings.reload";
     const RESET_BRUSH_ID: &str = "chromazen.settings.reset-brush";
     const OPEN_CONFIG_DIRECTORY_ID: &str = "chromazen.settings.open-config-directory";
+    const SHOW_SHORTCUTS_ID: &str = "chromazen.help.shortcuts";
 
     pub(crate) struct NativeMenu {
         menu: Menu,
@@ -67,6 +68,8 @@ mod imp {
                 .map_err(|error| format!("failed to add canvas menu: {error}"))?;
             menu.append(&settings_menu()?)
                 .map_err(|error| format!("failed to add settings menu: {error}"))?;
+            menu.append(&help_menu()?)
+                .map_err(|error| format!("failed to add help menu: {error}"))?;
 
             Ok(Self {
                 menu,
@@ -306,6 +309,17 @@ mod imp {
         .map_err(|error| format!("failed to build settings menu: {error}"))
     }
 
+    fn help_menu() -> Result<Submenu, String> {
+        let shortcuts = MenuItem::with_id(
+            SHOW_SHORTCUTS_ID,
+            "Keyboard Shortcuts",
+            true,
+            Some(Accelerator::new(Some(Modifiers::SHIFT), Code::Slash)),
+        );
+        Submenu::with_items("Help", true, &[&shortcuts])
+            .map_err(|error| format!("failed to build help menu: {error}"))
+    }
+
     #[cfg(target_os = "macos")]
     fn application_menu() -> Result<Submenu, String> {
         let about = PredefinedMenuItem::about(
@@ -369,6 +383,7 @@ mod imp {
             RELOAD_CONFIGURATION_ID => Some(AppCommand::ReloadConfiguration),
             RESET_BRUSH_ID => Some(AppCommand::ResetBrush),
             OPEN_CONFIG_DIRECTORY_ID => Some(AppCommand::OpenConfigDirectory),
+            SHOW_SHORTCUTS_ID => Some(AppCommand::ShowShortcuts),
             _ => None,
         }
     }
@@ -454,6 +469,10 @@ mod imp {
             assert_eq!(
                 command_for_id(&MenuId::new(OPEN_CONFIG_DIRECTORY_ID)),
                 Some(AppCommand::OpenConfigDirectory)
+            );
+            assert_eq!(
+                command_for_id(&MenuId::new(SHOW_SHORTCUTS_ID)),
+                Some(AppCommand::ShowShortcuts)
             );
             assert_eq!(command_for_id(&MenuId::new("unknown")), None);
         }

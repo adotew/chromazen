@@ -31,6 +31,35 @@ const TOOL_RAIL_THICKNESS: f32 = 42.0;
 const LAYER_PANEL_WIDTH: f32 = 300.0;
 const LAYER_LIST_MAX_HEIGHT: f32 = 440.0;
 
+#[cfg(target_os = "macos")]
+const SAVE_SHORTCUT: &str = "⌘-S";
+#[cfg(not(target_os = "macos"))]
+const SAVE_SHORTCUT: &str = "Ctrl-S";
+#[cfg(target_os = "macos")]
+const EXPORT_SHORTCUT: &str = "⌘-Shift-E";
+#[cfg(not(target_os = "macos"))]
+const EXPORT_SHORTCUT: &str = "Ctrl-Shift-E";
+#[cfg(target_os = "macos")]
+const UNDO_SHORTCUT: &str = "⌘-Z";
+#[cfg(not(target_os = "macos"))]
+const UNDO_SHORTCUT: &str = "Ctrl-Z";
+#[cfg(target_os = "macos")]
+const REDO_SHORTCUT: &str = "⌘-Shift-Z";
+#[cfg(not(target_os = "macos"))]
+const REDO_SHORTCUT: &str = "Ctrl-Y / Ctrl-Shift-Z";
+#[cfg(target_os = "macos")]
+const ROTATE_SHORTCUT: &str = "⌘-Option-← / →";
+#[cfg(not(target_os = "macos"))]
+const ROTATE_SHORTCUT: &str = "Ctrl-Alt-← / →";
+#[cfg(target_os = "macos")]
+const FLIP_SHORTCUT: &str = "⌘-Option-H / V";
+#[cfg(not(target_os = "macos"))]
+const FLIP_SHORTCUT: &str = "Ctrl-Alt-H / V";
+#[cfg(target_os = "macos")]
+const CROP_SHORTCUT: &str = "⌘-Option-C";
+#[cfg(not(target_os = "macos"))]
+const CROP_SHORTCUT: &str = "Ctrl-Alt-C";
+
 #[derive(Clone, Copy)]
 pub(crate) struct BrushResizeLabel {
     pub(crate) center: [f32; 2],
@@ -71,6 +100,7 @@ pub struct GuiLayer {
     default_size: f32,
     commands: Vec<AppCommand>,
     message_dialog: Option<MessageDialog>,
+    shortcuts_dialog_open: bool,
     background_edit_start: Option<[u8; 3]>,
     layer_name_edit: Option<LayerNameEdit>,
     layer_opacity_edit: Option<LayerOpacityEdit>,
@@ -286,6 +316,7 @@ impl GuiLayer {
             default_size: preset.size.default,
             commands: Vec::new(),
             message_dialog,
+            shortcuts_dialog_open: false,
             background_edit_start: None,
             layer_name_edit: None,
             layer_opacity_edit: None,
@@ -1202,6 +1233,13 @@ impl GuiLayer {
         let context = self.context.clone();
 
         context.run_ui(raw_input, |ui| {
+            if !ui.ctx().egui_wants_keyboard_input()
+                && ui
+                    .ctx()
+                    .input(|input| input.key_pressed(egui::Key::Questionmark))
+            {
+                self.shortcuts_dialog_open = true;
+            }
             let background = background_color(layers.background_color);
             if let Some(id) = self.selected_reference
                 && !ui.ctx().egui_wants_keyboard_input()
@@ -1331,6 +1369,7 @@ impl GuiLayer {
             self.show_canvas_crop(ui.ctx(), workspace_view, workspace_rect);
             self.clear_reference_selection_on_outside_press(ui.ctx());
             self.show_message_dialog(ui.ctx());
+            self.show_shortcuts_dialog(ui.ctx());
         })
     }
 
@@ -1343,11 +1382,24 @@ impl GuiLayer {
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
         context.run_ui(raw_input, |ui| {
+            if !ui.ctx().egui_wants_keyboard_input()
+                && ui
+                    .ctx()
+                    .input(|input| input.key_pressed(egui::Key::Questionmark))
+            {
+                self.shortcuts_dialog_open = true;
+            }
             self.gallery
                 .show(ui, artworks, discovery_warning, &mut self.commands);
             self.show_new_artwork_dialog(ui.ctx());
             self.show_message_dialog(ui.ctx());
+            self.show_shortcuts_dialog(ui.ctx());
         })
+    }
+
+    pub(crate) fn open_shortcuts_dialog(&mut self) {
+        self.shortcuts_dialog_open = true;
+        self.context.request_repaint();
     }
 
     pub(crate) fn open_new_artwork_dialog(&mut self) {
@@ -1708,6 +1760,112 @@ impl GuiLayer {
             self.message_dialog = None;
         }
     }
+
+    fn show_shortcuts_dialog(&mut self, context: &egui::Context) {
+        if !self.shortcuts_dialog_open {
+            return;
+        }
+        let response = egui::Modal::new(egui::Id::new("keyboard shortcuts")).show(context, |ui| {
+            ui.set_width(700.0);
+            ui.add_space(16.0);
+            egui::Frame::NONE
+                .inner_margin(egui::Margin::symmetric(12, 0))
+                .show(ui, |ui| {
+                    ui.heading("Keyboard Shortcuts");
+                });
+            ui.add_space(16.0);
+            egui::Frame::NONE
+                .inner_margin(egui::Margin::symmetric(12, 8))
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(520.0)
+                        .show(ui, |ui| {
+                            shortcut_section(
+                                ui,
+                                "Tools",
+                                &[
+                                    ("Brush / Eraser / Smudge", "B / E / S"),
+                                    ("Transform", "T"),
+                                    ("Cycle paint tools", "Shift-Tab"),
+                                    ("Show or hide panels", "Tab"),
+                                    ("Resize brush", "Shift-drag"),
+                                    ("Eyedropper", "Alt/Option"),
+                                ],
+                            );
+                            ui.add_space(14.0);
+                            ui.add_space(14.0);
+                            shortcut_section(
+                                ui,
+                                "Canvas",
+                                &[
+                                    ("Pan", "Space-drag or middle/right-drag"),
+                                    ("Zoom", "Wheel"),
+                                    ("Rotate freely", "R-drag"),
+                                    ("Reset rotation", "Shift-R"),
+                                    ("Rotate left / right", ROTATE_SHORTCUT),
+                                    ("Flip horizontal / vertical", FLIP_SHORTCUT),
+                                    ("Crop or resize", CROP_SHORTCUT),
+                                ],
+                            );
+                            ui.add_space(14.0);
+                            ui.add_space(14.0);
+                            shortcut_section(
+                                ui,
+                                "Document",
+                                &[
+                                    ("Save", SAVE_SHORTCUT),
+                                    ("Export PNG", EXPORT_SHORTCUT),
+                                    ("Undo", UNDO_SHORTCUT),
+                                    ("Redo", REDO_SHORTCUT),
+                                    ("Apply transform or crop", "Enter"),
+                                    ("Cancel transform or crop", "Escape"),
+                                ],
+                            );
+                        });
+                });
+            ui.add_space(12.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.button("Close").clicked()
+            })
+            .inner
+        });
+        if response.inner || context.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.shortcuts_dialog_open = false;
+        }
+    }
+}
+
+fn shortcut_section(ui: &mut egui::Ui, title: &str, shortcuts: &[(&str, &str)]) {
+    ui.strong(title);
+    ui.add_space(8.0);
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.y = 9.0;
+        for &(action, shortcut) in shortcuts {
+            let (rect, response) = ui
+                .allocate_exact_size(egui::vec2(ui.available_width(), 22.0), egui::Sense::hover());
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Label,
+                    true,
+                    format!("{action}: {shortcut}"),
+                )
+            });
+            ui.painter().text(
+                rect.left_center(),
+                egui::Align2::LEFT_CENTER,
+                action,
+                egui::TextStyle::Body.resolve(ui.style()),
+                ui.visuals().text_color(),
+            );
+            ui.painter().text(
+                egui::pos2(rect.center().x, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                shortcut,
+                egui::TextStyle::Monospace.resolve(ui.style()),
+                ui.visuals().text_color(),
+            );
+        }
+    });
 }
 
 fn canvas_crop_screen_corners(
