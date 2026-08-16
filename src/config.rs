@@ -7,7 +7,8 @@ use std::{
 
 use atomic_write_file::AtomicWriteFile;
 use brush::{
-    DEFAULT_BRUSH_ID, RECTANGLE_ID, ROUNDED_ID, SKETCH_ID, discover_user_brushes, load_user_brush,
+    BRISTLE_ID, DEFAULT_BRUSH_ID, RECTANGLE_ID, ROUNDED_ID, SKETCH_ID, discover_user_brushes,
+    load_user_brush,
 };
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
@@ -179,6 +180,7 @@ impl ConfigStore {
                 SKETCH_ID => return Ok(LoadedBrushPreset::bundled_sketch()),
                 ROUNDED_ID => return Ok(LoadedBrushPreset::bundled_rounded()),
                 RECTANGLE_ID => return Ok(LoadedBrushPreset::bundled_rectangle()),
+                BRISTLE_ID => return Ok(LoadedBrushPreset::bundled_bristle()),
                 _ => {}
             }
         }
@@ -392,6 +394,7 @@ mod tests {
         let sketch = store.load_brush("sketch").expect("sketch brush");
         let rounded = store.load_brush("rounded").expect("rounded brush");
         let rectangle = store.load_brush("rectangle").expect("rectangle brush");
+        let bristle = store.load_brush("bristle").expect("bristle brush");
 
         assert_eq!(charcoal.id, "charcoal");
         assert_eq!(charcoal.preset.spacing.ratio, 0.03);
@@ -412,6 +415,10 @@ mod tests {
             rectangle.stamp_image.as_ref().unwrap().dimensions(),
             (192, 96)
         );
+        assert_eq!(
+            bristle.stamp_image.as_ref().unwrap().dimensions(),
+            (982, 561)
+        );
         assert_eq!(rounded.stamp_image.as_ref().unwrap().get_pixel(0, 0)[3], 0);
         assert_eq!(
             rectangle.stamp_image.as_ref().unwrap().get_pixel(0, 0)[3],
@@ -426,7 +433,7 @@ mod tests {
                 .into_iter()
                 .map(|brush| brush.id)
                 .collect::<Vec<_>>(),
-            ["charcoal", "sketch", "rounded", "rectangle"]
+            ["charcoal", "sketch", "rounded", "rectangle", "bristle"]
         );
     }
 

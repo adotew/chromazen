@@ -13,6 +13,7 @@ pub(crate) const DEFAULT_BRUSH_ID: &str = "charcoal";
 pub(crate) const SKETCH_ID: &str = "sketch";
 pub(crate) const ROUNDED_ID: &str = "rounded";
 pub(crate) const RECTANGLE_ID: &str = "rectangle";
+pub(crate) const BRISTLE_ID: &str = "bristle";
 const BRUSH_SCHEMA_VERSION: u32 = 1;
 const MAX_STAMP_DIMENSION: u32 = 4096;
 const MIN_BRUSH_SPACING: f32 = 0.25;
@@ -186,6 +187,10 @@ impl LoadedBrushPreset {
         Self::bundled_stamp(RECTANGLE_ID, "Rectangle", 80.0, 0.001)
     }
 
+    pub(crate) fn bundled_bristle() -> Self {
+        Self::bundled_stamp(BRISTLE_ID, "Bristle", 500.0, 0.03)
+    }
+
     fn bundled_stamp(id: &str, name: &str, default_size: f32, spacing: f32) -> Self {
         Self {
             id: id.to_owned(),
@@ -211,6 +216,7 @@ fn load_bundled_stamp(id: &str) -> Result<RgbaImage, ConfigError> {
     let bytes: &[u8] = match id {
         ROUNDED_ID => include_bytes!("../../assets/rounded.png"),
         RECTANGLE_ID => include_bytes!("../../assets/rectangle.png"),
+        BRISTLE_ID => include_bytes!("../../assets/bristle.png"),
         _ => include_bytes!("../../assets/charcoal.png"),
     };
     image::load_from_memory(bytes)
@@ -278,6 +284,11 @@ impl Default for BrushCatalog {
                 BrushSummary::new(
                     RECTANGLE_ID.to_owned(),
                     LoadedBrushPreset::bundled_rectangle().preset,
+                    None,
+                ),
+                BrushSummary::new(
+                    BRISTLE_ID.to_owned(),
+                    LoadedBrushPreset::bundled_bristle().preset,
                     None,
                 ),
             ],
