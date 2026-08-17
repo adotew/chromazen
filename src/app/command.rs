@@ -93,6 +93,7 @@ pub(super) enum AppCommand {
         id: ArtworkId,
         title: String,
     },
+    DuplicateArtwork(ArtworkId),
     DeleteArtwork(ArtworkId),
     CancelPendingNavigation,
     Quit,

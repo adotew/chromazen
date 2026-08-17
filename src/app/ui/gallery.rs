@@ -99,6 +99,12 @@ impl GalleryUi {
                                                 ));
                                                 ui.close();
                                             }
+                                            if ui.button("Duplicate").clicked() {
+                                                commands.push(AppCommand::DuplicateArtwork(
+                                                    artwork.id.clone(),
+                                                ));
+                                                ui.close();
+                                            }
                                             if ui.button("Delete").clicked() {
                                                 self.delete = Some((
                                                     artwork.id.clone(),

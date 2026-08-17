@@ -58,6 +58,7 @@ enum AppEvent {
     ExportWake,
     ReferenceImportWake,
     ReferenceLoadWake,
+    GalleryWake,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -371,7 +372,8 @@ impl ApplicationHandler<AppEvent> for App {
             | AppEvent::BrushImportWake
             | AppEvent::ExportWake
             | AppEvent::ReferenceImportWake
-            | AppEvent::ReferenceLoadWake => {}
+            | AppEvent::ReferenceLoadWake
+            | AppEvent::GalleryWake => {}
         }
         self.next_repaint = None;
         if let Some(window) = self.window.as_ref() {
@@ -491,6 +493,7 @@ impl App {
 
     fn render(&mut self, window: &Window, event_loop: &ActiveEventLoop) {
         let mut app_action_processed = self.process_export_completion();
+        app_action_processed |= self.process_gallery_completion();
         app_action_processed |= self.process_brush_import_completion();
         app_action_processed |= self.process_reference_import_completions();
         app_action_processed |= self.process_reference_load_completions();
@@ -948,6 +951,13 @@ impl App {
                         gui.show_error("Chromazen couldn’t rename the artwork.", error);
                     }
                 }
+                AppCommand::DuplicateArtwork(id) => {
+                    if let Err(error) = self.gallery.duplicate(id)
+                        && let Some(gui) = self.gui.as_mut()
+                    {
+                        gui.show_error("Chromazen couldn’t duplicate the artwork.", error);
+                    }
+                }
                 AppCommand::DeleteArtwork(id) => {
                     if let Err(error) = self.gallery.delete(&id)
                         && let Some(gui) = self.gui.as_mut()
@@ -990,6 +1000,18 @@ impl App {
                 reset_size: false,
             }]);
         }
+    }
+
+    fn process_gallery_completion(&mut self) -> bool {
+        let Some(result) = self.gallery.take_duplicate_completion() else {
+            return false;
+        };
+        if let Err(error) = result
+            && let Some(gui) = self.gui.as_mut()
+        {
+            gui.show_error("Chromazen couldn’t duplicate the artwork.", error);
+        }
+        true
     }
 
     fn process_brush_import_completion(&mut self) -> bool {
@@ -1517,7 +1539,10 @@ pub fn run() {
             log::debug!("native menu event ignored after event loop shutdown");
         }
     });
-    let gallery = GalleryController::discover();
+    let gallery_proxy = event_loop.create_proxy();
+    let gallery = GalleryController::discover(Arc::new(move || {
+        let _ = gallery_proxy.send_event(AppEvent::GalleryWake);
+    }));
     let autosave_store = gallery.store();
     let wake = Arc::new(move || {
         let _ = proxy.send_event(AppEvent::AutosaveWake);

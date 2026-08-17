@@ -54,6 +54,7 @@ pub(crate) struct ArtworkCatalog {
 
 pub(crate) enum LayerSource {
     Png(Vec<u8>),
+    Copy(PathBuf),
     ReuseCurrent,
 }
 
@@ -64,6 +65,7 @@ pub(crate) struct LayerWrite {
 
 pub(crate) enum ReferenceSource {
     Png(Vec<u8>),
+    Copy(PathBuf),
     ReuseCurrent,
 }
 
@@ -259,6 +261,10 @@ impl ArtworkStore {
                 match &layer_write.source {
                     LayerSource::Png(contents) => fs::write(&destination, contents)
                         .map_err(|error| ArtworkError::io("write", &destination, error))?,
+                    LayerSource::Copy(source) => {
+                        fs::copy(source, &destination)
+                            .map_err(|error| ArtworkError::io("copy", source, error))?;
+                    }
                     LayerSource::ReuseCurrent => {
                         let source = current_revision
                             .as_ref()
@@ -282,6 +288,10 @@ impl ArtworkStore {
                 match &reference_write.source {
                     ReferenceSource::Png(contents) => fs::write(&destination, contents)
                         .map_err(|error| ArtworkError::io("write", &destination, error))?,
+                    ReferenceSource::Copy(source) => {
+                        fs::copy(source, &destination)
+                            .map_err(|error| ArtworkError::io("copy", source, error))?;
+                    }
                     ReferenceSource::ReuseCurrent => {
                         let source = current_revision
                             .as_ref()
@@ -330,6 +340,42 @@ impl ArtworkStore {
             dimensions: [write.document.width, write.document.height],
             thumbnail_path: final_revision.join(THUMBNAIL_FILE),
         })
+    }
+
+    pub(crate) fn duplicate(&self, id: &ArtworkId) -> Result<ArtworkSummary, ArtworkError> {
+        let loaded = self.load(id)?;
+        let thumbnail_png = fs::read(&loaded.summary.thumbnail_path)
+            .map_err(|error| ArtworkError::io("read", &loaded.summary.thumbnail_path, error))?;
+        let layers = loaded
+            .document
+            .layers
+            .iter()
+            .zip(loaded.layer_paths)
+            .map(|(layer, path)| LayerWrite {
+                id: layer.id,
+                source: LayerSource::Copy(path),
+            })
+            .collect();
+        let references = loaded
+            .document
+            .references
+            .iter()
+            .zip(loaded.reference_paths)
+            .map(|(reference, path)| ReferenceWrite {
+                id: reference.id,
+                source: ReferenceSource::Copy(path),
+            })
+            .collect();
+        self.commit_revision(
+            &ArtworkId::new(),
+            &format!("{} copy", loaded.summary.title),
+            RevisionWrite {
+                document: loaded.document,
+                layers,
+                references,
+                thumbnail_png,
+            },
+        )
     }
 
     pub(crate) fn rename(&self, id: &ArtworkId, title: &str) -> Result<(), ArtworkError> {
@@ -591,6 +637,23 @@ mod tests {
         assert_eq!(loaded.document.references[0].position, [4200.0, 40.0]);
         assert!(loaded.document.references[0].locked);
         assert_eq!(fs::read(&loaded.reference_paths[0]).unwrap(), [4, 5, 6]);
+    }
+
+    #[test]
+    fn duplicate_copies_document_assets_under_a_new_id() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ArtworkStore::from_root(temp.path());
+        let id = ArtworkId::new();
+        store.commit_revision(&id, "Study", revision(7)).unwrap();
+
+        let duplicate = store.duplicate(&id).unwrap();
+        let loaded = store.load(&duplicate.id).unwrap();
+
+        assert_ne!(duplicate.id, id);
+        assert_eq!(duplicate.title, "Study copy");
+        assert_eq!(loaded.document, store.load(&id).unwrap().document);
+        assert_eq!(fs::read(&loaded.layer_paths[0]).unwrap(), [7]);
+        assert_eq!(fs::read(&loaded.summary.thumbnail_path).unwrap(), [7]);
     }
 
     #[test]
