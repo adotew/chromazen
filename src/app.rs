@@ -653,6 +653,7 @@ impl App {
                 AppCommand::SelectTool(_)
                     | AppCommand::SelectLayer(_)
                     | AppCommand::AddLayer
+                    | AppCommand::DuplicateSelectedLayer
                     | AppCommand::DeleteSelectedLayer
                     | AppCommand::RenameLayer { .. }
                     | AppCommand::MergeLayerDown(_)
@@ -763,6 +764,11 @@ impl App {
                 AppCommand::AddLayer => {
                     if let Some(paint) = self.paint.as_mut() {
                         paint.add_layer();
+                    }
+                }
+                AppCommand::DuplicateSelectedLayer => {
+                    if let Some(paint) = self.paint.as_mut() {
+                        paint.duplicate_selected_layer();
                     }
                 }
                 AppCommand::DeleteSelectedLayer => {

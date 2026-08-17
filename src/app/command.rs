@@ -27,6 +27,7 @@ pub(super) enum AppCommand {
     CancelLayerTransform,
     SelectLayer(LayerId),
     AddLayer,
+    DuplicateSelectedLayer,
     DeleteSelectedLayer,
     RenameLayer {
         id: LayerId,

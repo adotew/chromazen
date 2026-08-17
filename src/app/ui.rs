@@ -833,6 +833,10 @@ impl GuiLayer {
                             start_rename = true;
                             ui.close();
                         }
+                        if ui.button("Duplicate").clicked() {
+                            self.commands.push(AppCommand::DuplicateSelectedLayer);
+                            ui.close();
+                        }
                         if ui
                             .add_enabled(can_merge_down, egui::Button::new("Merge Down"))
                             .clicked()

@@ -1249,6 +1249,67 @@ impl PaintRenderer {
         true
     }
 
+    pub(crate) fn duplicate_selected_layer(&mut self) -> bool {
+        if !self.can_replace_document() {
+            return false;
+        }
+        let Some(source_index) = self.selected_layer_index() else {
+            return false;
+        };
+        let selection_before = self.selection;
+        let id = LayerId(self.next_layer_id);
+        self.next_layer_id += 1;
+        let resource_id = self.allocate_layer_resource_id();
+        let source = &self.layers[source_index];
+        let properties = LayerProperties {
+            name: format!("{} copy", source.name),
+            visible: source.visible,
+            opacity: source.opacity,
+            clipped: source.clipped,
+        };
+        let layer = self.resources.create_paint_layer(
+            self.gpu.device(),
+            self.document_size,
+            id,
+            resource_id,
+            properties,
+        );
+        let mut encoder =
+            self.gpu
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("duplicate layer encoder"),
+                });
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &source.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &layer.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: self.document_size[0],
+                height: self.document_size[1],
+                depth_or_array_layers: 1,
+            },
+        );
+        let index = insertion_index(Some(source_index), self.layers.len());
+        self.layers.insert(index, layer);
+        self.selection = id;
+        self.history
+            .record_add(id, index, selection_before, self.layer_resource_byte_len());
+        self.mark_metadata_changed();
+        self.layer_versions.insert(id, self.document_generation);
+        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        true
+    }
+
     pub(crate) fn can_merge_layer_down(&self, id: LayerId) -> bool {
         self.can_replace_document()
             && self
