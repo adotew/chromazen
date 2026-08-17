@@ -52,10 +52,37 @@ pub(crate) fn window_events_for_pen(event: PenEvent, scale_factor: f64) -> Vec<W
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrushAdjustment {
+    Size,
+    Opacity,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct BrushResizeDrag {
+    start_x: f32,
     start_y: f32,
     start_size: f32,
+    start_opacity: f32,
+    adjustment: Option<BrushAdjustment>,
+}
+
+impl BrushResizeDrag {
+    fn adjustment(&mut self, point: [f32; 2]) -> Option<BrushAdjustment> {
+        if self.adjustment.is_none() {
+            let delta_x = (point[0] - self.start_x).abs();
+            let delta_y = (point[1] - self.start_y).abs();
+            if delta_x == 0.0 && delta_y == 0.0 {
+                return None;
+            }
+            self.adjustment = Some(if delta_x > delta_y {
+                BrushAdjustment::Opacity
+            } else {
+                BrushAdjustment::Size
+            });
+        }
+        self.adjustment
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -291,16 +318,31 @@ impl PaintInputController {
                     return color_sample_is_due(last_sample, now)
                         && self.sample_color_at(paint, brush, next, now);
                 }
-                if let Some(drag) = self.resize_drag {
-                    let next_size = resized_brush_size(
-                        drag.start_size,
-                        drag.start_y,
-                        next[1],
-                        brush_size_range,
-                    );
-                    let changed = (brush.size - next_size).abs() > f32::EPSILON;
-                    brush.size = next_size;
-                    return changed;
+                if let Some(mut drag) = self.resize_drag {
+                    let Some(adjustment) = drag.adjustment(next) else {
+                        return false;
+                    };
+                    self.resize_drag = Some(drag);
+                    return match adjustment {
+                        BrushAdjustment::Size => {
+                            let next_size = resized_brush_size(
+                                drag.start_size,
+                                drag.start_y,
+                                next[1],
+                                brush_size_range,
+                            );
+                            let changed = (brush.size - next_size).abs() > f32::EPSILON;
+                            brush.size = next_size;
+                            changed
+                        }
+                        BrushAdjustment::Opacity => {
+                            let next_opacity =
+                                adjusted_brush_opacity(drag.start_opacity, drag.start_x, next[0]);
+                            let changed = (brush.opacity - next_opacity).abs() > f32::EPSILON;
+                            brush.opacity = next_opacity;
+                            changed
+                        }
+                    };
                 }
                 if self.is_panning {
                     let delta = [
@@ -368,7 +410,7 @@ impl PaintInputController {
                     if self.tool.paint_tool().is_some()
                         && resize_modifier_is_active(self.modifiers) =>
                 {
-                    self.begin_brush_resize_drag(brush.size);
+                    self.begin_brush_resize_drag(brush.size, brush.opacity);
                     true
                 }
                 (ElementState::Pressed, MouseButton::Left) if self.is_space_down => {
@@ -521,11 +563,14 @@ impl PaintInputController {
         changed
     }
 
-    fn begin_brush_resize_drag(&mut self, brush_size: f32) {
+    fn begin_brush_resize_drag(&mut self, brush_size: f32, brush_opacity: f32) {
         self.resize_origin.get_or_insert(self.cursor_pos);
         self.resize_drag = Some(BrushResizeDrag {
+            start_x: self.cursor_pos[0],
             start_y: self.cursor_pos[1],
             start_size: brush_size,
+            start_opacity: brush_opacity,
+            adjustment: None,
         });
     }
 
@@ -655,6 +700,10 @@ fn resized_brush_size(
     range: std::ops::RangeInclusive<f32>,
 ) -> f32 {
     (start_size + start_y - current_y).clamp(*range.start(), *range.end())
+}
+
+fn adjusted_brush_opacity(start_opacity: f32, start_x: f32, current_x: f32) -> f32 {
+    (start_opacity + (current_x - start_x) / 100.0).clamp(0.01, 1.0)
 }
 
 fn editor_tool_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<EditorTool> {
@@ -935,6 +984,41 @@ mod tests {
     }
 
     #[test]
+    fn horizontal_drag_adjusts_and_clamps_brush_opacity() {
+        assert_eq!(adjusted_brush_opacity(0.5, 100.0, 120.0), 0.7);
+        assert_eq!(adjusted_brush_opacity(0.5, 100.0, 80.0), 0.3);
+        assert_eq!(adjusted_brush_opacity(0.5, 100.0, 200.0), 1.0);
+        assert_eq!(adjusted_brush_opacity(0.5, 100.0, 0.0), 0.01);
+    }
+
+    #[test]
+    fn first_drag_movement_locks_the_adjusted_setting() {
+        let mut horizontal = BrushResizeDrag {
+            start_x: 100.0,
+            start_y: 200.0,
+            start_size: 50.0,
+            start_opacity: 0.5,
+            adjustment: None,
+        };
+        assert_eq!(horizontal.adjustment([100.0, 200.0]), None);
+        assert_eq!(
+            horizontal.adjustment([120.0, 201.0]),
+            Some(BrushAdjustment::Opacity)
+        );
+        assert_eq!(
+            horizontal.adjustment([101.0, 250.0]),
+            Some(BrushAdjustment::Opacity)
+        );
+
+        let mut vertical = horizontal;
+        vertical.adjustment = None;
+        assert_eq!(
+            vertical.adjustment([101.0, 220.0]),
+            Some(BrushAdjustment::Size)
+        );
+    }
+
+    #[test]
     fn option_activates_eyedropper_before_dragging() {
         let input = PaintInputController {
             cursor_inside: true,
@@ -986,7 +1070,7 @@ mod tests {
             cursor_pos: [20.0, 30.0],
             ..PaintInputController::default()
         };
-        input.begin_brush_resize_drag(48.0);
+        input.begin_brush_resize_drag(48.0, 0.5);
 
         assert_eq!(input.brush_cursor_pos(), None);
         assert_eq!(input.brush_resize_pos(), Some([20.0, 30.0]));
@@ -1010,14 +1094,17 @@ mod tests {
             cursor_pos: [20.0, 30.0],
             ..PaintInputController::default()
         };
-        input.begin_brush_resize_drag(48.0);
+        input.begin_brush_resize_drag(48.0, 0.5);
         input.cursor_pos = [40.0, 80.0];
-        input.begin_brush_resize_drag(64.0);
+        input.begin_brush_resize_drag(64.0, 0.75);
 
         assert_eq!(input.resize_origin, Some([20.0, 30.0]));
         let drag = input.resize_drag.unwrap();
+        assert_eq!(drag.start_x, 40.0);
         assert_eq!(drag.start_y, 80.0);
         assert_eq!(drag.start_size, 64.0);
+        assert_eq!(drag.start_opacity, 0.75);
+        assert_eq!(drag.adjustment, None);
     }
 
     #[test]

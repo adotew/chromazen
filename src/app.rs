@@ -253,7 +253,7 @@ impl ApplicationHandler<AppEvent> for App {
                         }
                         KeyboardShortcut::CycleTool => {
                             if let Some(tool) = self.input.tool().paint_tool() {
-                                gui.remember_tool_size(tool);
+                                gui.remember_tool_settings(tool);
                             }
                             if self.input.cycle_tool() {
                                 self.pending_commands
@@ -329,7 +329,7 @@ impl ApplicationHandler<AppEvent> for App {
                     );
                     if self.input.tool() != previous_tool {
                         if let Some(tool) = previous_tool.paint_tool() {
-                            gui.remember_tool_size(tool);
+                            gui.remember_tool_settings(tool);
                         }
                         self.pending_commands
                             .push(AppCommand::SelectTool(self.input.tool()));
@@ -865,7 +865,7 @@ impl App {
                     self.brush_import.start(tool, paths);
                 }
                 AppCommand::SaveSettings => {
-                    let Some((brush, tool_brushes, tool_sizes)) =
+                    let Some((brush, tool_brushes, tool_sizes, tool_opacities)) =
                         self.gui.as_ref().map(GuiLayer::settings_snapshot)
                     else {
                         continue;
@@ -874,6 +874,7 @@ impl App {
                         brush,
                         tool_brushes,
                         tool_sizes,
+                        tool_opacities,
                     }]);
                 }
                 AppCommand::ReloadConfiguration => {

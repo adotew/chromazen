@@ -34,6 +34,8 @@ pub(crate) struct AppConfig {
     pub(crate) smudge_brush: String,
     pub(crate) eraser_size: f32,
     pub(crate) smudge_size: f32,
+    pub(crate) eraser_opacity: f32,
+    pub(crate) smudge_opacity: f32,
     pub(crate) brush: CurrentBrushConfig,
 }
 
@@ -46,6 +48,8 @@ impl Default for AppConfig {
             smudge_brush: DEFAULT_BRUSH_ID.to_owned(),
             eraser_size: CurrentBrushConfig::default().size,
             smudge_size: CurrentBrushConfig::default().size,
+            eraser_opacity: CurrentBrushConfig::default().opacity,
+            smudge_opacity: CurrentBrushConfig::default().opacity,
             brush: CurrentBrushConfig::default(),
         }
     }
@@ -76,6 +80,14 @@ impl AppConfig {
         }
     }
 
+    pub(crate) fn opacity_for_tool(&self, tool: PaintTool) -> f32 {
+        match tool {
+            PaintTool::Brush => self.brush.opacity,
+            PaintTool::Eraser => self.eraser_opacity,
+            PaintTool::Smudge => self.smudge_opacity,
+        }
+    }
+
     pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         if self.schema_version != CURRENT_SCHEMA_VERSION {
             return Err(ConfigError::new(format!(
@@ -103,6 +115,12 @@ impl AppConfig {
                 )));
             }
         }
+        for (name, opacity) in [
+            ("eraser_opacity", self.eraser_opacity),
+            ("smudge_opacity", self.smudge_opacity),
+        ] {
+            validate_opacity(name, opacity)?;
+        }
         Ok(())
     }
 }
@@ -111,6 +129,7 @@ impl AppConfig {
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct CurrentBrushConfig {
     pub(crate) size: f32,
+    pub(crate) opacity: f32,
     pub(crate) color: [u8; 4],
 }
 
@@ -118,6 +137,7 @@ impl Default for CurrentBrushConfig {
     fn default() -> Self {
         Self {
             size: 300.0,
+            opacity: 1.0,
             color: [170, 187, 204, 255],
         }
     }
@@ -131,6 +151,7 @@ impl CurrentBrushConfig {
         if self.size <= 0.0 {
             return Err(ConfigError::new("brush.size must be greater than zero"));
         }
+        validate_opacity("brush.opacity", self.opacity)?;
         if self.color[3] != 255 {
             return Err(ConfigError::new(
                 "brush.color alpha must be 255 because translucent brush colors are not supported",
@@ -138,6 +159,15 @@ impl CurrentBrushConfig {
         }
         Ok(())
     }
+}
+
+fn validate_opacity(name: &str, opacity: f32) -> Result<(), ConfigError> {
+    if !opacity.is_finite() || !(0.01..=1.0).contains(&opacity) {
+        return Err(ConfigError::new(format!(
+            "{name} must be finite and between 0.01 and 1"
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -295,6 +325,9 @@ mod tests {
         let config = store.load_app_config().expect("load config");
 
         assert_eq!(config.brush.size, 425.0);
+        assert_eq!(config.brush.opacity, 1.0);
+        assert_eq!(config.eraser_opacity, 1.0);
+        assert_eq!(config.smudge_opacity, 1.0);
         assert_eq!(config.brush.color, CurrentBrushConfig::default().color);
         assert_eq!(config.active_brush, "charcoal");
     }
@@ -316,6 +349,9 @@ mod tests {
         let store = ConfigStore::from_root(temp.path().join("nested"));
         let mut config = AppConfig::default();
         config.brush.size = 512.0;
+        config.brush.opacity = 0.4;
+        config.eraser_opacity = 0.6;
+        config.smudge_opacity = 0.8;
         config.brush.color = [1, 2, 3, 255];
 
         store.save_app_config(&config).expect("save config");
@@ -374,6 +410,31 @@ mod tests {
         let error = store.load_app_config().expect_err("invalid config");
 
         assert!(error.to_string().contains("brush.size"));
+    }
+
+    #[test]
+    fn invalid_tool_opacity_is_rejected() {
+        for source in [
+            "eraser_opacity = 0.0\n",
+            "smudge_opacity = 1.1\n",
+            "[brush]\nopacity = 0.0\n",
+        ] {
+            let config: AppConfig = toml::from_str(source).expect("parse config");
+            assert!(config.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn tool_opacities_are_selected_independently() {
+        let config = AppConfig {
+            eraser_opacity: 0.5,
+            smudge_opacity: 0.25,
+            ..AppConfig::default()
+        };
+
+        assert_eq!(config.opacity_for_tool(PaintTool::Brush), 1.0);
+        assert_eq!(config.opacity_for_tool(PaintTool::Eraser), 0.5);
+        assert_eq!(config.opacity_for_tool(PaintTool::Smudge), 0.25);
     }
 
     #[test]

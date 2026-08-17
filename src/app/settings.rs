@@ -10,6 +10,7 @@ pub(super) enum SettingsCommand {
         brush: CurrentBrushConfig,
         tool_brushes: [String; 3],
         tool_sizes: [f32; 3],
+        tool_opacities: [f32; 3],
     },
     SwitchBrush {
         tool: PaintTool,
@@ -158,11 +159,15 @@ impl SettingsController {
                 brush,
                 tool_brushes,
                 tool_sizes,
+                tool_opacities,
             } => {
                 self.config.brush = brush;
                 self.config.brush.size = tool_sizes[0];
                 self.config.eraser_size = tool_sizes[1];
                 self.config.smudge_size = tool_sizes[2];
+                self.config.brush.opacity = tool_opacities[0];
+                self.config.eraser_opacity = tool_opacities[1];
+                self.config.smudge_opacity = tool_opacities[2];
                 self.config.active_brush = tool_brushes[0].clone();
                 self.config.eraser_brush = tool_brushes[1].clone();
                 self.config.smudge_brush = tool_brushes[2].clone();

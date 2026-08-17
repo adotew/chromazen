@@ -12,6 +12,7 @@ pub(crate) enum PaintTool {
 pub struct BrushSettings {
     pub color: Color32,
     pub size: f32,
+    pub opacity: f32,
     pub pressure: PressureSettings,
     pub spacing: BrushSpacing,
 }
@@ -21,6 +22,7 @@ impl Default for BrushSettings {
         Self {
             color: Color32::from_rgb(170, 187, 204),
             size: 300.0,
+            opacity: 1.0,
             pressure: PressureSettings::default(),
             spacing: BrushSpacing::default(),
         }
@@ -41,7 +43,7 @@ impl BrushSettings {
             x: document_point[0],
             y: document_point[1],
             radius: self.radius(pressure),
-            opacity: pressure_opacity(pressure, self.pressure),
+            opacity: self.opacity * pressure_opacity(pressure, self.pressure),
         }
     }
 }
@@ -123,8 +125,17 @@ mod tests {
     }
 
     #[test]
-    fn mouse_pressure_is_fully_opaque() {
-        assert_eq!(pressure_opacity(1.0, PressureSettings::default()), 1.0);
+    fn tool_opacity_scales_pressure_opacity() {
+        let brush = BrushSettings {
+            opacity: 0.5,
+            ..BrushSettings::default()
+        };
+
+        assert_eq!(brush.stroke_point([0.0, 0.0], 1.0).opacity, 0.5);
+        assert_eq!(
+            brush.stroke_point([0.0, 0.0], 0.0).opacity,
+            brush.pressure.min_opacity * 0.5
+        );
     }
 
     #[test]

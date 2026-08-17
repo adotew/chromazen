@@ -99,6 +99,7 @@ pub struct GuiLayer {
     pub brush: BrushSettings,
     tool_brushes: [String; 3],
     tool_sizes: [f32; 3],
+    tool_opacities: [f32; 3],
     brushes: Vec<crate::config::BrushSummary>,
     size_range: std::ops::RangeInclusive<f32>,
     default_size: f32,
@@ -314,6 +315,11 @@ impl GuiLayer {
                 config.size_for_tool(PaintTool::Brush),
                 config.size_for_tool(PaintTool::Eraser),
                 config.size_for_tool(PaintTool::Smudge),
+            ],
+            tool_opacities: [
+                config.opacity_for_tool(PaintTool::Brush),
+                config.opacity_for_tool(PaintTool::Eraser),
+                config.opacity_for_tool(PaintTool::Smudge),
             ],
             brushes: catalog.brushes,
             size_range: preset.size.min..=preset.size.max,
@@ -1233,7 +1239,9 @@ impl GuiLayer {
             workspace_view,
         } = state;
         if let Some(paint_tool) = tool.paint_tool() {
-            self.tool_sizes[tool_index(paint_tool)] = self.brush.size;
+            let index = tool_index(paint_tool);
+            self.tool_sizes[index] = self.brush.size;
+            self.tool_opacities[index] = self.brush.opacity;
             self.load_brush_preview(&self.tool_brushes[tool_index(paint_tool)].clone());
         }
         self.sync_reference_textures(references);
@@ -1336,7 +1344,7 @@ impl GuiLayer {
                 self.commands.push(AppCommand::SelectTool(tool));
             }
             if let Some(label) = brush_resize_label {
-                show_brush_resize_label(ui, label, self.brush.size);
+                show_brush_resize_label(ui, label, self.brush.size, self.brush.opacity);
             }
             if let Some(indicator) = eyedropper_indicator {
                 show_eyedropper_indicator(ui, indicator);
@@ -1647,18 +1655,28 @@ impl GuiLayer {
         self.size_range.clone()
     }
 
-    pub(crate) fn settings_snapshot(&self) -> (CurrentBrushConfig, [String; 3], [f32; 3]) {
+    pub(crate) fn settings_snapshot(
+        &self,
+    ) -> (CurrentBrushConfig, [String; 3], [f32; 3], [f32; 3]) {
         let mut brush = self.current_brush_config();
         brush.size = self.tool_sizes[tool_index(PaintTool::Brush)];
-        (brush, self.tool_brushes.clone(), self.tool_sizes)
+        brush.opacity = self.tool_opacities[tool_index(PaintTool::Brush)];
+        (
+            brush,
+            self.tool_brushes.clone(),
+            self.tool_sizes,
+            self.tool_opacities,
+        )
     }
 
     pub(crate) fn brush_for_tool(&self, tool: PaintTool) -> &str {
         &self.tool_brushes[tool_index(tool)]
     }
 
-    pub(crate) fn remember_tool_size(&mut self, tool: PaintTool) {
-        self.tool_sizes[tool_index(tool)] = self.brush.size;
+    pub(crate) fn remember_tool_settings(&mut self, tool: PaintTool) {
+        let index = tool_index(tool);
+        self.tool_sizes[index] = self.brush.size;
+        self.tool_opacities[index] = self.brush.opacity;
     }
 
     pub(crate) fn set_brush_color(&mut self, color: [u8; 4]) {
@@ -1668,6 +1686,7 @@ impl GuiLayer {
 
     pub(crate) fn reset_brush(&mut self) {
         self.brush.size = self.default_size;
+        self.brush.opacity = 1.0;
         self.brush.color = brush_color(&CurrentBrushConfig::default());
         self.context.request_repaint();
     }
@@ -1675,6 +1694,7 @@ impl GuiLayer {
     pub fn current_brush_config(&self) -> CurrentBrushConfig {
         CurrentBrushConfig {
             size: self.brush.size,
+            opacity: self.brush.opacity,
             color: self.brush.color.to_array(),
         }
     }
@@ -1706,6 +1726,7 @@ impl GuiLayer {
             self.tool_sizes[index] = self.tool_sizes[index].clamp(preset.size.min, preset.size.max);
         }
         self.brush.size = self.tool_sizes[index];
+        self.brush.opacity = self.tool_opacities[index];
         self.brush.pressure = PressureSettings {
             min_size: preset.pressure.min_size,
             min_opacity: preset.pressure.min_opacity,
@@ -1729,9 +1750,16 @@ impl GuiLayer {
             config.size_for_tool(PaintTool::Eraser),
             config.size_for_tool(PaintTool::Smudge),
         ];
+        self.tool_opacities = [
+            config.opacity_for_tool(PaintTool::Brush),
+            config.opacity_for_tool(PaintTool::Eraser),
+            config.opacity_for_tool(PaintTool::Smudge),
+        ];
+        let index = tool_index(active_tool);
         self.brush.color = brush_color(&config.brush);
-        self.brush.size = self.tool_sizes[tool_index(active_tool)]
-            .clamp(*self.size_range.start(), *self.size_range.end());
+        self.brush.size =
+            self.tool_sizes[index].clamp(*self.size_range.start(), *self.size_range.end());
+        self.brush.opacity = self.tool_opacities[index];
         self.context.request_repaint();
     }
 
@@ -2571,7 +2599,12 @@ fn show_eyedropper_indicator(ui: &egui::Ui, indicator: EyedropperIndicator) {
     );
 }
 
-fn show_brush_resize_label(ui: &egui::Ui, overlay: BrushResizeLabel, brush_size: f32) {
+fn show_brush_resize_label(
+    ui: &egui::Ui,
+    overlay: BrushResizeLabel,
+    brush_size: f32,
+    brush_opacity: f32,
+) {
     let pixels_per_point = ui.ctx().pixels_per_point();
     let center = egui::pos2(
         overlay.center[0] / pixels_per_point,
@@ -2583,7 +2616,7 @@ fn show_brush_resize_label(ui: &egui::Ui, overlay: BrushResizeLabel, brush_size:
     }
 
     let painter = ui.painter().with_clip_rect(canvas_rect);
-    let text = format!("{brush_size:.0} px");
+    let text = format!("{brush_size:.0} px · {:.0}%", brush_opacity * 100.0);
     let font = egui::FontId::proportional(16.0);
     let text_width = painter
         .layout_no_wrap(text.clone(), font.clone(), egui::Color32::WHITE)
@@ -2862,6 +2895,7 @@ fn brush_settings_from_config(
     BrushSettings {
         color: brush_color(config),
         size: config.size.clamp(preset.size.min, preset.size.max),
+        opacity: config.opacity,
         pressure: PressureSettings {
             min_size: preset.pressure.min_size,
             min_opacity: preset.pressure.min_opacity,
