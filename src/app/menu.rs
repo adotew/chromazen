@@ -1,8 +1,8 @@
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod imp {
     use muda::{
+        accelerator::{Accelerator, Code, Modifiers, CMD_OR_CTRL},
         Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
-        accelerator::{Accelerator, CMD_OR_CTRL, Code, Modifiers},
     };
     use winit::window::Window;
 
@@ -168,7 +168,12 @@ mod imp {
         let add_reference = MenuItem::with_id(ADD_REFERENCE_ID, "Add Reference…", false, None);
         let import_brushes =
             MenuItem::with_id(IMPORT_BRUSHES_ID, "Import Photoshop Brushes…", false, None);
-        let show_gallery = MenuItem::with_id(SHOW_GALLERY_ID, "Return to Gallery", false, None);
+        let show_gallery = MenuItem::with_id(
+            SHOW_GALLERY_ID,
+            "Return to Gallery",
+            false,
+            Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyG)),
+        );
         let menu = Submenu::with_items(
             "File",
             true,

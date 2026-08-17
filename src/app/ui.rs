@@ -40,6 +40,10 @@ const EXPORT_SHORTCUT: &str = "⌘-Shift-E";
 #[cfg(not(target_os = "macos"))]
 const EXPORT_SHORTCUT: &str = "Ctrl-Shift-E";
 #[cfg(target_os = "macos")]
+const GALLERY_SHORTCUT: &str = "⌘-G";
+#[cfg(not(target_os = "macos"))]
+const GALLERY_SHORTCUT: &str = "Ctrl-G";
+#[cfg(target_os = "macos")]
 const UNDO_SHORTCUT: &str = "⌘-Z";
 #[cfg(not(target_os = "macos"))]
 const UNDO_SHORTCUT: &str = "Ctrl-Z";
@@ -1815,6 +1819,7 @@ impl GuiLayer {
                                 &[
                                     ("Save", SAVE_SHORTCUT),
                                     ("Export PNG", EXPORT_SHORTCUT),
+                                    ("Return to gallery", GALLERY_SHORTCUT),
                                     ("Undo", UNDO_SHORTCUT),
                                     ("Redo", REDO_SHORTCUT),
                                     ("Apply transform or crop", "Enter"),

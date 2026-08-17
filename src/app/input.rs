@@ -698,6 +698,7 @@ fn document_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<A
     match (key, modifiers.shift_key()) {
         (KeyCode::KeyS, false) => Some(AppCommand::SaveArtwork),
         (KeyCode::KeyE, true) => Some(AppCommand::ExportPng),
+        (KeyCode::KeyG, false) => Some(AppCommand::ShowGallery),
         _ => None,
     }
 }
@@ -1064,6 +1065,10 @@ mod tests {
                 ModifiersState::CONTROL | ModifiersState::SHIFT,
             ),
             Some(AppCommand::ExportPng)
+        );
+        assert_eq!(
+            document_command_for_key(KeyCode::KeyG, ModifiersState::CONTROL),
+            Some(AppCommand::ShowGallery)
         );
         assert_eq!(
             document_command_for_key(
