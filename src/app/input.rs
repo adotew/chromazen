@@ -109,6 +109,7 @@ pub struct PaintInputController {
     cursor_pos: [f32; 2],
     cursor_inside: bool,
     is_drawing: bool,
+    stroke_uses_pen_pressure: bool,
     is_panning: bool,
     is_space_down: bool,
     is_rotation_key_down: bool,
@@ -382,6 +383,7 @@ impl PaintInputController {
                     if !paint.can_paint() {
                         return false;
                     }
+                    self.stroke_uses_pen_pressure = pressure_state.pen_input_active();
                     let point = self.stroke_point_from_window(
                         paint,
                         self.cursor_pos,
@@ -548,7 +550,10 @@ impl PaintInputController {
         pressure_state: &PressureStateHandle,
     ) -> StrokePoint {
         let doc = paint.window_to_document(window_point);
-        brush.stroke_point(doc, pressure_state.brush_pressure())
+        brush.stroke_point(
+            doc,
+            pressure_state.stroke_pressure(self.stroke_uses_pen_pressure),
+        )
     }
 
     fn queue_smoothed_points(
@@ -581,6 +586,7 @@ impl PaintInputController {
             0
         };
         self.is_drawing = false;
+        self.stroke_uses_pen_pressure = false;
         self.is_panning = false;
         self.last_point = None;
         queued > 0 || was_active

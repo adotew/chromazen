@@ -40,6 +40,24 @@ impl PressureStateHandle {
             .brush_pressure()
     }
 
+    pub(crate) fn pen_input_active(&self) -> bool {
+        let state = self.0.lock().expect("pressure state poisoned");
+        state.pen_active || state.pen_in_proximity
+    }
+
+    pub(crate) fn stroke_pressure(&self, uses_pen_pressure: bool) -> f32 {
+        if uses_pen_pressure {
+            let state = self.0.lock().expect("pressure state poisoned");
+            if state.pen_active {
+                state.pressure
+            } else {
+                0.0
+            }
+        } else {
+            1.0
+        }
+    }
+
     pub(crate) fn note_pen_pressure(
         &self,
         pressure: f32,
@@ -101,5 +119,18 @@ mod tests {
 
         pressure.clear_pen();
         assert_eq!(pressure.brush_pressure(), 1.0);
+    }
+
+    #[test]
+    fn pen_stroke_does_not_fall_back_to_full_mouse_pressure() {
+        let pressure = PressureStateHandle::default();
+        pressure.note_pen_pressure(0.4, true, true);
+        assert!(pressure.pen_input_active());
+        assert_eq!(pressure.stroke_pressure(true), 0.4);
+
+        pressure.clear_pen();
+        assert!(!pressure.pen_input_active());
+        assert_eq!(pressure.stroke_pressure(true), 0.0);
+        assert_eq!(pressure.stroke_pressure(false), 1.0);
     }
 }
