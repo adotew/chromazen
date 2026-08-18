@@ -432,7 +432,7 @@ impl PaintInputController {
                         *brush,
                         pressure_state,
                     );
-                    if !paint.begin_stroke(tool, point, brush.rgba()) {
+                    if !paint.begin_stroke(tool, point, brush.rgba(), brush.opacity) {
                         return false;
                     }
                     self.is_drawing = true;

@@ -234,6 +234,7 @@ struct ActiveStroke {
     layer_id: LayerId,
     tool: PaintTool,
     color: [f32; 4],
+    opacity: f32,
 }
 
 struct ActiveLayerTransform {
@@ -244,11 +245,12 @@ struct ActiveLayerTransform {
 }
 
 impl ActiveStroke {
-    fn new(layer_id: LayerId, tool: PaintTool, color: [f32; 4]) -> Self {
+    fn new(layer_id: LayerId, tool: PaintTool, color: [f32; 4], opacity: f32) -> Self {
         Self {
             layer_id,
             tool,
             color: premultiply(color),
+            opacity,
         }
     }
 
@@ -257,6 +259,13 @@ impl ActiveStroke {
             PaintTool::Brush | PaintTool::Eraser => StrokeRenderPath::Mask,
             PaintTool::Smudge => StrokeRenderPath::DirectSmudge,
         }
+    }
+
+    fn stamp_point(self, mut point: StrokePoint) -> StrokePoint {
+        if self.render_path() == StrokeRenderPath::Mask {
+            point.opacity *= self.opacity;
+        }
+        point
     }
 }
 
@@ -1445,7 +1454,13 @@ impl PaintRenderer {
         true
     }
 
-    pub fn begin_stroke(&mut self, tool: PaintTool, origin: StrokePoint, color: [f32; 4]) -> bool {
+    pub fn begin_stroke(
+        &mut self,
+        tool: PaintTool,
+        origin: StrokePoint,
+        color: [f32; 4],
+        opacity: f32,
+    ) -> bool {
         if self.active_stroke.is_some() {
             return false;
         }
@@ -1459,7 +1474,7 @@ impl PaintRenderer {
         if !self.history.begin_stroke(layer_id) {
             return false;
         }
-        let active_stroke = ActiveStroke::new(layer_id, tool, color);
+        let active_stroke = ActiveStroke::new(layer_id, tool, color, opacity);
         self.active_stroke = Some(active_stroke);
         if active_stroke.render_path() == StrokeRenderPath::Mask {
             let clipped: Vec<_> = self.layers.iter().map(|layer| layer.clipped).collect();
@@ -1518,7 +1533,8 @@ impl PaintRenderer {
             }
             self.gpu.queue().submit(std::iter::once(encoder.finish()));
         }
-        self.stamp_queue.begin_stroke(origin);
+        self.stamp_queue
+            .begin_stroke(active_stroke.stamp_point(origin));
         true
     }
 
@@ -1705,7 +1721,7 @@ impl PaintRenderer {
             return false;
         };
         self.stamp_queue.queue_point(
-            point,
+            active_stroke.stamp_point(point),
             active_stroke.color,
             self.document_size[0],
             self.document_size[1],
@@ -1722,8 +1738,8 @@ impl PaintRenderer {
             return 0;
         };
         self.stamp_queue.stamp_line(
-            from,
-            to,
+            active_stroke.stamp_point(from),
+            active_stroke.stamp_point(to),
             active_stroke.color,
             effective_spacing(active_stroke.tool, spacing),
             self.document_size[0],
@@ -2107,7 +2123,7 @@ impl PaintRenderer {
     }
 
     fn flush_stamps(&mut self, encoder: &mut wgpu::CommandEncoder) {
-        let raw = self.stamp_queue.drain_raw(
+        let mut raw = self.stamp_queue.drain_raw(
             self.document_size[0],
             self.document_size[1],
             MAX_STAMPS_PER_FRAME,
@@ -2117,11 +2133,15 @@ impl PaintRenderer {
             return;
         }
 
+        let active_stroke = self.active_stroke.expect("stamp requires active stroke");
+        if active_stroke.render_path() == StrokeRenderPath::DirectSmudge {
+            for stamp in &mut raw {
+                stamp.scale_source_offset(active_stroke.opacity);
+            }
+        }
         self.gpu
             .queue()
             .write_buffer(&self.resources.stamp_buffer, 0, bytemuck::cast_slice(&raw));
-
-        let active_stroke = self.active_stroke.expect("stamp requires active stroke");
         let layer_index = self
             .layers
             .iter()
@@ -2712,11 +2732,36 @@ mod tests {
 
     #[test]
     fn active_stroke_captures_layer_tool_and_premultiplied_color() {
-        let stroke = ActiveStroke::new(LayerId(7), PaintTool::Brush, [0.8, 0.4, 0.2, 0.5]);
+        let stroke = ActiveStroke::new(LayerId(7), PaintTool::Brush, [0.8, 0.4, 0.2, 0.5], 0.75);
 
         assert_eq!(stroke.layer_id, LayerId(7));
         assert_eq!(stroke.tool, PaintTool::Brush);
         assert_eq!(stroke.color, [0.4, 0.2, 0.1, 0.5]);
+        assert_eq!(stroke.opacity, 0.75);
+    }
+
+    #[test]
+    fn tool_opacity_scales_mask_strength_but_not_smudge_dab_strength() {
+        let point = StrokePoint {
+            x: 0.0,
+            y: 0.0,
+            radius: 10.0,
+            opacity: 0.8,
+        };
+        let color = [0.0, 0.0, 0.0, 1.0];
+
+        assert_eq!(
+            ActiveStroke::new(LayerId(1), PaintTool::Brush, color, 0.25)
+                .stamp_point(point)
+                .opacity,
+            0.2
+        );
+        assert_eq!(
+            ActiveStroke::new(LayerId(1), PaintTool::Smudge, color, 0.25)
+                .stamp_point(point)
+                .opacity,
+            0.8
+        );
     }
 
     #[test]
@@ -2823,15 +2868,15 @@ mod tests {
         let color = [0.0, 0.0, 0.0, 1.0];
 
         assert_eq!(
-            ActiveStroke::new(LayerId(1), PaintTool::Brush, color).render_path(),
+            ActiveStroke::new(LayerId(1), PaintTool::Brush, color, 1.0).render_path(),
             StrokeRenderPath::Mask
         );
         assert_eq!(
-            ActiveStroke::new(LayerId(1), PaintTool::Eraser, color).render_path(),
+            ActiveStroke::new(LayerId(1), PaintTool::Eraser, color, 1.0).render_path(),
             StrokeRenderPath::Mask
         );
         assert_eq!(
-            ActiveStroke::new(LayerId(1), PaintTool::Smudge, color).render_path(),
+            ActiveStroke::new(LayerId(1), PaintTool::Smudge, color, 1.0).render_path(),
             StrokeRenderPath::DirectSmudge
         );
     }

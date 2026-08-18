@@ -43,7 +43,7 @@ impl BrushSettings {
             x: document_point[0],
             y: document_point[1],
             radius: self.radius(pressure),
-            opacity: self.opacity * pressure_opacity(pressure, self.pressure),
+            opacity: pressure_opacity(pressure, self.pressure),
         }
     }
 }
@@ -125,16 +125,13 @@ mod tests {
     }
 
     #[test]
-    fn tool_opacity_scales_pressure_opacity() {
-        let brush = BrushSettings {
-            opacity: 0.5,
-            ..BrushSettings::default()
-        };
+    fn stroke_point_contains_pressure_opacity() {
+        let brush = BrushSettings::default();
 
-        assert_eq!(brush.stroke_point([0.0, 0.0], 1.0).opacity, 0.5);
+        assert_eq!(brush.stroke_point([0.0, 0.0], 1.0).opacity, 1.0);
         assert_eq!(
             brush.stroke_point([0.0, 0.0], 0.0).opacity,
-            brush.pressure.min_opacity * 0.5
+            brush.pressure.min_opacity
         );
     }
 

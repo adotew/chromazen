@@ -28,6 +28,13 @@ impl StampRaw {
             self.bounds[3] as u32,
         )
     }
+
+    pub(crate) fn scale_source_offset(&mut self, scale: f32) {
+        for axis in 0..2 {
+            self.source_center[axis] =
+                self.center[axis] + (self.source_center[axis] - self.center[axis]) * scale;
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -375,6 +382,22 @@ mod tests {
     fn stamp_bounds_follow_image_aspect_ratio() {
         assert_eq!(get_stamp_half_size(10.0, 2.0), (10.0, 5.0));
         assert_eq!(get_stamp_half_size(10.0, 0.5), (5.0, 10.0));
+    }
+
+    #[test]
+    fn smudge_opacity_scales_source_displacement() {
+        let mut raw = StampRaw {
+            center: [20.0, 30.0],
+            half_size: [10.0; 2],
+            color: [0.0; 4],
+            bounds: [10.0, 20.0, 30.0, 40.0],
+            source_center: [10.0, 50.0],
+            padding: [0.0; 2],
+        };
+
+        raw.scale_source_offset(0.5);
+
+        assert_eq!(raw.source_center, [15.0, 40.0]);
     }
 
     #[test]
