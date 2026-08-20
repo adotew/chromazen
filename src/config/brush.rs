@@ -171,7 +171,7 @@ impl LoadedBrushPreset {
                     min_size: 0.25,
                     min_opacity: 0.01,
                     full_opacity_pressure: 0.8,
-                    opacity_gamma: 2.4,
+                    opacity_gamma: 4.0,
                 },
                 ..BrushPreset::default()
             },
