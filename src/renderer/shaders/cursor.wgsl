@@ -1,6 +1,7 @@
 @group(0) @binding(0) var brushSampler: sampler;
 @group(0) @binding(1) var brushStamp: texture_2d<f32>;
 @group(0) @binding(2) var<storage, read> cursor: Cursor;
+@group(0) @binding(3) var backdrop: texture_2d<f32>;
 
 struct Cursor {
   center: vec2f,
@@ -49,6 +50,13 @@ fn vs(@builtin(vertex_index) vertexIndex: u32) -> VertexOut {
   return out;
 }
 
+@vertex
+fn vs_screen(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4f {
+  let x = f32(idx % 2u) * 4.0 - 1.0;
+  let y = f32(idx / 2u) * 4.0 - 1.0;
+  return vec4f(x, y, 0.0, 1.0);
+}
+
 fn mask(uv: vec2f) -> f32 {
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
     return 0.0;
@@ -71,19 +79,37 @@ fn neighborhood(uv: vec2f, delta: vec2f) -> vec2f {
   );
 }
 
+fn adaptiveColor(rgb: vec3f) -> vec3f {
+  let value = max(max(rgb.r, rgb.g), rgb.b);
+  if (value < 0.0001) {
+    return vec3f(0.22);
+  }
+  let minimum = min(min(rgb.r, rgb.g), rgb.b);
+  let saturation = (value - minimum) / value;
+  let strength = mix(0.22, 0.34, saturation);
+  let lightValue = mix(value, 1.0, strength);
+  let darkValue = value * (1.0 - strength);
+  let targetValue = mix(lightValue, darkValue, smoothstep(0.35, 0.65, value));
+  // Scaling HSV value keeps the sampled hue and saturation.
+  return rgb * (targetValue / value);
+}
+
 @fragment
 fn fs(in: VertexOut) -> @location(0) vec4f {
-  let center = mask(in.uv);
+  let centerMask = mask(in.uv);
   let near = neighborhood(in.uv, in.uvPerPixel);
   let far = neighborhood(in.uv, in.uvPerPixel * 2.0);
-  let inner = center * (1.0 - near.x);
-  let outer = (1.0 - center) * far.y;
+  let inner = centerMask * (1.0 - near.x);
+  let outer = (1.0 - centerMask) * far.y;
 
-  if (inner > 0.0) {
-    return vec4f(0.92, 0.92, 0.92, 0.92);
-  }
-  if (outer > 0.0) {
-    return vec4f(0.04, 0.04, 0.04, 0.8);
+  if (inner > 0.0 || outer > 0.0) {
+    let color = adaptiveColor(textureLoad(backdrop, vec2i(in.position.xy), 0).rgb);
+    return vec4f(color * 0.85, 0.85);
   }
   discard;
+}
+
+@fragment
+fn fs_screen(@builtin(position) position: vec4f) -> @location(0) vec4f {
+  return textureLoad(backdrop, vec2i(position.xy), 0);
 }

@@ -308,6 +308,7 @@ impl PaintRenderer {
             device,
             queue,
             document_size,
+            gpu.surface_size(),
             surface_format,
             brush_preset.stamp_image.as_ref(),
         )?;
@@ -400,7 +401,10 @@ impl PaintRenderer {
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         self.gpu.resize(size);
-        self.view.set_surface_size(self.gpu.surface_size());
+        let surface_size = self.gpu.surface_size();
+        self.resources
+            .resize_surface(self.gpu.device(), surface_size, self.gpu.surface_format());
+        self.view.set_surface_size(surface_size);
     }
 
     pub fn try_set_brush_preset(&mut self, preset: &LoadedBrushPreset) -> Result<bool, String> {
@@ -1819,6 +1823,12 @@ impl PaintRenderer {
             self.write_brush_cursor(cursor);
         }
 
+        // The cursor samples the completed canvas, so cursor frames compose offscreen first.
+        let canvas_view = if brush_cursor.is_some() {
+            &self.resources.backdrop_view
+        } else {
+            view
+        };
         let canvas_rect = visible_canvas_rect(
             self.view.snapshot(),
             self.document_size,
@@ -1828,7 +1838,7 @@ impl PaintRenderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("canvas background pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
+                    view: canvas_view,
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
@@ -1964,7 +1974,7 @@ impl PaintRenderer {
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("clipping group blit pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view,
+                            view: canvas_view,
                             resolve_target: None,
                             depth_slice: None,
                             ops: wgpu::Operations {
@@ -1990,7 +2000,7 @@ impl PaintRenderer {
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("layer blit pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view,
+                            view: canvas_view,
                             resolve_target: None,
                             depth_slice: None,
                             ops: wgpu::Operations {
@@ -2035,6 +2045,27 @@ impl PaintRenderer {
 
         if brush_cursor.is_some() {
             let surface_size = self.surface_size();
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("canvas screen pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&self.resources.screen_pipeline);
+                pass.set_bind_group(0, &self.resources.cursor_bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("brush cursor pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {

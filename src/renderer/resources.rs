@@ -1,10 +1,10 @@
 use wgpu::util::DeviceExt;
 
 use super::layers::{LayerId, LayerProperties, LayerResourceId, PaintLayer};
-use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
+use super::stamps::{StampRaw, MAX_STAMPS_PER_FRAME};
 use super::{
-    CursorRaw, DOCUMENT_FORMAT, LAYER_PREVIEW_SIZE, LayerPreviewUniform, LayerSettingsUniform,
-    LayerTransform, PaintUniform, STROKE_MASK_FORMAT, StrokeUniform, ViewUniform,
+    CursorRaw, LayerPreviewUniform, LayerSettingsUniform, LayerTransform, PaintUniform,
+    StrokeUniform, ViewUniform, DOCUMENT_FORMAT, LAYER_PREVIEW_SIZE, STROKE_MASK_FORMAT,
 };
 
 pub(crate) struct RenderResources {
@@ -17,6 +17,8 @@ pub(crate) struct RenderResources {
     transform_uniform_buffer: wgpu::Buffer,
     pub(crate) stamp_bind_group: wgpu::BindGroup,
     pub(crate) cursor_bind_group: wgpu::BindGroup,
+    backdrop_texture: wgpu::Texture,
+    pub(crate) backdrop_view: wgpu::TextureView,
     pub(crate) smudge_texture: wgpu::Texture,
     smudge_texture_view: wgpu::TextureView,
     _clipping_group_texture: wgpu::Texture,
@@ -31,6 +33,7 @@ pub(crate) struct RenderResources {
     paint_sampler: wgpu::Sampler,
     preview_sampler: wgpu::Sampler,
     stamp_bind_group_layout: wgpu::BindGroupLayout,
+    cursor_bind_group_layout: wgpu::BindGroupLayout,
     blit_bind_group_layout: wgpu::BindGroupLayout,
     clipped_layer_bind_group_layout: wgpu::BindGroupLayout,
     stroke_preview_bind_group_layout: wgpu::BindGroupLayout,
@@ -43,6 +46,7 @@ pub(crate) struct RenderResources {
     pub(crate) mask_clear_pipeline: wgpu::RenderPipeline,
     pub(crate) smudge_pipeline: wgpu::RenderPipeline,
     pub(crate) cursor_pipeline: wgpu::RenderPipeline,
+    pub(crate) screen_pipeline: wgpu::RenderPipeline,
     pub(crate) background_pipeline: wgpu::RenderPipeline,
     pub(crate) layer_pipeline: wgpu::RenderPipeline,
     pub(crate) clipped_layer_merge_pipeline: wgpu::RenderPipeline,
@@ -64,6 +68,7 @@ impl RenderResources {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         document_size: [u32; 2],
+        surface_size: [u32; 2],
         surface_format: wgpu::TextureFormat,
         preset_stamp: Option<&image::RgbaImage>,
     ) -> Result<Self, String> {
@@ -150,6 +155,8 @@ impl RenderResources {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let (backdrop_texture, backdrop_view) =
+            create_backdrop_texture(device, surface_size, surface_format);
         let (smudge_texture, smudge_texture_view) = create_paint_texture(device, document_size);
         let (clipping_group_texture, clipping_group_view) =
             create_paint_texture(device, document_size);
@@ -244,32 +251,33 @@ impl RenderResources {
                 },
             ],
         });
-        let cursor_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("brush cursor bind group"),
-            layout: &stamp_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&brush_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&brush_texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: cursor_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: stamp_uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&smudge_texture_view),
-                },
-            ],
-        });
+        let cursor_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("brush cursor bind group layout"),
+                entries: &[
+                    sampler_layout_entry(0),
+                    texture_layout_entry(1),
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    texture_layout_entry(3),
+                ],
+            });
+        let cursor_bind_group = create_cursor_bind_group(
+            device,
+            &cursor_bind_group_layout,
+            &brush_sampler,
+            &brush_texture_view,
+            &cursor_buffer,
+            &backdrop_view,
+        );
 
         let blit_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -513,6 +521,12 @@ impl RenderResources {
                 bind_group_layouts: &[Some(&stamp_bind_group_layout)],
                 immediate_size: 0,
             });
+        let cursor_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("brush cursor pipeline layout"),
+                bind_group_layouts: &[Some(&cursor_bind_group_layout)],
+                immediate_size: 0,
+            });
         let blit_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("blit pipeline layout"),
             bind_group_layouts: &[Some(&blit_bind_group_layout)],
@@ -723,7 +737,7 @@ impl RenderResources {
         });
         let cursor_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("brush cursor pipeline"),
-            layout: Some(&stamp_pipeline_layout),
+            layout: Some(&cursor_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &cursor_shader,
                 entry_point: Some("vs"),
@@ -737,6 +751,34 @@ impl RenderResources {
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
                     blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let screen_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("canvas screen pipeline"),
+            layout: Some(&cursor_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &cursor_shader,
+                entry_point: Some("vs_screen"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &cursor_shader,
+                entry_point: Some("fs_screen"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -1054,6 +1096,8 @@ impl RenderResources {
             transform_uniform_buffer,
             stamp_bind_group,
             cursor_bind_group,
+            backdrop_texture,
+            backdrop_view,
             smudge_texture,
             smudge_texture_view,
             _clipping_group_texture: clipping_group_texture,
@@ -1068,6 +1112,7 @@ impl RenderResources {
             paint_sampler,
             preview_sampler,
             stamp_bind_group_layout,
+            cursor_bind_group_layout,
             blit_bind_group_layout,
             clipped_layer_bind_group_layout,
             stroke_preview_bind_group_layout,
@@ -1080,6 +1125,7 @@ impl RenderResources {
             mask_clear_pipeline,
             smudge_pipeline,
             cursor_pipeline,
+            screen_pipeline,
             background_pipeline,
             layer_pipeline,
             clipped_layer_merge_pipeline,
@@ -1202,6 +1248,25 @@ impl RenderResources {
         self.stroke_preview_bind_group = None;
     }
 
+    pub(crate) fn resize_surface(
+        &mut self,
+        device: &wgpu::Device,
+        size: [u32; 2],
+        format: wgpu::TextureFormat,
+    ) {
+        let (texture, view) = create_backdrop_texture(device, size, format);
+        self.cursor_bind_group = create_cursor_bind_group(
+            device,
+            &self.cursor_bind_group_layout,
+            &self.brush_sampler,
+            &self.brush_texture_view,
+            &self.cursor_buffer,
+            &view,
+        );
+        self.backdrop_texture = texture;
+        self.backdrop_view = view;
+    }
+
     pub(crate) fn resize_document(
         &mut self,
         device: &wgpu::Device,
@@ -1279,32 +1344,6 @@ impl RenderResources {
                 },
             ],
         });
-        let cursor_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("brush cursor bind group"),
-            layout: &self.stamp_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&self.brush_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&self.brush_texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.cursor_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.stamp_uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&smudge_texture_view),
-                },
-            ],
-        });
         let stroke_commit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("stroke commit bind group"),
             layout: &self.stroke_commit_bind_group_layout,
@@ -1328,7 +1367,6 @@ impl RenderResources {
         self._stroke_mask_texture = stroke_mask_texture;
         self.stroke_mask_view = stroke_mask_view;
         self.stamp_bind_group = stamp_bind_group;
-        self.cursor_bind_group = cursor_bind_group;
         self.stroke_commit_bind_group = stroke_commit_bind_group;
         self.stroke_preview_bind_group = None;
     }
@@ -1497,38 +1535,75 @@ impl RenderResources {
                 },
             ],
         });
-        let cursor_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("brush cursor bind group"),
-            layout: &self.stamp_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&self.brush_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&brush_texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.cursor_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.stamp_uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&self.smudge_texture_view),
-                },
-            ],
-        });
+        let cursor_bind_group = create_cursor_bind_group(
+            device,
+            &self.cursor_bind_group_layout,
+            &self.brush_sampler,
+            &brush_texture_view,
+            &self.cursor_buffer,
+            &self.backdrop_view,
+        );
         self.brush_texture = brush_texture;
         self.brush_texture_view = brush_texture_view;
         self.stamp_bind_group = stamp_bind_group;
         self.cursor_bind_group = cursor_bind_group;
         Ok(())
     }
+}
+
+fn create_cursor_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    brush: &wgpu::TextureView,
+    cursor: &wgpu::Buffer,
+    backdrop: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("brush cursor bind group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(brush),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: cursor.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(backdrop),
+            },
+        ],
+    })
+}
+
+fn create_backdrop_texture(
+    device: &wgpu::Device,
+    size: [u32; 2],
+    format: wgpu::TextureFormat,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("canvas backdrop texture"),
+        size: wgpu::Extent3d {
+            width: size[0],
+            height: size[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[format],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
 }
 
 fn sampler_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
