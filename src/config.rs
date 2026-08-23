@@ -465,7 +465,7 @@ mod tests {
         assert_eq!(sketch.preset.pressure.min_size, 0.25);
         assert_eq!(sketch.preset.pressure.min_opacity, 0.01);
         assert_eq!(sketch.preset.pressure.full_opacity_pressure, 0.8);
-        assert_eq!(sketch.preset.pressure.opacity_gamma, 2.4);
+        assert_eq!(sketch.preset.pressure.opacity_gamma, 4.0);
         assert_eq!(rounded.preset.spacing.minimum, 0.5);
         assert_eq!(rectangle.preset.spacing.minimum, 0.5);
         assert_eq!(
