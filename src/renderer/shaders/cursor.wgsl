@@ -87,10 +87,7 @@ fn adaptiveColor(rgb: vec3f) -> vec3f {
   let minimum = min(min(rgb.r, rgb.g), rgb.b);
   let saturation = (value - minimum) / value;
   let strength = mix(0.22, 0.34, saturation);
-  let lightValue = mix(value, 1.0, strength);
-  let darkValue = value * (1.0 - strength);
-  let targetValue = mix(lightValue, darkValue, smoothstep(0.35, 0.65, value));
-  // Scaling HSV value keeps the sampled hue and saturation.
+  let targetValue = value + strength * (1.0 - 2.0 * value);
   return rgb * (targetValue / value);
 }
 
