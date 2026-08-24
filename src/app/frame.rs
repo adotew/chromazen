@@ -1,13 +1,13 @@
 use super::*;
 
 impl App {
-    pub(super) fn render(&mut self, window: &Window, event_loop: &ActiveEventLoop) {
-        let mut app_action_processed = self.process_export_completion();
-        app_action_processed |= self.process_gallery_completion();
-        app_action_processed |= self.process_brush_import_completion();
-        app_action_processed |= self.process_reference_import_completions();
-        app_action_processed |= self.process_reference_load_completions();
-        app_action_processed |= self.process_pending_commands();
+    pub(super) fn redraw(&mut self, window: &Window, event_loop: &ActiveEventLoop) {
+        let mut app_action_processed = self.apply_export_completion();
+        app_action_processed |= self.apply_duplicate_completion();
+        app_action_processed |= self.apply_brush_import_completion();
+        app_action_processed |= self.apply_reference_import_completions();
+        app_action_processed |= self.apply_reference_load_completions();
+        app_action_processed |= self.dispatch_pending_commands();
         let mut brush_switched = self.apply_pending_brush_change();
 
         if self.pending_exit && self.screen == AppScreen::Gallery && !self.export.is_exporting() {
@@ -31,7 +31,7 @@ impl App {
                 && self.autosave.is_clean(paint, &self.references)
             {
                 let new_size = self.pending_new_artwork;
-                self.finish_gallery_navigation();
+                self.enter_gallery();
                 if let Some(size) = new_size {
                     self.create_artwork(size);
                 }
@@ -51,7 +51,7 @@ impl App {
         .then(|| {
             self.paint
                 .as_mut()
-                .and_then(PaintRenderer::selected_layer_content_bounds)
+                .and_then(PaintRenderer::read_selected_layer_content_bounds)
         })
         .flatten();
         let Some(paint) = self.paint.as_ref() else {
@@ -120,14 +120,14 @@ impl App {
             (output, gui.take_commands())
         };
         self.pending_commands.extend(commands);
-        app_action_processed |= self.process_pending_commands();
+        app_action_processed |= self.dispatch_pending_commands();
 
         if self.screen == AppScreen::Editor
             && let Some(paint) = self.paint.as_ref()
         {
             app_action_processed |= self.autosave.update(paint, &self.references);
         }
-        let Some(outcome) = self.render_frame(window, full_output) else {
+        let Some(outcome) = self.render_and_present_frame(window, full_output) else {
             return;
         };
         brush_switched |= self.apply_pending_brush_change();
@@ -138,7 +138,7 @@ impl App {
         );
     }
 
-    pub(super) fn render_frame(
+    pub(super) fn render_and_present_frame(
         &mut self,
         window: &Window,
         full_output: egui::FullOutput,
@@ -300,10 +300,10 @@ impl App {
                     reset_size,
                 );
                 if completed.reloaded {
-                    gui.settings_reloaded(self.settings.config(), tool);
+                    gui.apply_reloaded_settings(self.settings.config(), tool);
                 }
                 if !completed.warnings.is_empty() {
-                    gui.show_error(
+                    gui.open_error_dialog(
                         "The selected brush could not be loaded completely.",
                         completed.warnings.join("\n"),
                     );
@@ -312,7 +312,7 @@ impl App {
             }
             Err(error) => {
                 if let Some(gui) = self.gui.as_mut() {
-                    gui.show_error("Chromazen couldn’t load the selected brush.", error);
+                    gui.open_error_dialog("Chromazen couldn’t load the selected brush.", error);
                 }
                 false
             }
@@ -365,4 +365,3 @@ impl App {
         }
     }
 }
-

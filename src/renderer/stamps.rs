@@ -76,7 +76,7 @@ impl StampQueue {
     }
 
     pub(crate) fn half_size(&self, radius: f32) -> [f32; 2] {
-        let (width, height) = get_stamp_half_size(radius, self.stamp_aspect);
+        let (width, height) = stamp_half_size(radius, self.stamp_aspect);
         [width, height]
     }
 
@@ -129,7 +129,7 @@ impl StampQueue {
         // Source continuity follows generated simulation dabs, including dabs that
         // do not intersect the document and therefore produce no GPU work.
         self.last_generated_center = Some([stamp.x, stamp.y]);
-        let bounds = get_stamp_bounds(
+        let bounds = stamp_bounds(
             stamp.x,
             stamp.y,
             stamp.radius,
@@ -179,7 +179,7 @@ impl StampQueue {
         while travelled < dist {
             let spacing_t = travelled / dist;
             let spacing_radius = lerp(from.radius, to.radius, spacing_t);
-            let spacing = get_stamp_spacing(spacing_radius, spacing);
+            let spacing = stamp_spacing(spacing_radius, spacing);
             let distance_to_next_stamp = (spacing - self.distance_since_last_stamp).max(0.0);
             let remaining_distance = dist - travelled;
 
@@ -227,7 +227,7 @@ impl StampQueue {
 }
 
 fn stamp_to_raw(stamp: Stamp, stamp_aspect: f32, width: u32, height: u32) -> StampRaw {
-    let bounds = get_stamp_bounds(stamp.x, stamp.y, stamp.radius, stamp_aspect, width, height);
+    let bounds = stamp_bounds(stamp.x, stamp.y, stamp.radius, stamp_aspect, width, height);
     StampRaw {
         center: [stamp.x, stamp.y],
         half_size: [bounds.half_width, bounds.half_height],
@@ -252,7 +252,7 @@ struct StampBounds {
     half_height: f32,
 }
 
-fn get_stamp_half_size(radius: f32, stamp_aspect: f32) -> (f32, f32) {
+fn stamp_half_size(radius: f32, stamp_aspect: f32) -> (f32, f32) {
     if stamp_aspect >= 1.0 {
         (radius, radius / stamp_aspect)
     } else {
@@ -260,7 +260,7 @@ fn get_stamp_half_size(radius: f32, stamp_aspect: f32) -> (f32, f32) {
     }
 }
 
-fn get_stamp_bounds(
+fn stamp_bounds(
     x: f32,
     y: f32,
     radius: f32,
@@ -268,11 +268,11 @@ fn get_stamp_bounds(
     width: u32,
     height: u32,
 ) -> StampBounds {
-    let (half_width, half_height) = get_stamp_half_size(radius, stamp_aspect);
-    get_stamp_bounds_from_half_size(x, y, half_width, half_height, width, height)
+    let (half_width, half_height) = stamp_half_size(radius, stamp_aspect);
+    stamp_bounds_from_half_size(x, y, half_width, half_height, width, height)
 }
 
-fn get_stamp_bounds_from_half_size(
+fn stamp_bounds_from_half_size(
     x: f32,
     y: f32,
     half_width: f32,
@@ -294,7 +294,7 @@ fn get_stamp_bounds_from_half_size(
     }
 }
 
-fn get_stamp_spacing(radius: f32, spacing: BrushSpacing) -> f32 {
+fn stamp_spacing(radius: f32, spacing: BrushSpacing) -> f32 {
     spacing.minimum.max(radius * spacing.ratio)
 }
 
@@ -373,15 +373,15 @@ mod tests {
     #[test]
     fn stamp_spacing_has_a_one_pixel_floor() {
         let spacing = BrushSpacing::default();
-        assert_eq!(get_stamp_spacing(0.5, spacing), 1.0);
-        assert_eq!(get_stamp_spacing(20.0, spacing), 1.0);
-        assert_eq!(get_stamp_spacing(100.0, spacing), 3.0);
+        assert_eq!(stamp_spacing(0.5, spacing), 1.0);
+        assert_eq!(stamp_spacing(20.0, spacing), 1.0);
+        assert_eq!(stamp_spacing(100.0, spacing), 3.0);
     }
 
     #[test]
     fn stamp_bounds_follow_image_aspect_ratio() {
-        assert_eq!(get_stamp_half_size(10.0, 2.0), (10.0, 5.0));
-        assert_eq!(get_stamp_half_size(10.0, 0.5), (5.0, 10.0));
+        assert_eq!(stamp_half_size(10.0, 2.0), (10.0, 5.0));
+        assert_eq!(stamp_half_size(10.0, 0.5), (5.0, 10.0));
     }
 
     #[test]
@@ -526,7 +526,7 @@ mod tests {
             );
         }
 
-        let expected_spacing = get_stamp_spacing(input[0].radius, BrushSpacing::default());
+        let expected_spacing = stamp_spacing(input[0].radius, BrushSpacing::default());
         assert!(queue.pending.len() > 100);
         assert!(queue
             .pending

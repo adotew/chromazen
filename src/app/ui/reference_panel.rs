@@ -78,7 +78,7 @@ impl GuiLayer {
                 && self.selected_reference == Some(reference.id)
                 && pointer_position.is_some_and(|pointer| {
                     workspace_rect.contains(pointer)
-                        && reference_resize_handle(rect).1.contains(pointer)
+                        && reference_resize_handle_geometry(rect).1.contains(pointer)
                 });
             self.pointer_over_reference |= pointer_over_image || pointer_over_resize;
             if self.selected_reference == Some(reference.id) {
@@ -90,7 +90,9 @@ impl GuiLayer {
             }
             self.reference_hit_rects.push(visible_rect);
             if !reference.locked && self.selected_reference == Some(reference.id) {
-                let resize_rect = reference_resize_handle(rect).1.intersect(workspace_rect);
+                let resize_rect = reference_resize_handle_geometry(rect)
+                    .1
+                    .intersect(workspace_rect);
                 if resize_rect.is_positive() {
                     self.reference_hit_rects.push(resize_rect);
                 }
@@ -121,7 +123,7 @@ impl GuiLayer {
                     let resize = (!reference.locked
                         && self.selected_reference == Some(reference.id))
                     .then(|| {
-                        let (_, handle_rect) = reference_resize_handle(rect);
+                        let (_, handle_rect) = reference_resize_handle_geometry(rect);
                         ui.interact(
                             handle_rect.intersect(workspace_rect),
                             egui::Id::new(("reference resize", reference.id.0)),

@@ -1,25 +1,25 @@
 use super::*;
 
 impl App {
-    pub(super) fn process_pending_commands(&mut self) -> bool {
+    pub(super) fn dispatch_pending_commands(&mut self) -> bool {
         if self.gui.is_none() || self.pending_commands.is_empty() {
             return false;
         }
 
         for command in std::mem::take(&mut self.pending_commands) {
             match command {
-                AppCommand::Editor(command) => self.process_editor_command(command),
-                AppCommand::Gallery(command) => self.process_gallery_command(command),
-                AppCommand::Navigation(command) => self.process_navigation_command(command),
-                AppCommand::Settings(command) => self.process_app_settings_command(command),
-                AppCommand::Ui(command) => self.process_ui_command(command),
+                AppCommand::Editor(command) => self.handle_editor_command(command),
+                AppCommand::Gallery(command) => self.handle_gallery_command(command),
+                AppCommand::Navigation(command) => self.handle_navigation_command(command),
+                AppCommand::Settings(command) => self.handle_app_settings_command(command),
+                AppCommand::Ui(command) => self.handle_ui_command(command),
             }
         }
         self.sync_history_menu();
         true
     }
 
-    fn process_editor_command(&mut self, command: EditorCommand) {
+    fn handle_editor_command(&mut self, command: EditorCommand) {
         let canvas_crop_active = self.gui.as_ref().is_some_and(GuiLayer::canvas_crop_active);
         if canvas_crop_active
             && matches!(
@@ -118,7 +118,7 @@ impl App {
                 if let Err(error) = result
                     && let Some(gui) = self.gui.as_mut()
                 {
-                    gui.show_error("Chromazen couldn’t resize the canvas.", error);
+                    gui.open_error_dialog("Chromazen couldn’t resize the canvas.", error);
                 }
             }
             EditorCommand::SetLayerTransform(transform) => {
@@ -240,10 +240,10 @@ impl App {
         }
     }
 
-    fn process_app_settings_command(&mut self, command: AppSettingsCommand) {
+    fn handle_app_settings_command(&mut self, command: AppSettingsCommand) {
         match command {
             AppSettingsCommand::SwitchBrush { tool, id } => {
-                self.process_settings_commands(vec![SettingsCommand::SwitchBrush {
+                self.handle_settings_commands(vec![SettingsCommand::SwitchBrush {
                     tool,
                     id,
                     reset_size: true,
@@ -259,11 +259,11 @@ impl App {
             }
             AppSettingsCommand::Save => {
                 let Some((brush, tool_brushes, tool_sizes, tool_opacities)) =
-                    self.gui.as_ref().map(GuiLayer::settings_snapshot)
+                    self.gui.as_ref().map(GuiLayer::settings_for_save)
                 else {
                     return;
                 };
-                self.process_settings_commands(vec![SettingsCommand::Save {
+                self.handle_settings_commands(vec![SettingsCommand::Save {
                     brush,
                     tool_brushes,
                     tool_sizes,
@@ -272,20 +272,20 @@ impl App {
             }
             AppSettingsCommand::ReloadConfiguration => {
                 let tool = self.input.tool().paint_tool().unwrap_or(PaintTool::Brush);
-                self.process_settings_commands(vec![SettingsCommand::ReloadFromDisk(tool)]);
+                self.handle_settings_commands(vec![SettingsCommand::ReloadFromDisk(tool)]);
             }
             AppSettingsCommand::ResetBrush => {
                 if let Some(gui) = self.gui.as_mut() {
-                    gui.reset_brush();
+                    gui.reset_active_brush_settings();
                 }
             }
             AppSettingsCommand::OpenConfigDirectory => {
-                self.process_settings_commands(vec![SettingsCommand::OpenConfigDirectory]);
+                self.handle_settings_commands(vec![SettingsCommand::OpenConfigDirectory]);
             }
         }
     }
 
-    fn process_navigation_command(&mut self, command: NavigationCommand) {
+    fn handle_navigation_command(&mut self, command: NavigationCommand) {
         if matches!(
             command,
             NavigationCommand::CreateArtwork { .. }
@@ -296,14 +296,14 @@ impl App {
         }
         match command {
             NavigationCommand::NewArtwork => {
-                if !self.navigation_pending()
+                if !self.has_pending_navigation()
                     && let Some(gui) = self.gui.as_mut()
                 {
                     gui.open_new_artwork_dialog();
                 }
             }
             NavigationCommand::CreateArtwork { width, height } => {
-                if !self.navigation_pending() {
+                if !self.has_pending_navigation() {
                     self.create_artwork([width, height]);
                 }
             }
@@ -328,33 +328,33 @@ impl App {
         }
     }
 
-    fn process_gallery_command(&mut self, command: GalleryCommand) {
+    fn handle_gallery_command(&mut self, command: GalleryCommand) {
         match command {
             GalleryCommand::Rename { id, title } => {
                 if let Err(error) = self.gallery.rename(&id, &title)
                     && let Some(gui) = self.gui.as_mut()
                 {
-                    gui.show_error("Chromazen couldn’t rename the artwork.", error);
+                    gui.open_error_dialog("Chromazen couldn’t rename the artwork.", error);
                 }
             }
             GalleryCommand::Duplicate(id) => {
-                if let Err(error) = self.gallery.duplicate(id)
+                if let Err(error) = self.gallery.start_duplicate(id)
                     && let Some(gui) = self.gui.as_mut()
                 {
-                    gui.show_error("Chromazen couldn’t duplicate the artwork.", error);
+                    gui.open_error_dialog("Chromazen couldn’t duplicate the artwork.", error);
                 }
             }
             GalleryCommand::Delete(id) => {
                 if let Err(error) = self.gallery.delete(&id)
                     && let Some(gui) = self.gui.as_mut()
                 {
-                    gui.show_error("Chromazen couldn’t delete the artwork.", error);
+                    gui.open_error_dialog("Chromazen couldn’t delete the artwork.", error);
                 }
             }
         }
     }
 
-    fn process_ui_command(&mut self, command: UiCommand) {
+    fn handle_ui_command(&mut self, command: UiCommand) {
         match command {
             UiCommand::ShowShortcuts => {
                 if let Some(gui) = self.gui.as_mut() {
@@ -380,7 +380,7 @@ impl App {
         if let Err(error) = result
             && let Some(gui) = self.gui.as_mut()
         {
-            gui.show_error("Chromazen couldn’t export the PNG.", error);
+            gui.open_error_dialog("Chromazen couldn’t export the PNG.", error);
         }
     }
 
@@ -401,7 +401,7 @@ impl App {
             .as_ref()
             .map(|gui| gui.brush_for_tool(paint_tool).to_owned());
         if let Some(id) = id {
-            self.process_settings_commands(vec![SettingsCommand::SwitchBrush {
+            self.handle_settings_commands(vec![SettingsCommand::SwitchBrush {
                 tool: paint_tool,
                 id,
                 reset_size: false,
@@ -447,7 +447,7 @@ impl App {
             .set_export_enabled(in_editor && !self.export.is_exporting());
     }
 
-    pub(super) fn process_settings_commands(&mut self, commands: Vec<SettingsCommand>) {
+    pub(super) fn handle_settings_commands(&mut self, commands: Vec<SettingsCommand>) {
         for command in commands {
             let Some(effect) = self.settings.handle_command(command) else {
                 continue;
@@ -456,9 +456,9 @@ impl App {
                 continue;
             };
             match effect {
-                SettingsEffect::Success(message) => gui.show_success(message),
+                SettingsEffect::Success(message) => gui.open_success_dialog(message),
                 SettingsEffect::Error(error) => {
-                    gui.show_error("Chromazen couldn’t update the settings.", error)
+                    gui.open_error_dialog("Chromazen couldn’t update the settings.", error)
                 }
             }
         }

@@ -20,7 +20,7 @@ fn vs_preview(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec
   return vec4f(x, y, 0.0, 1.0);
 }
 
-fn previewUv(pos: vec4f) -> vec2f {
+fn preview_uv(pos: vec4f) -> vec2f {
   let scale = min(
     preview.previewDims.x / preview.documentDims.x,
     preview.previewDims.y / preview.documentDims.y,
@@ -30,14 +30,14 @@ fn previewUv(pos: vec4f) -> vec2f {
   return (pos.xy - origin) / contentDims;
 }
 
-fn outsideDocument(uv: vec2f) -> bool {
+fn is_outside_document(uv: vec2f) -> bool {
   return any(uv < vec2f(0.0)) || any(uv > vec2f(1.0));
 }
 
 @fragment
 fn fs_layer(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let uv = previewUv(pos);
-  if outsideDocument(uv) {
+  let uv = preview_uv(pos);
+  if is_outside_document(uv) {
     return vec4f(0.0);
   }
   return textureSampleLevel(layerTexture, previewSampler, uv, 0.0);
@@ -45,8 +45,8 @@ fn fs_layer(@builtin(position) pos: vec4f) -> @location(0) vec4f {
 
 @fragment
 fn fs_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let uv = previewUv(pos);
-  if outsideDocument(uv) {
+  let uv = preview_uv(pos);
+  if is_outside_document(uv) {
     return vec4f(0.0);
   }
   let base = textureSampleLevel(layerTexture, previewSampler, uv, 0.0);
@@ -57,8 +57,8 @@ fn fs_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
 
 @fragment
 fn fs_eraser(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let uv = previewUv(pos);
-  if outsideDocument(uv) {
+  let uv = preview_uv(pos);
+  if is_outside_document(uv) {
     return vec4f(0.0);
   }
   let base = textureSampleLevel(layerTexture, previewSampler, uv, 0.0);

@@ -8,7 +8,7 @@ impl GuiLayer {
             .map(|(_, texture)| texture.id())
     }
 
-    pub(super) fn load_brush_preview(&mut self, brush_id: &str) {
+    pub(super) fn ensure_brush_preview_cached(&mut self, brush_id: &str) {
         if self.brush_preview_texture(brush_id).is_some()
             || self.failed_brush_previews.iter().any(|id| id == brush_id)
         {
@@ -42,7 +42,7 @@ impl GuiLayer {
         }
     }
 
-    pub(super) fn load_next_brush_preview(&mut self) {
+    pub(super) fn cache_next_missing_brush_preview(&mut self) {
         let next_id = self
             .brushes
             .iter()
@@ -52,12 +52,12 @@ impl GuiLayer {
             })
             .map(|brush| brush.id.clone());
         if let Some(id) = next_id {
-            self.load_brush_preview(&id);
+            self.ensure_brush_preview_cached(&id);
             self.context.request_repaint();
         }
     }
 
-    pub(super) fn show_brush_controls(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn show_brush_color_picker(&mut self, ui: &mut egui::Ui) {
         if color_picker::show(ui, &mut self.brush.color) {
             self.commands
                 .push(AppCommand::Editor(EditorCommand::SetBrushColor(
@@ -66,7 +66,7 @@ impl GuiLayer {
         }
     }
 
-    pub(super) fn show_tool_rail(
+    pub(super) fn show_toolbar(
         &mut self,
         ui: &mut egui::Ui,
         active_tool: EditorTool,
@@ -137,7 +137,7 @@ impl GuiLayer {
                         });
                 });
             if egui::Popup::is_id_open(ui.ctx(), popup_id) {
-                self.load_next_brush_preview();
+                self.cache_next_missing_brush_preview();
             }
         }
 

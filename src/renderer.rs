@@ -349,7 +349,7 @@ impl PaintRenderer {
             last_view_uniform: None,
         };
         renderer.fit_to_screen();
-        renderer.clear_canvas();
+        renderer.clear_selected_layer_and_history();
         renderer.reset_change_tracking(false);
         Ok(renderer)
     }
@@ -495,7 +495,7 @@ impl PaintRenderer {
     }
 
     pub fn sample_composited_color(&self, window_point: [f32; 2]) -> Option<[u8; 3]> {
-        if !self.can_replace_document() {
+        if !self.document_is_idle() {
             return None;
         }
         let pixel = document_pixel(
@@ -512,7 +512,7 @@ impl PaintRenderer {
     }
 
     pub fn can_paint(&self) -> bool {
-        self.can_replace_document()
+        self.document_is_idle()
             && self
                 .selected_layer_index()
                 .is_some_and(|index| self.layers[index].visible)
@@ -522,7 +522,7 @@ impl PaintRenderer {
         self.active_transform.as_ref().map(|active| active.value)
     }
 
-    pub(crate) fn selected_layer_content_bounds(&mut self) -> Option<LayerContentBounds> {
+    pub(crate) fn read_selected_layer_content_bounds(&mut self) -> Option<LayerContentBounds> {
         if let Some(active) = self.active_transform.as_ref() {
             return Some(active.bounds);
         }
@@ -560,7 +560,7 @@ impl PaintRenderer {
         if !self.can_paint() {
             return false;
         }
-        let Some(bounds) = self.selected_layer_content_bounds() else {
+        let Some(bounds) = self.read_selected_layer_content_bounds() else {
             return false;
         };
         let layer_index = self
@@ -631,7 +631,7 @@ impl PaintRenderer {
             .bounds
             .center();
         self.resources
-            .write_transform(self.gpu.queue(), transform, pivot);
+            .write_layer_transform_uniform(self.gpu.queue(), transform, pivot);
         let mut encoder =
             self.gpu
                 .device()
@@ -762,7 +762,7 @@ impl PaintRenderer {
         }
     }
 
-    pub(crate) fn can_replace_document(&self) -> bool {
+    pub(crate) fn document_is_idle(&self) -> bool {
         self.active_stroke.is_none()
             && !self.history.stroke_active()
             && !self.stamp_queue.has_pending()
@@ -793,7 +793,7 @@ impl PaintRenderer {
     }
 
     pub(crate) fn begin_document_layer_readback(&self) -> Result<LayerReadback, String> {
-        if !self.can_replace_document() {
+        if !self.document_is_idle() {
             return Err("the current document is busy".to_owned());
         }
         Ok(persistence::begin_read_layers(
@@ -805,7 +805,7 @@ impl PaintRenderer {
     }
 
     pub(crate) fn reset_document(&mut self, size: [u32; 2]) -> Result<(), String> {
-        if !self.can_replace_document() {
+        if !self.document_is_idle() {
             return Err("the current document is busy".to_owned());
         }
         self.canvas_size_constraints().validate(size)?;
@@ -840,7 +840,7 @@ impl PaintRenderer {
         size: [u32; 2],
         origin: [i32; 2],
     ) -> Result<bool, String> {
-        if !self.can_replace_document() {
+        if !self.document_is_idle() {
             return Err("the current document is busy".to_owned());
         }
         self.canvas_size_constraints().validate(size)?;
@@ -945,7 +945,7 @@ impl PaintRenderer {
         document: &DocumentManifest,
         pixels: Vec<image::RgbaImage>,
     ) -> Result<(), String> {
-        if !self.can_replace_document() {
+        if !self.document_is_idle() {
             return Err("the current document is busy".to_owned());
         }
         document.validate()?;
@@ -1053,7 +1053,7 @@ impl PaintRenderer {
     }
 
     pub(crate) fn select_layer(&mut self, id: LayerId) -> bool {
-        if !self.can_replace_document() || self.selection == id {
+        if !self.document_is_idle() || self.selection == id {
             return false;
         }
         if self.layers.iter().any(|layer| layer.id == id) {
@@ -1066,7 +1066,7 @@ impl PaintRenderer {
     }
 
     pub(crate) fn rename_layer(&mut self, id: LayerId, name: &str) -> bool {
-        if !self.can_replace_document() {
+        if !self.document_is_idle() {
             return false;
         }
         let Some(name) = normalized_layer_name(name) else {
@@ -1085,7 +1085,7 @@ impl PaintRenderer {
     }
 
     pub(crate) fn set_layer_clipped(&mut self, id: LayerId, clipped: bool) -> bool {
-        if !self.can_replace_document() {
+        if !self.document_is_idle() {
             return false;
         }
         let Some(index) = self.layers.iter().position(|layer| layer.id == id) else {
@@ -1101,7 +1101,7 @@ impl PaintRenderer {
     }
 
     pub(crate) fn set_layer_visibility(&mut self, id: LayerId, visible: bool) -> bool {
-        if !self.can_replace_document() {
+        if !self.document_is_idle() {
             return false;
         }
         let Some(layer) = self.layers.iter_mut().find(|layer| layer.id == id) else {
@@ -1117,7 +1117,7 @@ impl PaintRenderer {
     }
 
     pub(crate) fn set_layer_opacity(&mut self, id: LayerId, opacity: u8) -> bool {
-        if !self.can_replace_document() || opacity > 100 {
+        if !self.document_is_idle() || opacity > 100 {
             return false;
         }
         let Some(layer) = self.layers.iter_mut().find(|layer| layer.id == id) else {
@@ -1140,7 +1140,7 @@ impl PaintRenderer {
     }
 
     pub(crate) fn commit_layer_opacity(&mut self, id: LayerId, before: u8, after: u8) -> bool {
-        if !self.can_replace_document() || before == after || after > 100 {
+        if !self.document_is_idle() || before == after || after > 100 {
             return false;
         }
         let Some(layer) = self.layers.iter().find(|layer| layer.id == id) else {
@@ -1159,7 +1159,7 @@ impl PaintRenderer {
         target: LayerId,
         edge: DropEdge,
     ) -> bool {
-        if !self.can_replace_document() {
+        if !self.document_is_idle() {
             return false;
         }
         let Some(dragged_index) = self.layers.iter().position(|layer| layer.id == dragged) else {
@@ -1188,14 +1188,14 @@ impl PaintRenderer {
 
     pub(crate) fn set_background_color(&mut self, color: [u8; 3]) {
         let color = opaque_color(color);
-        if self.can_replace_document() && self.background_color != color {
+        if self.document_is_idle() && self.background_color != color {
             self.background_color = color;
             self.mark_metadata_changed();
         }
     }
 
     pub(crate) fn commit_background_color(&mut self, before: [u8; 3], after: [u8; 3]) {
-        if !self.can_replace_document() {
+        if !self.document_is_idle() {
             return;
         }
         let before = opaque_color(before);
@@ -1254,8 +1254,12 @@ impl PaintRenderer {
         }
         self.layers.insert(index, layer);
         self.selection = id;
-        self.history
-            .record_add(id, index, selection_before, self.layer_resource_byte_len());
+        self.history.record_layer_addition(
+            id,
+            index,
+            selection_before,
+            self.layer_resource_byte_len(),
+        );
         self.mark_metadata_changed();
         self.layer_versions.insert(id, self.document_generation);
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
@@ -1263,7 +1267,7 @@ impl PaintRenderer {
     }
 
     pub(crate) fn duplicate_selected_layer(&mut self) -> bool {
-        if !self.can_replace_document() {
+        if !self.document_is_idle() {
             return false;
         }
         let Some(source_index) = self.selected_layer_index() else {
@@ -1315,8 +1319,12 @@ impl PaintRenderer {
         let index = insertion_index(Some(source_index), self.layers.len());
         self.layers.insert(index, layer);
         self.selection = id;
-        self.history
-            .record_add(id, index, selection_before, self.layer_resource_byte_len());
+        self.history.record_layer_addition(
+            id,
+            index,
+            selection_before,
+            self.layer_resource_byte_len(),
+        );
         self.mark_metadata_changed();
         self.layer_versions.insert(id, self.document_generation);
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
@@ -1324,7 +1332,7 @@ impl PaintRenderer {
     }
 
     pub(crate) fn can_merge_layer_down(&self, id: LayerId) -> bool {
-        self.can_replace_document()
+        self.document_is_idle()
             && self
                 .layers
                 .iter()
@@ -1417,7 +1425,7 @@ impl PaintRenderer {
             self.layer_resource_byte_len(),
         );
         self.layer_versions.remove(&id);
-        let version = self.next_document_generation();
+        let version = self.advance_document_generation();
         self.layer_versions.insert(lower_id, version);
         self.metadata_version = version;
         true
@@ -1446,7 +1454,7 @@ impl PaintRenderer {
         let next_id = self.layers[replacement_index].id;
         let layer = self.layers.remove(index);
         self.selection = next_id;
-        self.history.record_delete(
+        self.history.record_layer_deletion(
             layer,
             index,
             selection_before,
@@ -1549,7 +1557,7 @@ impl PaintRenderer {
         self.flush_all_stamps();
         let Some(rect) = self.stamp_queue.end_stroke() else {
             self.history.end_empty_stroke();
-            self.finish_active_stroke();
+            self.clear_active_stroke_state();
             return;
         };
 
@@ -1621,7 +1629,7 @@ impl PaintRenderer {
         );
         self.gpu.queue().submit(std::iter::once(encoder.finish()));
         self.mark_layer_changed(active_stroke.layer_id);
-        self.finish_active_stroke();
+        self.clear_active_stroke_state();
     }
 
     pub fn can_undo(&self) -> bool {
@@ -1645,7 +1653,7 @@ impl PaintRenderer {
                 ) else {
                     return false;
                 };
-                self.apply_structure_effect(effect);
+                self.apply_history_structure_effect(effect);
                 true
             }
             Some(HistoryTarget::Stroke(layer_id)) => {
@@ -1689,7 +1697,7 @@ impl PaintRenderer {
                 ) else {
                     return false;
                 };
-                self.apply_structure_effect(effect);
+                self.apply_history_structure_effect(effect);
                 true
             }
             Some(HistoryTarget::Stroke(layer_id)) => {
@@ -1751,8 +1759,8 @@ impl PaintRenderer {
         )
     }
 
-    pub fn clear_canvas(&mut self) {
-        if !self.can_replace_document() {
+    pub fn clear_selected_layer_and_history(&mut self) {
+        if !self.document_is_idle() {
             return;
         }
         self.stamp_queue.clear();
@@ -2270,7 +2278,7 @@ impl PaintRenderer {
         }
     }
 
-    fn finish_active_stroke(&mut self) {
+    fn clear_active_stroke_state(&mut self) {
         self.active_stroke = None;
         self.resources.clear_stroke_preview();
     }
@@ -2318,14 +2326,14 @@ impl PaintRenderer {
             .collect();
     }
 
-    fn next_document_generation(&mut self) -> u64 {
+    fn advance_document_generation(&mut self) -> u64 {
         self.document_generation = self.document_generation.saturating_add(1);
         self.document_generation
     }
 
     fn mark_entire_document_changed(&mut self) {
         self.content_bounds_cache = None;
-        let version = self.next_document_generation();
+        let version = self.advance_document_generation();
         self.metadata_version = version;
         self.layer_versions = self
             .layers
@@ -2338,7 +2346,7 @@ impl PaintRenderer {
     }
 
     fn mark_metadata_changed(&mut self) {
-        self.metadata_version = self.next_document_generation();
+        self.metadata_version = self.advance_document_generation();
         self.clipping_bind_groups_dirty = true;
     }
 
@@ -2347,11 +2355,11 @@ impl PaintRenderer {
         if let Some(layer) = self.layers.iter_mut().find(|layer| layer.id == id) {
             layer.preview_dirty = true;
         }
-        let version = self.next_document_generation();
+        let version = self.advance_document_generation();
         self.layer_versions.insert(id, version);
     }
 
-    fn apply_structure_effect(&mut self, effect: StructureEffect) {
+    fn apply_history_structure_effect(&mut self, effect: StructureEffect) {
         self.clipping_bind_groups_dirty = true;
         if let StructureEffect::CanvasResized { size } = effect {
             self.resources
@@ -2360,7 +2368,7 @@ impl PaintRenderer {
             self.document_size = size;
             self.fit_to_screen();
         }
-        let version = self.next_document_generation();
+        let version = self.advance_document_generation();
         self.metadata_version = version;
         match effect {
             StructureEffect::MetadataOnly => {}

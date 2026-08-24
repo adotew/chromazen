@@ -1,7 +1,7 @@
 use super::*;
 
 impl App {
-    pub(super) fn navigation_pending(&self) -> bool {
+    pub(super) fn has_pending_navigation(&self) -> bool {
         self.pending_gallery || self.pending_exit
     }
 
@@ -41,7 +41,7 @@ impl App {
         };
         if let Err(error) = paint.reset_document(size) {
             if let Some(gui) = self.gui.as_mut() {
-                gui.show_error("Chromazen couldn’t create the artwork.", error);
+                gui.open_error_dialog("Chromazen couldn’t create the artwork.", error);
             }
             return;
         }
@@ -54,7 +54,7 @@ impl App {
             .map(|gui| gui.brush.color.to_array())
             .unwrap_or([170, 187, 204, 255]);
         self.autosave
-            .begin_new(id, "Untitled".to_owned(), brush_color);
+            .begin_new_session(id, "Untitled".to_owned(), brush_color);
         self.screen = AppScreen::Editor;
         self.pending_gallery = false;
         self.pending_new_artwork = None;
@@ -72,11 +72,11 @@ impl App {
         else {
             return;
         };
-        let opened = match self.gallery.open(id, constraints) {
+        let opened = match self.gallery.load_artwork(id, constraints) {
             Ok(opened) => opened,
             Err(error) => {
                 if let Some(gui) = self.gui.as_mut() {
-                    gui.show_error("Chromazen couldn’t open the artwork.", error);
+                    gui.open_error_dialog("Chromazen couldn’t open the artwork.", error);
                 }
                 return;
             }
@@ -86,7 +86,7 @@ impl App {
         };
         if let Err(error) = paint.load_document(&opened.document, opened.layers) {
             if let Some(gui) = self.gui.as_mut() {
-                gui.show_error("Chromazen couldn’t open the artwork.", error);
+                gui.open_error_dialog("Chromazen couldn’t open the artwork.", error);
             }
             return;
         }
@@ -95,7 +95,7 @@ impl App {
             gui.set_brush_color(opened.document.brush_color);
         }
         self.references.clear();
-        self.autosave.clear();
+        self.autosave.clear_session();
         self.screen = AppScreen::Editor;
         self.pending_gallery = false;
         self.pending_new_artwork = None;
@@ -104,7 +104,7 @@ impl App {
             window.set_title(&format!("{} • Chromazen", opened.title));
         }
         if opened.reference_sources.is_empty() {
-            self.autosave.begin_loaded(
+            self.autosave.begin_loaded_session(
                 opened.id,
                 opened.title,
                 versions,
@@ -123,9 +123,9 @@ impl App {
         }
     }
 
-    pub(super) fn finish_gallery_navigation(&mut self) {
+    pub(super) fn enter_gallery(&mut self) {
         self.gallery.refresh();
-        self.autosave.clear();
+        self.autosave.clear_session();
         self.references.clear();
         self.pending_reference_load = None;
         self.screen = AppScreen::Gallery;

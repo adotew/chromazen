@@ -1,7 +1,7 @@
 use super::*;
 
 impl GuiLayer {
-    pub(super) fn show_layer_transform(
+    pub(super) fn show_layer_transform_overlay(
         &mut self,
         ui: &mut egui::Ui,
         view: PaintViewSnapshot,
@@ -53,7 +53,7 @@ impl GuiLayer {
             [top_center, rotation_handle],
             egui::Stroke::new(1.5, egui::Color32::from_gray(160)),
         );
-        paint_resize_handles(&painter, &handles);
+        paint_resize_handle_markers(&painter, &handles);
         painter.circle_filled(rotation_handle, 7.0, egui::Color32::from_gray(232));
         painter.circle_stroke(
             rotation_handle,
@@ -79,13 +79,13 @@ impl GuiLayer {
             self.layer_transform_drag = Some(LayerTransformDrag {
                 handle,
                 start_transform: transform,
-                start_pointer: pointer_document(pointer, view, pixels_per_point),
+                start_pointer: pointer_document_position(pointer, view, pixels_per_point),
             });
         }
         if response.dragged()
             && let (Some(pointer), Some(drag)) = (pointer, self.layer_transform_drag)
         {
-            let pointer = pointer_document(pointer, view, pixels_per_point);
+            let pointer = pointer_document_position(pointer, view, pixels_per_point);
             self.commands
                 .push(AppCommand::Editor(EditorCommand::SetLayerTransform(
                     layer_transform_from_drag(drag, pointer, bounds, preserve_aspect),

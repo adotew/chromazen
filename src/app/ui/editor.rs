@@ -21,7 +21,7 @@ impl GuiLayer {
             let index = tool_index(paint_tool);
             self.tool_sizes[index] = self.brush.size;
             self.tool_opacities[index] = self.brush.opacity;
-            self.load_brush_preview(&self.tool_brushes[tool_index(paint_tool)].clone());
+            self.ensure_brush_preview_cached(&self.tool_brushes[tool_index(paint_tool)].clone());
         }
         self.sync_reference_textures(references);
         let raw_input = self.state.take_egui_input(window);
@@ -51,7 +51,7 @@ impl GuiLayer {
                     .default_width(280.0)
                     .resizable(false)
                     .collapsible(false)
-                    .show(ui.ctx(), |ui| self.show_brush_controls(ui));
+                    .show(ui.ctx(), |ui| self.show_brush_color_picker(ui));
             }
 
             if self.layers_window_open {
@@ -64,7 +64,9 @@ impl GuiLayer {
                     .max_width(LAYER_PANEL_WIDTH)
                     .max_height(LAYER_LIST_MAX_HEIGHT + 48.0)
                     .collapsible(false)
-                    .show(ui.ctx(), |ui| self.show_layers(ui, layers, background));
+                    .show(ui.ctx(), |ui| {
+                        self.show_layers_panel(ui, layers, background)
+                    });
                 if let Some(response) = layers_response {
                     let button_rect = egui::Rect::from_min_size(
                         response.response.rect.left_top() + egui::vec2(8.0, 6.0),
@@ -107,7 +109,7 @@ impl GuiLayer {
             let workspace_rect = ui.available_rect_before_wrap();
             self.show_workspace_references(ui.ctx(), references, workspace_view, workspace_rect);
             if tool == EditorTool::Transform {
-                self.show_layer_transform(
+                self.show_layer_transform_overlay(
                     ui,
                     workspace_view,
                     layer_content_bounds,
@@ -121,7 +123,7 @@ impl GuiLayer {
             let selected_tool = egui::Area::new(egui::Id::new("tool rail"))
                 .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 12.0))
                 .order(egui::Order::Foreground)
-                .show(ui.ctx(), |ui| self.show_tool_rail(ui, tool))
+                .show(ui.ctx(), |ui| self.show_toolbar(ui, tool))
                 .inner;
             if let Some(tool) = selected_tool {
                 self.commands
@@ -166,7 +168,7 @@ impl GuiLayer {
                 }
             }
             self.show_new_artwork_dialog(ui.ctx());
-            self.show_canvas_crop(ui.ctx(), workspace_view, workspace_rect);
+            self.show_canvas_crop_overlay(ui.ctx(), workspace_view, workspace_rect);
             self.clear_reference_selection_on_outside_press(ui.ctx());
             self.show_message_dialog(ui.ctx());
             self.show_shortcuts_dialog(ui.ctx());

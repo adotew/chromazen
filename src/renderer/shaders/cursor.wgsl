@@ -18,7 +18,7 @@ struct VertexOut {
   @location(1) uvPerPixel: vec2f,
 };
 
-fn quadCorner(vertexIndex: u32) -> vec2f {
+fn quad_corner(vertexIndex: u32) -> vec2f {
   let corners = array<vec2f, 6>(
     vec2f(-1.0, -1.0),
     vec2f(1.0, -1.0),
@@ -32,7 +32,7 @@ fn quadCorner(vertexIndex: u32) -> vec2f {
 
 @vertex
 fn vs(@builtin(vertex_index) vertexIndex: u32) -> VertexOut {
-  let corner = quadCorner(vertexIndex);
+  let corner = quad_corner(vertexIndex);
   let halfSize = max(cursor.halfSize, vec2f(0.5));
   let localOffset = corner * (halfSize + vec2f(2.0));
   let pixelOffset = cursor.axisX * localOffset.x + cursor.axisY * localOffset.y;
@@ -79,7 +79,7 @@ fn neighborhood(uv: vec2f, delta: vec2f) -> vec2f {
   );
 }
 
-fn adaptiveColor(rgb: vec3f) -> vec3f {
+fn adaptive_contrast_color(rgb: vec3f) -> vec3f {
   let value = max(max(rgb.r, rgb.g), rgb.b);
   if (value < 0.0001) {
     return vec3f(0.22);
@@ -100,7 +100,7 @@ fn fs(in: VertexOut) -> @location(0) vec4f {
   let outer = (1.0 - centerMask) * far.y;
 
   if (inner > 0.0 || outer > 0.0) {
-    let color = adaptiveColor(textureLoad(backdrop, vec2i(in.position.xy), 0).rgb);
+    let color = adaptive_contrast_color(textureLoad(backdrop, vec2i(in.position.xy), 0).rgb);
     return vec4f(color * 0.85, 0.85);
   }
   discard;

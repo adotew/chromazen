@@ -34,7 +34,7 @@ impl GuiLayer {
         self.canvas_crop.is_some()
     }
 
-    pub(super) fn show_canvas_crop(
+    pub(super) fn show_canvas_crop_overlay(
         &mut self,
         context: &egui::Context,
         view: PaintViewSnapshot,
@@ -48,7 +48,7 @@ impl GuiLayer {
         let handle_positions = canvas_crop_handle_positions(screen_corners);
         let pointer = context.pointer_latest_pos();
         let hovered_handle = pointer.and_then(|pointer| {
-            let pointer_document = pointer_document(pointer, view, pixels_per_point);
+            let pointer_document = pointer_document_position(pointer, view, pixels_per_point);
             canvas_crop_handle_at(pointer, pointer_document, rect, &handle_positions)
         });
         let cursor_handle = self
@@ -84,7 +84,7 @@ impl GuiLayer {
                     egui::Color32::from_white_alpha(8),
                     egui::Stroke::new(2.0, egui::Color32::from_gray(96)),
                 ));
-                paint_resize_handles(&painter, &handle_positions);
+                paint_resize_handle_markers(&painter, &handle_positions);
                 painter.text(
                     egui::pos2(overlay_rect.center().x, overlay_rect.top() + 16.0),
                     egui::Align2::CENTER_TOP,
@@ -106,7 +106,7 @@ impl GuiLayer {
             && let Some(handle) = hovered_handle
             && let Some(crop) = self.canvas_crop.as_mut()
         {
-            let pointer_document = pointer_document(pointer, view, pixels_per_point);
+            let pointer_document = pointer_document_position(pointer, view, pixels_per_point);
             crop.drag = Some(CanvasCropDrag {
                 handle,
                 start_rect: crop.rect,
@@ -118,7 +118,7 @@ impl GuiLayer {
             && let Some(crop) = self.canvas_crop.as_mut()
             && let Some(drag) = crop.drag
         {
-            let pointer_document = pointer_document(pointer, view, pixels_per_point);
+            let pointer_document = pointer_document_position(pointer, view, pixels_per_point);
             crop.rect = canvas_crop_rect_from_drag(drag, pointer_document);
         }
         if response.drag_stopped()

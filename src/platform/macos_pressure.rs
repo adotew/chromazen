@@ -81,7 +81,7 @@ mod macos_impl {
                         if should_use_pressure {
                             pressure_state.note_pen_pressure(pressure, true, is_pen_device)
                         } else {
-                            pressure_state.clear_pen()
+                            pressure_state.reset_pen_state()
                         }
                     }
                     NSEventType::LeftMouseUp | NSEventType::MouseCancelled => {

@@ -104,7 +104,7 @@ impl ArtworkStore {
         Self { root: root.into() }
     }
 
-    pub(crate) fn catalog(&self) -> ArtworkCatalog {
+    pub(crate) fn scan_catalog(&self) -> ArtworkCatalog {
         let mut catalog = ArtworkCatalog::default();
         self.cleanup_abandoned_writes();
         let entries = match fs::read_dir(&self.root) {
@@ -322,8 +322,8 @@ impl ArtworkStore {
                 current_revision: next_revision,
                 modified_unix_ms: now_unix_ms(),
             };
-            let metadata_result = atomic_toml(&artwork_dir.join(PROJECT_FILE), &project);
-            self.finish_project_commit(id, &project, &final_revision, metadata_result)?;
+            let metadata_result = write_toml_atomically(&artwork_dir.join(PROJECT_FILE), &project);
+            self.resolve_project_commit_result(id, &project, &final_revision, metadata_result)?;
             Ok(project)
         })();
         if result.is_err() {
@@ -382,7 +382,7 @@ impl ArtworkStore {
         let mut project = self.read_project(id)?;
         project.title = normalized_title(title).map_err(ArtworkError::new)?;
         project.modified_unix_ms = now_unix_ms();
-        atomic_toml(&self.artwork_path(id).join(PROJECT_FILE), &project)
+        write_toml_atomically(&self.artwork_path(id).join(PROJECT_FILE), &project)
     }
 
     pub(crate) fn delete(&self, id: &ArtworkId) -> Result<(), ArtworkError> {
@@ -393,7 +393,7 @@ impl ArtworkStore {
         fs::remove_dir_all(&trash).map_err(|error| ArtworkError::io("delete", &trash, error))
     }
 
-    fn finish_project_commit(
+    fn resolve_project_commit_result(
         &self,
         id: &ArtworkId,
         project: &ProjectManifest,
@@ -494,7 +494,7 @@ fn reuse_file(source: &Path, destination: &Path) -> Result<(), ArtworkError> {
     Ok(())
 }
 
-fn atomic_toml(path: &Path, value: &impl serde::Serialize) -> Result<(), ArtworkError> {
+fn write_toml_atomically(path: &Path, value: &impl serde::Serialize) -> Result<(), ArtworkError> {
     let source = toml::to_string_pretty(value)
         .map_err(|error| ArtworkError::new(format!("failed to serialize metadata: {error}")))?;
     let mut file = AtomicWriteFile::options()
@@ -581,7 +581,7 @@ mod tests {
         let loaded = store.load(&id).unwrap();
         assert_eq!(loaded.summary.title, "Untitled");
         assert_eq!(loaded.document.layers[0].id, 1);
-        assert_eq!(store.catalog().artworks.len(), 1);
+        assert_eq!(store.scan_catalog().artworks.len(), 1);
     }
 
     #[test]
@@ -591,7 +591,7 @@ mod tests {
         let id = ArtworkId::new();
         store.commit_revision(&id, "Untitled", revision(1)).unwrap();
 
-        let catalog = store.catalog();
+        let catalog = store.scan_catalog();
         assert_eq!(catalog.artworks[0].dimensions, [1, 1]);
 
         let loaded = store.load(&id).unwrap();
@@ -666,7 +666,7 @@ mod tests {
         store
             .commit_revision(&ArtworkId::new(), "Untitled", revision(2))
             .unwrap();
-        assert_eq!(store.catalog().artworks.len(), 2);
+        assert_eq!(store.scan_catalog().artworks.len(), 2);
     }
 
     #[test]
@@ -676,9 +676,9 @@ mod tests {
         let id = ArtworkId::new();
         store.commit_revision(&id, "Untitled", revision(1)).unwrap();
         store.rename(&id, "Study").unwrap();
-        assert_eq!(store.catalog().artworks[0].title, "Study");
+        assert_eq!(store.scan_catalog().artworks[0].title, "Study");
         store.delete(&id).unwrap();
-        assert!(store.catalog().artworks.is_empty());
+        assert!(store.scan_catalog().artworks.is_empty());
     }
 
     #[test]
@@ -696,7 +696,7 @@ mod tests {
         )
         .unwrap();
 
-        let catalog = store.catalog();
+        let catalog = store.scan_catalog();
         assert_eq!(catalog.artworks.len(), 1);
         assert_eq!(catalog.warnings.len(), 1);
     }
@@ -720,7 +720,7 @@ mod tests {
         fs::create_dir_all(&trash).unwrap();
         fs::write(trash.join("pixels"), b"data").unwrap();
 
-        store.catalog();
+        store.scan_catalog();
 
         assert!(!trash.exists());
     }
@@ -753,7 +753,7 @@ mod tests {
 
         assert!(
             store
-                .finish_project_commit(
+                .resolve_project_commit_result(
                     &id,
                     &next_project,
                     &uncommitted,
@@ -784,7 +784,7 @@ mod tests {
 
         assert!(
             store
-                .finish_project_commit(
+                .resolve_project_commit_result(
                     &id,
                     &project,
                     &uncommitted,

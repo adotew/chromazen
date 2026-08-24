@@ -86,7 +86,9 @@ fn parse_legacy(
         }
 
         match parse_legacy_sample(&mut block, version) {
-            Ok(brush) => store_decoded_brush(&mut parsed, &mut decoded_pixels, brush)?,
+            Ok(brush) => {
+                append_decoded_brush_within_budget(&mut parsed, &mut decoded_pixels, brush)?
+            }
             Err(error) => parsed
                 .warnings
                 .push(format!("Brush {} could not be decoded: {error}", index + 1)),
@@ -182,7 +184,7 @@ fn parse_sample_section(
         }
         let mut block = section.take(block_size)?;
         match parse_tagged_sample(&mut block, subversion) {
-            Ok(brush) => store_decoded_brush(&mut parsed, decoded_pixels, brush)?,
+            Ok(brush) => append_decoded_brush_within_budget(&mut parsed, decoded_pixels, brush)?,
             Err(error) => parsed
                 .warnings
                 .push(format!("Brush {index} could not be decoded: {error}")),
@@ -365,7 +367,7 @@ fn read_ucs2_name(input: &mut Reader<'_>) -> Result<Option<String>, AbrError> {
     Ok((!name.is_empty()).then(|| name.to_owned()))
 }
 
-fn store_decoded_brush(
+fn append_decoded_brush_within_budget(
     parsed: &mut ParsedAbr,
     decoded_pixels: &mut usize,
     brush: AbrBrush,
@@ -579,7 +581,7 @@ mod tests {
             spacing_percent: None,
         };
 
-        let error = store_decoded_brush(&mut parsed, &mut decoded_pixels, brush)
+        let error = append_decoded_brush_within_budget(&mut parsed, &mut decoded_pixels, brush)
             .expect_err("decoded data over limit");
 
         assert!(error.to_string().contains("decoded brush data exceeds"));

@@ -288,7 +288,7 @@ mod imp {
                     self.active_pointer = Some(pointer_id);
                     let infos = pen_history(pointer_id);
                     for info in infos.iter().rev() {
-                        self.emit_info(message.hwnd, info);
+                        self.handle_pointer_pen_info(message.hwnd, info);
                     }
                     // Prevent queued frame messages from replaying samples we emitted from history.
                     unsafe {
@@ -308,7 +308,7 @@ mod imp {
             }
         }
 
-        fn emit_info(&mut self, hwnd: HWND, info: &POINTER_PEN_INFO) {
+        fn handle_pointer_pen_info(&mut self, hwnd: HWND, info: &POINTER_PEN_INFO) {
             let flags = info.pointerInfo.pointerFlags;
             let action = if flags & (POINTER_FLAG_CANCELED | POINTER_FLAG_CAPTURECHANGED) != 0 {
                 WindowsPenAction::Cancel

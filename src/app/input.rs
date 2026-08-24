@@ -68,7 +68,7 @@ struct BrushResizeDrag {
 }
 
 impl BrushResizeDrag {
-    fn adjustment(&mut self, point: [f32; 2]) -> Option<BrushAdjustment> {
+    fn resolve_adjustment_axis(&mut self, point: [f32; 2]) -> Option<BrushAdjustment> {
         if self.adjustment.is_none() {
             let delta_x = (point[0] - self.start_x).abs();
             let delta_y = (point[1] - self.start_y).abs();
@@ -208,7 +208,7 @@ impl PaintInputController {
         self.resize_origin.is_some()
     }
 
-    pub fn captures_drag_event(&self, _event: &WindowEvent) -> bool {
+    pub fn has_active_document_drag(&self) -> bool {
         self.is_drawing
             || self.is_panning
             || self.resize_origin.is_some()
@@ -216,7 +216,7 @@ impl PaintInputController {
             || self.eyedropper_drag.is_some()
     }
 
-    pub fn observe_event(&mut self, event: &WindowEvent) -> bool {
+    pub fn update_pointer_and_modifier_state(&mut self, event: &WindowEvent) -> bool {
         match event {
             WindowEvent::CursorMoved { position, .. } => {
                 let next = [position.x as f32, position.y as f32];
@@ -273,7 +273,7 @@ impl PaintInputController {
         self.select_tool(tool)
     }
 
-    pub fn app_command(&self, event: &WindowEvent) -> Option<AppCommand> {
+    pub fn command_for_platform_shortcut(&self, event: &WindowEvent) -> Option<AppCommand> {
         if cfg!(any(target_os = "macos", target_os = "windows")) {
             return None;
         }
@@ -319,7 +319,7 @@ impl PaintInputController {
                         && self.sample_color_at(paint, brush, next, now);
                 }
                 if let Some(mut drag) = self.resize_drag {
-                    let Some(adjustment) = drag.adjustment(next) else {
+                    let Some(adjustment) = drag.resolve_adjustment_axis(next) else {
                         return false;
                     };
                     self.resize_drag = Some(drag);
@@ -1004,20 +1004,20 @@ mod tests {
             start_opacity: 0.5,
             adjustment: None,
         };
-        assert_eq!(horizontal.adjustment([100.0, 200.0]), None);
+        assert_eq!(horizontal.resolve_adjustment_axis([100.0, 200.0]), None);
         assert_eq!(
-            horizontal.adjustment([120.0, 201.0]),
+            horizontal.resolve_adjustment_axis([120.0, 201.0]),
             Some(BrushAdjustment::Opacity)
         );
         assert_eq!(
-            horizontal.adjustment([101.0, 250.0]),
+            horizontal.resolve_adjustment_axis([101.0, 250.0]),
             Some(BrushAdjustment::Opacity)
         );
 
         let mut vertical = horizontal;
         vertical.adjustment = None;
         assert_eq!(
-            vertical.adjustment([101.0, 220.0]),
+            vertical.resolve_adjustment_axis([101.0, 220.0]),
             Some(BrushAdjustment::Size)
         );
     }
@@ -1034,12 +1034,11 @@ mod tests {
         assert_eq!(input.brush_cursor_pos(), None);
         assert_eq!(input.eyedropper_indicator_pos(), Some([40.0, 50.0]));
         assert!(input.is_eyedropper_active());
-        assert!(!input.captures_drag_event(&WindowEvent::Focused(false)));
+        assert!(!input.has_active_document_drag());
     }
 
     #[test]
     fn active_document_interactions_capture_consumed_events() {
-        let event = WindowEvent::Focused(false);
         let drawing = PaintInputController {
             is_drawing: true,
             ..PaintInputController::default()
@@ -1049,9 +1048,9 @@ mod tests {
             ..PaintInputController::default()
         };
 
-        assert!(drawing.captures_drag_event(&event));
-        assert!(panning.captures_drag_event(&event));
-        assert!(!PaintInputController::default().captures_drag_event(&event));
+        assert!(drawing.has_active_document_drag());
+        assert!(panning.has_active_document_drag());
+        assert!(!PaintInputController::default().has_active_document_drag());
     }
 
     #[test]
@@ -1079,7 +1078,7 @@ mod tests {
         assert_eq!(input.brush_cursor_pos(), None);
         assert_eq!(input.brush_resize_pos(), Some([20.0, 30.0]));
         assert!(input.is_resizing_brush());
-        assert!(input.captures_drag_event(&WindowEvent::Focused(false)));
+        assert!(input.has_active_document_drag());
         assert!(input.brush_resize_is_anchored());
 
         input.resize_drag = None;

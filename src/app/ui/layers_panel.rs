@@ -1,7 +1,7 @@
 use super::*;
 
 impl GuiLayer {
-    pub(super) fn show_layers(
+    pub(super) fn show_layers_panel(
         &mut self,
         ui: &mut egui::Ui,
         layers: &LayerSnapshot,

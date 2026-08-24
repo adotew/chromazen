@@ -62,7 +62,10 @@ impl ReferenceBoard {
         self.next_resource_version = self.next_resource_version.saturating_add(1).max(1);
     }
 
-    pub(crate) fn load(&mut self, references: Vec<(ReferenceManifest, DecodedReference)>) {
+    pub(crate) fn replace_with_loaded_references(
+        &mut self,
+        references: Vec<(ReferenceManifest, DecodedReference)>,
+    ) {
         self.clear();
         self.images = references
             .into_iter()
@@ -238,7 +241,7 @@ fn prepare_imported_reference(
 ) -> Result<DecodedReference, String> {
     let image = resize_reference(image, target_size);
     let png = encode_png(&image)?;
-    let pixels = texture_pixels(image);
+    let pixels = fit_reference_pixels_for_texture(image);
     Ok(DecodedReference {
         pixels: Arc::new(pixels),
         png: Arc::new(png),
@@ -267,7 +270,7 @@ fn resize_reference(image: image::DynamicImage, target_size: (u32, u32)) -> imag
     }
 }
 
-fn texture_pixels(image: image::RgbaImage) -> image::RgbaImage {
+fn fit_reference_pixels_for_texture(image: image::RgbaImage) -> image::RgbaImage {
     let texture_size = fitted_texture_pixel_size(image.dimensions());
     if image.dimensions() == texture_size {
         image
@@ -368,7 +371,7 @@ mod tests {
             locked: false,
         };
         let mut board = ReferenceBoard::default();
-        board.load(vec![
+        board.replace_with_loaded_references(vec![
             (manifest(7), decoded(10, 10)),
             (manifest(2), decoded(10, 10)),
         ]);

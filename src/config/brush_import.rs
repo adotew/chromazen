@@ -72,7 +72,7 @@ impl ConfigStore {
             );
             let staged_brush = staging.0.join(&id);
 
-            match stage_brush(&staged_brush, &name, brush).and_then(|()| {
+            match write_staged_brush(&staged_brush, &name, brush).and_then(|()| {
                 let destination = self.brushes_path().join(&id);
                 fs::rename(&staged_brush, &destination).map_err(|error| {
                     ConfigError::io("install imported brush at", &destination, error)
@@ -97,10 +97,10 @@ impl ConfigStore {
     }
 }
 
-fn stage_brush(path: &Path, name: &str, brush: AbrBrush) -> Result<(), ConfigError> {
+fn write_staged_brush(path: &Path, name: &str, brush: AbrBrush) -> Result<(), ConfigError> {
     fs::create_dir(path)
         .map_err(|error| ConfigError::io("create staged brush directory", path, error))?;
-    let image = stamp_image(&brush)?;
+    let image = build_stamp_image_from_abr_mask(&brush)?;
     let diameter = brush.width.max(brush.height).clamp(1, 2_000) as f32;
     let preset = BrushPreset {
         name: name.to_owned(),
@@ -131,7 +131,7 @@ fn stage_brush(path: &Path, name: &str, brush: AbrBrush) -> Result<(), ConfigErr
     Ok(())
 }
 
-fn stamp_image(brush: &AbrBrush) -> Result<RgbaImage, ConfigError> {
+fn build_stamp_image_from_abr_mask(brush: &AbrBrush) -> Result<RgbaImage, ConfigError> {
     let grayscale = GrayImage::from_raw(brush.width, brush.height, brush.mask.clone())
         .ok_or_else(|| ConfigError::new("ABR brush tip dimensions do not match its image data"))?;
     let grayscale = if brush.width > MAX_IMPORTED_STAMP_DIMENSION
@@ -274,7 +274,7 @@ mod tests {
             spacing_percent: None,
         };
 
-        stage_brush(&brush_path, "Imported", brush).expect("staged brush");
+        write_staged_brush(&brush_path, "Imported", brush).expect("staged brush");
         let source = fs::read_to_string(brush_path.join("brush.toml")).expect("preset");
         let preset: BrushPreset = toml::from_str(&source).expect("parsed preset");
 
@@ -291,7 +291,7 @@ mod tests {
             spacing_percent: None,
         };
 
-        let image = stamp_image(&brush).expect("scaled stamp");
+        let image = build_stamp_image_from_abr_mask(&brush).expect("scaled stamp");
 
         assert_eq!(image.dimensions(), (MAX_IMPORTED_STAMP_DIMENSION, 1));
     }

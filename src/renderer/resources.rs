@@ -1164,7 +1164,7 @@ impl RenderResources {
         })
     }
 
-    pub(crate) fn write_transform(
+    pub(crate) fn write_layer_transform_uniform(
         &self,
         queue: &wgpu::Queue,
         transform: LayerTransform,

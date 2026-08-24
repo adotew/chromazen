@@ -28,7 +28,7 @@ struct VertexOut {
   @location(2) strength: f32,
 };
 
-fn quadCorner(vertexIndex: u32) -> vec2f {
+fn quad_corner(vertexIndex: u32) -> vec2f {
   let corners = array<vec2f, 6>(
     vec2f(-1.0, -1.0),
     vec2f(1.0, -1.0),
@@ -47,7 +47,7 @@ fn vs(
   @builtin(instance_index) instanceIndex: u32,
 ) -> VertexOut {
   let brush = brushes[instanceIndex];
-  let corner = quadCorner(vertexIndex);
+  let corner = quad_corner(vertexIndex);
   let offset = corner * brush.halfSize;
   let paintPos = brush.center + offset;
 
@@ -64,7 +64,7 @@ fn vs(
   return out;
 }
 
-fn sampleSource(pos: vec2f) -> vec4f {
+fn sample_source(pos: vec2f) -> vec4f {
   // Varying paint positions are already at texel centers (n + 0.5).
   let clampedPos = clamp(pos, vec2f(0.5), paint.dims - vec2f(0.5));
   return textureSampleLevel(sourceTexture, brushSampler, clampedPos / paint.dims, 0.0);
@@ -76,6 +76,6 @@ fn fs(in: VertexOut) -> @location(0) vec4f {
   let base = clamp(in.strength * mask, 0.0, 1.0);
   let strength = SMUDGE_MAX_ADVECTION * base;
   let targetColor = textureLoad(sourceTexture, vec2i(in.position.xy), 0);
-  let draggedColor = sampleSource(in.sourcePos);
+  let draggedColor = sample_source(in.sourcePos);
   return mix(targetColor, draggedColor, strength);
 }

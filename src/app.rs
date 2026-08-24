@@ -225,10 +225,10 @@ impl ApplicationHandler<AppEvent> for App {
 
         match event {
             WindowEvent::CloseRequested => self.request_exit(),
-            WindowEvent::RedrawRequested => self.render(window.as_ref(), event_loop),
+            WindowEvent::RedrawRequested => self.redraw(window.as_ref(), event_loop),
             WindowEvent::DroppedFile(path)
                 if self.screen == AppScreen::Editor
-                    && !self.navigation_pending()
+                    && !self.has_pending_navigation()
                     && !self.reference_load.is_loading() =>
             {
                 let placement = self
@@ -241,11 +241,11 @@ impl ApplicationHandler<AppEvent> for App {
                 }
             }
             event => {
-                let navigation_pending = self.navigation_pending();
+                let navigation_pending = self.has_pending_navigation();
                 let Some(gui) = self.gui.as_mut() else {
                     return;
                 };
-                let cursor_changed = self.input.observe_event(&event);
+                let cursor_changed = self.input.update_pointer_and_modifier_state(&event);
                 let canvas_crop_active =
                     self.screen == AppScreen::Editor && gui.canvas_crop_active();
                 if self.screen == AppScreen::Editor
@@ -260,7 +260,7 @@ impl ApplicationHandler<AppEvent> for App {
                         }
                         KeyboardShortcut::CycleTool => {
                             if let Some(tool) = self.input.tool().paint_tool() {
-                                gui.remember_tool_settings(tool);
+                                gui.store_current_brush_settings_for_tool(tool);
                             }
                             if self.input.cycle_tool() {
                                 self.pending_commands.push(AppCommand::Editor(
@@ -313,7 +313,7 @@ impl ApplicationHandler<AppEvent> for App {
                     && !navigation_pending
                     && !canvas_crop_active
                     && !egui_consumed)
-                    .then(|| self.input.app_command(&event))
+                    .then(|| self.input.command_for_platform_shortcut(&event))
                     .flatten();
                 if let Some(command) = history_command {
                     self.pending_commands.push(command);
@@ -321,7 +321,7 @@ impl ApplicationHandler<AppEvent> for App {
                 } else if self.screen == AppScreen::Editor
                     && !navigation_pending
                     && !canvas_crop_active
-                    && (self.input.captures_drag_event(&event)
+                    && (self.input.has_active_document_drag()
                         || wheel_over_reference
                         || (!egui_consumed && !primary_press_over_reference))
                     && let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_mut())
@@ -337,7 +337,7 @@ impl ApplicationHandler<AppEvent> for App {
                     );
                     if self.input.tool() != previous_tool {
                         if let Some(tool) = previous_tool.paint_tool() {
-                            gui.remember_tool_settings(tool);
+                            gui.store_current_brush_settings_for_tool(tool);
                         }
                         self.pending_commands
                             .push(AppCommand::Editor(EditorCommand::SelectTool(
@@ -428,7 +428,7 @@ impl App {
                 self.pressure_state.end_pen_contact(true);
             }
             PenEvent::Leave => {
-                self.pressure_state.clear_pen();
+                self.pressure_state.reset_pen_state();
             }
             PenEvent::Down { .. } | PenEvent::Motion { .. } => {}
         }

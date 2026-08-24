@@ -83,7 +83,7 @@ impl GuiLayer {
         }
     }
 
-    pub(crate) fn show_error(
+    pub(crate) fn open_error_dialog(
         &mut self,
         message: impl Into<String>,
         details: impl std::fmt::Display,
@@ -92,7 +92,7 @@ impl GuiLayer {
         self.context.request_repaint();
     }
 
-    pub(crate) fn show_success(&mut self, message: impl Into<String>) {
+    pub(crate) fn open_success_dialog(&mut self, message: impl Into<String>) {
         self.message_dialog = Some(MessageDialog::success(message));
         self.context.request_repaint();
     }

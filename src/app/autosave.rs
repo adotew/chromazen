@@ -74,7 +74,7 @@ impl AutosaveController {
         }
     }
 
-    pub(super) fn begin_new(&mut self, id: ArtworkId, title: String, brush_color: [u8; 4]) {
+    pub(super) fn begin_new_session(&mut self, id: ArtworkId, title: String, brush_color: [u8; 4]) {
         self.brush_color = brush_color;
         self.session = Some(ArtworkSession {
             id,
@@ -98,7 +98,7 @@ impl AutosaveController {
         });
     }
 
-    pub(super) fn begin_loaded(
+    pub(super) fn begin_loaded_session(
         &mut self,
         id: ArtworkId,
         title: String,
@@ -122,7 +122,7 @@ impl AutosaveController {
         });
     }
 
-    pub(super) fn clear(&mut self) {
+    pub(super) fn clear_session(&mut self) {
         self.session = None;
     }
 
@@ -148,7 +148,7 @@ impl AutosaveController {
         if session.in_flight.is_some() {
             return SaveStatus::Saving;
         }
-        if current_versions(paint, references, self.brush_color) != session.saved_versions {
+        if capture_save_versions(paint, references, self.brush_color) != session.saved_versions {
             SaveStatus::Waiting
         } else {
             SaveStatus::Clean
@@ -175,11 +175,11 @@ impl AutosaveController {
     }
 
     pub(super) fn update(&mut self, paint: &PaintRenderer, references: &ReferenceBoard) -> bool {
-        let mut changed = self.process_completions(paint, references);
+        let mut changed = self.apply_save_completions(paint, references);
         let Some(session) = self.session.as_mut() else {
             return changed;
         };
-        let current = current_versions(paint, references, self.brush_color);
+        let current = capture_save_versions(paint, references, self.brush_color);
         let target = session
             .in_flight
             .as_ref()
@@ -200,7 +200,7 @@ impl AutosaveController {
         }
         session.save_requested = false;
         session.error = None;
-        match self.start_save(paint, references, current) {
+        match self.start_save_task(paint, references, current) {
             Ok(()) => true,
             Err(error) => {
                 if let Some(session) = self.session.as_mut() {
@@ -212,7 +212,7 @@ impl AutosaveController {
         }
     }
 
-    fn start_save(
+    fn start_save_task(
         &mut self,
         paint: &PaintRenderer,
         references: &ReferenceBoard,
@@ -269,7 +269,11 @@ impl AutosaveController {
         Ok(())
     }
 
-    fn process_completions(&mut self, paint: &PaintRenderer, references: &ReferenceBoard) -> bool {
+    fn apply_save_completions(
+        &mut self,
+        paint: &PaintRenderer,
+        references: &ReferenceBoard,
+    ) -> bool {
         let mut changed = false;
         while let Ok(completion) = self.completion_receiver.try_recv() {
             let Some(session) = self.session.as_mut() else {
@@ -283,7 +287,7 @@ impl AutosaveController {
                 Ok(()) => {
                     session.saved_versions = completion.versions;
                     session.error = None;
-                    if current_versions(paint, references, self.brush_color)
+                    if capture_save_versions(paint, references, self.brush_color)
                         != session.saved_versions
                     {
                         session.dirty_since = Some(Instant::now());
@@ -300,7 +304,7 @@ impl AutosaveController {
     }
 }
 
-fn current_versions(
+fn capture_save_versions(
     paint: &PaintRenderer,
     references: &ReferenceBoard,
     brush_color: [u8; 4],
@@ -396,7 +400,7 @@ fn encode_thumbnail(
         return Err("thumbnail layers do not match document metadata".to_owned());
     }
 
-    let (thumbnail_width, thumbnail_height) = fit_dimensions(source_size, THUMBNAIL_SIZE);
+    let (thumbnail_width, thumbnail_height) = fit_thumbnail_dimensions(source_size, THUMBNAIL_SIZE);
     let resized: Vec<_> = layers
         .iter()
         .map(|(_, layer)| {
@@ -427,7 +431,7 @@ fn encode_thumbnail(
     encode_png(&thumbnail)
 }
 
-fn fit_dimensions(source: (u32, u32), target: u32) -> (u32, u32) {
+fn fit_thumbnail_dimensions(source: (u32, u32), target: u32) -> (u32, u32) {
     if source.0 >= source.1 {
         (
             target,

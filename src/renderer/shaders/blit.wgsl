@@ -22,7 +22,7 @@ fn vs(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4f {
   return vec4f(x, y, 0.0, 1.0);
 }
 
-fn paintUv(pos: vec4f) -> vec2f {
+fn paint_uv(pos: vec4f) -> vec2f {
   let window = vec3f(pos.xy, 1.0);
   let document = vec2f(
     dot(view.documentFromWindowX.xyz, window),
@@ -31,13 +31,13 @@ fn paintUv(pos: vec4f) -> vec2f {
   return document / view.paintDims;
 }
 
-fn outsideCanvas(uv: vec2f) -> bool {
+fn is_outside_canvas(uv: vec2f) -> bool {
   return uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0;
 }
 
 @fragment
 fn fs_background(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  if (outsideCanvas(paintUv(pos))) {
+  if (is_outside_canvas(paint_uv(pos))) {
     return vec4f(0.0);
   }
   return view.backgroundColor;
@@ -45,8 +45,8 @@ fn fs_background(@builtin(position) pos: vec4f) -> @location(0) vec4f {
 
 @fragment
 fn fs_layer(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let uv = paintUv(pos);
-  if (outsideCanvas(uv)) {
+  let uv = paint_uv(pos);
+  if (is_outside_canvas(uv)) {
     return vec4f(0.0);
   }
   // Paint textures are premultiplied, so opacity scales every channel.

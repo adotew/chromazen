@@ -30,7 +30,7 @@ fn vs_preview(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4f {
   return vec4f(x, y, 0.0, 1.0);
 }
 
-fn paintUv(pos: vec4f) -> vec2f {
+fn paint_uv(pos: vec4f) -> vec2f {
   let window = vec3f(pos.xy, 1.0);
   let document = vec2f(
     dot(view.documentFromWindowX.xyz, window),
@@ -39,14 +39,14 @@ fn paintUv(pos: vec4f) -> vec2f {
   return document / view.paintDims;
 }
 
-fn outsideCanvas(uv: vec2f) -> bool {
+fn is_outside_canvas(uv: vec2f) -> bool {
   return uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0;
 }
 
 @fragment
 fn fs_preview_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let uv = paintUv(pos);
-  if (outsideCanvas(uv)) {
+  let uv = paint_uv(pos);
+  if (is_outside_canvas(uv)) {
     return vec4f(0.0);
   }
 
@@ -59,8 +59,8 @@ fn fs_preview_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
 
 @fragment
 fn fs_preview_eraser(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let uv = paintUv(pos);
-  if (outsideCanvas(uv)) {
+  let uv = paint_uv(pos);
+  if (is_outside_canvas(uv)) {
     return vec4f(0.0);
   }
 
@@ -76,24 +76,24 @@ fn vs_group(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4f {
   return vec4f(x, y, 0.0, 1.0);
 }
 
-fn groupUv(pos: vec4f) -> vec2f {
+fn group_uv(pos: vec4f) -> vec2f {
   return pos.xy / vec2f(textureDimensions(layerTexture));
 }
 
-fn previewBrush(uv: vec2f) -> vec4f {
+fn preview_brush(uv: vec2f) -> vec4f {
   let layer = textureSampleLevel(layerTexture, paintSampler, uv, 0.0);
   let coverage = textureSampleLevel(strokeMask, paintSampler, uv, 0.0).r;
   let source = stroke.color * coverage;
   return (source + layer * (1.0 - source.a)) * layerSettings.opacity;
 }
 
-fn previewEraser(uv: vec2f) -> vec4f {
+fn preview_eraser(uv: vec2f) -> vec4f {
   let layer = textureSampleLevel(layerTexture, paintSampler, uv, 0.0);
   let coverage = textureSampleLevel(strokeMask, paintSampler, uv, 0.0).r;
   return layer * (1.0 - coverage) * layerSettings.opacity;
 }
 
-fn clippedGroupSource(source: vec4f, uv: vec2f) -> vec4f {
+fn clipped_group_source(source: vec4f, uv: vec2f) -> vec4f {
   let baseAlpha = textureSampleLevel(clippingBaseTexture, paintSampler, uv, 0.0).a
     * clippingBaseSettings.opacity;
   return vec4f(source.rgb * baseAlpha, source.a);
@@ -101,24 +101,24 @@ fn clippedGroupSource(source: vec4f, uv: vec2f) -> vec4f {
 
 @fragment
 fn fs_group_preview_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  return previewBrush(groupUv(pos));
+  return preview_brush(group_uv(pos));
 }
 
 @fragment
 fn fs_group_preview_eraser(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  return previewEraser(groupUv(pos));
+  return preview_eraser(group_uv(pos));
 }
 
 @fragment
 fn fs_group_preview_clipped_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let uv = groupUv(pos);
-  return clippedGroupSource(previewBrush(uv), uv);
+  let uv = group_uv(pos);
+  return clipped_group_source(preview_brush(uv), uv);
 }
 
 @fragment
 fn fs_group_preview_clipped_eraser(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let uv = groupUv(pos);
-  return clippedGroupSource(previewEraser(uv), uv);
+  let uv = group_uv(pos);
+  return clipped_group_source(preview_eraser(uv), uv);
 }
 
 @vertex
@@ -128,16 +128,16 @@ fn vs_commit(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4f {
   return vec4f(x, y, 0.0, 1.0);
 }
 
-fn committedCoverage(pos: vec4f) -> f32 {
+fn committed_coverage(pos: vec4f) -> f32 {
   return textureLoad(strokeMask, vec2i(pos.xy), 0).r;
 }
 
 @fragment
 fn fs_commit_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  return stroke.color * committedCoverage(pos);
+  return stroke.color * committed_coverage(pos);
 }
 
 @fragment
 fn fs_commit_eraser(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  return vec4f(0.0, 0.0, 0.0, committedCoverage(pos));
+  return vec4f(0.0, 0.0, 0.0, committed_coverage(pos));
 }

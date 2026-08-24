@@ -33,7 +33,7 @@ pub(super) fn canvas_crop_handle_positions(
     ]
 }
 
-pub(super) fn paint_resize_handles(
+pub(super) fn paint_resize_handle_markers(
     painter: &egui::Painter,
     handles: &[(CanvasCropHandle, egui::Pos2); 8],
 ) {
@@ -92,7 +92,7 @@ pub(super) fn layer_rotation_handle(corners: [egui::Pos2; 4]) -> egui::Pos2 {
     top_center + (top_center - center).normalized() * 36.0
 }
 
-pub(super) fn pointer_document(
+pub(super) fn pointer_document_position(
     pointer: egui::Pos2,
     view: PaintViewSnapshot,
     pixels_per_point: f32,

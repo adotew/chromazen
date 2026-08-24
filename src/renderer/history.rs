@@ -189,14 +189,14 @@ impl PaintHistory {
         Self {
             actions: Vec::new(),
             cursor: 0,
-            mirror: create_texture(device, "paint history mirror", document_size),
+            mirror: create_history_texture(device, "paint history mirror", document_size),
             mirrored_layer: None,
             active_stroke: None,
         }
     }
 
     pub(crate) fn resize_mirror(&mut self, device: &wgpu::Device, document_size: [u32; 2]) {
-        self.mirror = create_texture(device, "paint history mirror", document_size);
+        self.mirror = create_history_texture(device, "paint history mirror", document_size);
         self.mirrored_layer = None;
         self.active_stroke = None;
     }
@@ -239,7 +239,7 @@ impl PaintHistory {
         if self.active_stroke != Some(layer_id) {
             return false;
         }
-        copy_rect(encoder, &self.mirror, rect, canvas, [rect.x, rect.y]);
+        copy_texture_rect(encoder, &self.mirror, rect, canvas, [rect.x, rect.y]);
         self.active_stroke = None;
         true
     }
@@ -295,7 +295,7 @@ impl PaintHistory {
         canvas: &wgpu::Texture,
         rect: TextureRect,
     ) {
-        copy_rect(encoder, canvas, rect, &self.mirror, [rect.x, rect.y]);
+        copy_texture_rect(encoder, canvas, rect, &self.mirror, [rect.x, rect.y]);
         self.mirrored_layer = Some(layer_id);
     }
 
@@ -310,8 +310,9 @@ impl PaintHistory {
         debug_assert_eq!(self.active_stroke, Some(layer_id));
         self.discard_redo();
 
-        let pixels = create_texture(device, "paint history entry", [rect.width, rect.height]);
-        copy_rect(encoder, &self.mirror, rect, &pixels, [0, 0]);
+        let pixels =
+            create_history_texture(device, "paint history entry", [rect.width, rect.height]);
+        copy_texture_rect(encoder, &self.mirror, rect, &pixels, [0, 0]);
         self.sync_layer(encoder, layer_id, canvas, rect);
 
         self.actions.push(HistoryAction::Stroke(StrokeEntry {
@@ -325,7 +326,7 @@ impl PaintHistory {
         self.active_stroke = None;
     }
 
-    pub(crate) fn record_add(
+    pub(crate) fn record_layer_addition(
         &mut self,
         layer_id: LayerId,
         index: usize,
@@ -345,7 +346,7 @@ impl PaintHistory {
         self.evict_to_budget();
     }
 
-    pub(crate) fn record_delete(
+    pub(crate) fn record_layer_deletion(
         &mut self,
         layer: PaintLayer,
         index: usize,
@@ -414,12 +415,12 @@ impl PaintHistory {
         if before == after {
             return;
         }
-        self.push_structure(HistoryAction::BackgroundColor { before, after });
+        self.push_structural_action(HistoryAction::BackgroundColor { before, after });
     }
 
     pub(crate) fn record_rename_layer(&mut self, layer_id: LayerId, before: String, after: String) {
         if before != after {
-            self.push_structure(HistoryAction::RenameLayer {
+            self.push_structural_action(HistoryAction::RenameLayer {
                 layer_id,
                 before,
                 after,
@@ -429,7 +430,7 @@ impl PaintHistory {
 
     pub(crate) fn record_layer_visibility(&mut self, layer_id: LayerId, before: bool, after: bool) {
         if before != after {
-            self.push_structure(HistoryAction::LayerVisibility {
+            self.push_structural_action(HistoryAction::LayerVisibility {
                 layer_id,
                 before,
                 after,
@@ -439,7 +440,7 @@ impl PaintHistory {
 
     pub(crate) fn record_layer_clipping(&mut self, layer_id: LayerId, before: bool, after: bool) {
         if before != after {
-            self.push_structure(HistoryAction::LayerClipping {
+            self.push_structural_action(HistoryAction::LayerClipping {
                 layer_id,
                 before,
                 after,
@@ -449,7 +450,7 @@ impl PaintHistory {
 
     pub(crate) fn record_layer_opacity(&mut self, layer_id: LayerId, before: u8, after: u8) {
         if before != after {
-            self.push_structure(HistoryAction::LayerOpacity {
+            self.push_structural_action(HistoryAction::LayerOpacity {
                 layer_id,
                 before,
                 after,
@@ -459,7 +460,7 @@ impl PaintHistory {
 
     pub(crate) fn record_move_layer(&mut self, layer_id: LayerId, before: usize, after: usize) {
         if before != after {
-            self.push_structure(HistoryAction::MoveLayer {
+            self.push_structural_action(HistoryAction::MoveLayer {
                 layer_id,
                 before,
                 after,
@@ -467,7 +468,7 @@ impl PaintHistory {
         }
     }
 
-    fn push_structure(&mut self, action: HistoryAction) {
+    fn push_structural_action(&mut self, action: HistoryAction) {
         self.discard_redo();
         self.actions.push(action);
         self.cursor = self.actions.len();
@@ -486,7 +487,7 @@ impl PaintHistory {
         let HistoryAction::Stroke(entry) = &self.actions[self.cursor] else {
             unreachable!();
         };
-        swap_entry(encoder, &self.mirror, canvas, entry);
+        swap_stroke_history_pixels(encoder, &self.mirror, canvas, entry);
         self.mirrored_layer = Some(entry.layer_id);
         true
     }
@@ -502,7 +503,7 @@ impl PaintHistory {
         let HistoryAction::Stroke(entry) = &self.actions[self.cursor] else {
             unreachable!();
         };
-        swap_entry(encoder, &self.mirror, canvas, entry);
+        swap_stroke_history_pixels(encoder, &self.mirror, canvas, entry);
         self.mirrored_layer = Some(entry.layer_id);
         self.cursor += 1;
         true
@@ -767,21 +768,21 @@ fn move_layer_to_index(layers: &mut Vec<PaintLayer>, id: LayerId, index: usize) 
     layers.insert(index.min(layers.len()), layer);
 }
 
-fn swap_entry(
+fn swap_stroke_history_pixels(
     encoder: &mut wgpu::CommandEncoder,
     mirror: &wgpu::Texture,
     canvas: &wgpu::Texture,
     entry: &StrokeEntry,
 ) {
-    copy_rect(
+    copy_texture_rect(
         encoder,
         &entry.pixels,
         entry.rect.at_origin(),
         canvas,
         [entry.rect.x, entry.rect.y],
     );
-    copy_rect(encoder, mirror, entry.rect, &entry.pixels, [0, 0]);
-    copy_rect(
+    copy_texture_rect(encoder, mirror, entry.rect, &entry.pixels, [0, 0]);
+    copy_texture_rect(
         encoder,
         canvas,
         entry.rect,
@@ -807,7 +808,7 @@ fn eviction_count(
     count
 }
 
-fn create_texture(device: &wgpu::Device, label: &str, size: [u32; 2]) -> wgpu::Texture {
+fn create_history_texture(device: &wgpu::Device, label: &str, size: [u32; 2]) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
@@ -826,7 +827,7 @@ fn create_texture(device: &wgpu::Device, label: &str, size: [u32; 2]) -> wgpu::T
     })
 }
 
-fn copy_rect(
+fn copy_texture_rect(
     encoder: &mut wgpu::CommandEncoder,
     source: &wgpu::Texture,
     source_rect: TextureRect,

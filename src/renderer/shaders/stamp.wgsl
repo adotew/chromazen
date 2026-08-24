@@ -23,7 +23,7 @@ struct VertexOut {
   @location(1) color: vec4f,
 };
 
-fn quadCorner(vertexIndex: u32) -> vec2f {
+fn quad_corner(vertexIndex: u32) -> vec2f {
   let corners = array<vec2f, 6>(
     vec2f(-1.0, -1.0),
     vec2f(1.0, -1.0),
@@ -42,7 +42,7 @@ fn vs(
   @builtin(instance_index) instanceIndex: u32,
 ) -> VertexOut {
   let brush = brushes[instanceIndex];
-  let corner = quadCorner(vertexIndex);
+  let corner = quad_corner(vertexIndex);
   let paintPos = brush.center + corner * brush.halfSize;
 
   var out: VertexOut;
@@ -57,18 +57,18 @@ fn vs(
   return out;
 }
 
-fn stampCoverage(in: VertexOut) -> f32 {
+fn stamp_coverage(in: VertexOut) -> f32 {
   let mask = textureSample(brushStamp, brushSampler, in.uv).a;
   return clamp(in.color.a * mask, 0.0, 1.0);
 }
 
 @fragment
 fn fs(in: VertexOut) -> @location(0) vec4f {
-  let alpha = stampCoverage(in);
+  let alpha = stamp_coverage(in);
   return vec4f(in.color.rgb * alpha, alpha);
 }
 
 @fragment
 fn fs_mask(in: VertexOut) -> @location(0) vec4f {
-  return vec4f(stampCoverage(in));
+  return vec4f(stamp_coverage(in));
 }

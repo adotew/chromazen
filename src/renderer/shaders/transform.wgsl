@@ -13,7 +13,7 @@ fn vs(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4f {
   return vec4f(x, y, 0.0, 1.0);
 }
 
-fn loadTransparent(point: vec2i) -> vec4f {
+fn load_or_transparent(point: vec2i) -> vec4f {
   let dims = vec2i(textureDimensions(sourceTex));
   if (any(point < vec2i(0)) || any(point >= dims)) {
     return vec4f(0.0);
@@ -35,13 +35,13 @@ fn fs(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let base = vec2i(floor(samplePosition));
   let fraction = fract(samplePosition);
   let top = mix(
-    loadTransparent(base),
-    loadTransparent(base + vec2i(1, 0)),
+    load_or_transparent(base),
+    load_or_transparent(base + vec2i(1, 0)),
     fraction.x,
   );
   let bottom = mix(
-    loadTransparent(base + vec2i(0, 1)),
-    loadTransparent(base + vec2i(1, 1)),
+    load_or_transparent(base + vec2i(0, 1)),
+    load_or_transparent(base + vec2i(1, 1)),
     fraction.x,
   );
   return mix(top, bottom, fraction.y);

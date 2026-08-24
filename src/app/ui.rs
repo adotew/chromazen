@@ -444,7 +444,7 @@ impl GuiLayer {
         self.size_range.clone()
     }
 
-    pub(crate) fn settings_snapshot(
+    pub(crate) fn settings_for_save(
         &self,
     ) -> (CurrentBrushConfig, [String; 3], [f32; 3], [f32; 3]) {
         let mut brush = self.current_brush_config();
@@ -462,7 +462,7 @@ impl GuiLayer {
         &self.tool_brushes[tool_index(tool)]
     }
 
-    pub(crate) fn remember_tool_settings(&mut self, tool: PaintTool) {
+    pub(crate) fn store_current_brush_settings_for_tool(&mut self, tool: PaintTool) {
         let index = tool_index(tool);
         self.tool_sizes[index] = self.brush.size;
         self.tool_opacities[index] = self.brush.opacity;
@@ -473,7 +473,7 @@ impl GuiLayer {
             egui::Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3]);
     }
 
-    pub(crate) fn reset_brush(&mut self) {
+    pub(crate) fn reset_active_brush_settings(&mut self) {
         self.brush.size = self.default_size;
         self.brush.opacity = 1.0;
         self.brush.color = brush_color(&CurrentBrushConfig::default());
@@ -528,7 +528,7 @@ impl GuiLayer {
         };
     }
 
-    pub(crate) fn settings_reloaded(&mut self, config: &AppConfig, active_tool: PaintTool) {
+    pub(crate) fn apply_reloaded_settings(&mut self, config: &AppConfig, active_tool: PaintTool) {
         self.tool_brushes = [
             config.active_brush.clone(),
             config.eraser_brush.clone(),
@@ -1037,7 +1037,7 @@ fn reference_transform_from_drag_origin(
     }
 }
 
-fn reference_resize_handle(reference_rect: egui::Rect) -> (egui::Pos2, egui::Rect) {
+fn reference_resize_handle_geometry(reference_rect: egui::Rect) -> (egui::Pos2, egui::Rect) {
     let center = reference_rect.right_bottom() - egui::Vec2::splat(REFERENCE_RESIZE_HANDLE_INSET);
     let hit_rect =
         egui::Rect::from_center_size(center, egui::Vec2::splat(REFERENCE_RESIZE_HIT_SIZE));
@@ -1064,7 +1064,7 @@ fn paint_reference_selection(
         egui::StrokeKind::Inside,
     );
     if show_resize_handle {
-        let (center, _) = reference_resize_handle(reference_rect);
+        let (center, _) = reference_resize_handle_geometry(reference_rect);
         let handle_rect =
             egui::Rect::from_center_size(center, egui::Vec2::splat(REFERENCE_RESIZE_HANDLE_SIZE));
         painter.rect_filled(handle_rect, 2.0, shadow);
@@ -1477,7 +1477,7 @@ mod tests {
     #[test]
     fn resize_handle_overlaps_the_corner_with_a_larger_invisible_hit_target() {
         let reference = egui::Rect::from_min_max(egui::pos2(20.0, 30.0), egui::pos2(120.0, 130.0));
-        let (center, hit_rect) = reference_resize_handle(reference);
+        let (center, hit_rect) = reference_resize_handle_geometry(reference);
 
         assert_eq!(center, egui::pos2(118.0, 128.0));
         assert_eq!(hit_rect.min, egui::pos2(104.0, 114.0));

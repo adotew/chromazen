@@ -30,7 +30,7 @@ impl GalleryController {
     pub(super) fn discover(wake: WakeCallback) -> Self {
         let (store, artworks, warnings) = match ArtworkStore::discover() {
             Ok(store) => {
-                let catalog = store.catalog();
+                let catalog = store.scan_catalog();
                 (Some(store), catalog.artworks, catalog.warnings)
             }
             Err(error) => (None, Vec::new(), vec![error.to_string()]),
@@ -60,12 +60,12 @@ impl GalleryController {
         let Some(store) = &self.store else {
             return;
         };
-        let catalog = store.catalog();
+        let catalog = store.scan_catalog();
         self.artworks = catalog.artworks;
         self.warnings = catalog.warnings;
     }
 
-    pub(super) fn open(
+    pub(super) fn load_artwork(
         &self,
         id: &ArtworkId,
         constraints: CanvasSizeConstraints,
@@ -116,7 +116,7 @@ impl GalleryController {
         })
     }
 
-    pub(super) fn duplicate(&mut self, id: ArtworkId) -> Result<(), String> {
+    pub(super) fn start_duplicate(&mut self, id: ArtworkId) -> Result<(), String> {
         if self.duplicate_receiver.is_some() {
             return Ok(());
         }

@@ -91,7 +91,7 @@ impl PressureStateHandle {
         (state.brush_pressure() - before).abs() > f32::EPSILON
     }
 
-    pub(crate) fn clear_pen(&self) -> bool {
+    pub(crate) fn reset_pen_state(&self) -> bool {
         let mut state = self.0.lock().expect("pressure state poisoned");
         let before = state.brush_pressure();
         *state = PressureState::default();
@@ -117,7 +117,7 @@ mod tests {
         pressure.end_pen_contact(true);
         assert_eq!(pressure.brush_pressure(), 0.0);
 
-        pressure.clear_pen();
+        pressure.reset_pen_state();
         assert_eq!(pressure.brush_pressure(), 1.0);
     }
 
@@ -128,7 +128,7 @@ mod tests {
         assert!(pressure.pen_input_active());
         assert_eq!(pressure.stroke_pressure(true), 0.4);
 
-        pressure.clear_pen();
+        pressure.reset_pen_state();
         assert!(!pressure.pen_input_active());
         assert_eq!(pressure.stroke_pressure(true), 0.0);
         assert_eq!(pressure.stroke_pressure(false), 1.0);

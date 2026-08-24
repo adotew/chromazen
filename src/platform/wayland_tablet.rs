@@ -241,13 +241,13 @@ mod imp {
             }
         }
 
-        fn emit(&self, event: PenEvent) {
+        fn emit_pen_event(&self, event: PenEvent) {
             (self.sink)(event);
         }
 
-        fn flush_frame(&mut self) {
-            if let Some(event) = self.frame.flush() {
-                self.emit(event);
+        fn emit_pending_frame_event(&mut self) {
+            if let Some(event) = self.frame.take_pen_event() {
+                self.emit_pen_event(event);
             }
         }
     }
@@ -263,7 +263,7 @@ mod imp {
             }
         }
 
-        fn flush(&mut self) -> Option<PenEvent> {
+        fn take_pen_event(&mut self) -> Option<PenEvent> {
             let event = match self.action {
                 FrameAction::Leave => Some(PenEvent::Leave),
                 FrameAction::Up => Some(PenEvent::Up),
@@ -479,7 +479,7 @@ mod imp {
                     state.frame.tip_down = false;
                     state.frame.action = FrameAction::Up;
                 }
-                zwp_tablet_tool_v2::Event::Frame { .. } => state.flush_frame(),
+                zwp_tablet_tool_v2::Event::Frame { .. } => state.emit_pending_frame_event(),
                 _ => {}
             }
         }
@@ -502,7 +502,7 @@ mod imp {
             };
 
             assert_eq!(
-                frame.flush(),
+                frame.take_pen_event(),
                 Some(PenEvent::Motion {
                     position: [24.0, 48.0],
                     pressure: 0.25,
@@ -523,7 +523,7 @@ mod imp {
             };
 
             assert_eq!(
-                frame.flush(),
+                frame.take_pen_event(),
                 Some(PenEvent::Down {
                     position: [10.0, 20.0],
                     pressure: 1.0,
@@ -540,11 +540,11 @@ mod imp {
                 action: FrameAction::Up,
                 ..TabletFrame::default()
             };
-            assert_eq!(frame.flush(), Some(PenEvent::Up));
+            assert_eq!(frame.take_pen_event(), Some(PenEvent::Up));
             assert_eq!(frame.pressure, 0.0);
 
             frame.action = FrameAction::Leave;
-            assert_eq!(frame.flush(), Some(PenEvent::Leave));
+            assert_eq!(frame.take_pen_event(), Some(PenEvent::Leave));
         }
     }
 }

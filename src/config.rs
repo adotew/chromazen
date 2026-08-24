@@ -255,11 +255,11 @@ impl ConfigStore {
         let contents = format!(
             "# Chromazen settings. This file may be rewritten by the application.\n\n{serialized}"
         );
-        atomic_write(&self.config_path(), contents.as_bytes())
+        write_file_atomically(&self.config_path(), contents.as_bytes())
     }
 }
 
-fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), ConfigError> {
+fn write_file_atomically(path: &Path, contents: &[u8]) -> Result<(), ConfigError> {
     let mut file = AtomicWriteFile::options()
         .open(path)
         .map_err(|error| ConfigError::io("open for atomic writing", path, error))?;
