@@ -8,6 +8,15 @@ use crate::{
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(super) enum AppCommand {
+    Editor(EditorCommand),
+    Gallery(GalleryCommand),
+    Navigation(NavigationCommand),
+    Settings(SettingsCommand),
+    Ui(UiCommand),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum EditorCommand {
     Undo,
     Redo,
     RotateCanvasLeft,
@@ -70,31 +79,38 @@ pub(super) enum AppCommand {
         before: [u8; 3],
         after: [u8; 3],
     },
-    SwitchBrush {
-        tool: PaintTool,
-        id: String,
-    },
+    SaveArtwork,
+    ExportPng,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum SettingsCommand {
+    SwitchBrush { tool: PaintTool, id: String },
     ImportBrushes,
-    SaveSettings,
+    Save,
     ReloadConfiguration,
     ResetBrush,
     OpenConfigDirectory,
-    ShowShortcuts,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum NavigationCommand {
     NewArtwork,
-    CreateArtwork {
-        width: u32,
-        height: u32,
-    },
+    CreateArtwork { width: u32, height: u32 },
     OpenArtwork(ArtworkId),
-    SaveArtwork,
-    ExportPng,
     ShowGallery,
-    RenameArtwork {
-        id: ArtworkId,
-        title: String,
-    },
-    DuplicateArtwork(ArtworkId),
-    DeleteArtwork(ArtworkId),
-    CancelPendingNavigation,
+    CancelPending,
     Quit,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum GalleryCommand {
+    Rename { id: ArtworkId, title: String },
+    Duplicate(ArtworkId),
+    Delete(ArtworkId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum UiCommand {
+    ShowShortcuts,
 }

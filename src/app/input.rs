@@ -12,7 +12,7 @@ use crate::{
     renderer::PaintRenderer,
 };
 
-use super::command::AppCommand;
+use super::command::{AppCommand, EditorCommand, NavigationCommand};
 
 const EYEDROPPER_DRAG_SAMPLE_INTERVAL: Duration = Duration::from_millis(33);
 const ROTATION_SNAP_INTERVAL: f32 = std::f32::consts::FRAC_PI_2;
@@ -721,7 +721,7 @@ fn editor_tool_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<Editor
 
 fn canvas_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<AppCommand> {
     if key == KeyCode::KeyR && modifiers == ModifiersState::SHIFT {
-        return Some(AppCommand::ResetCanvasRotation);
+        return Some(AppCommand::Editor(EditorCommand::ResetCanvasRotation));
     }
     if !modifiers.control_key()
         || !modifiers.alt_key()
@@ -731,11 +731,13 @@ fn canvas_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<App
         return None;
     }
     match key {
-        KeyCode::ArrowLeft => Some(AppCommand::RotateCanvasLeft),
-        KeyCode::ArrowRight => Some(AppCommand::RotateCanvasRight),
-        KeyCode::KeyH => Some(AppCommand::ToggleCanvasFlipHorizontal),
-        KeyCode::KeyV => Some(AppCommand::ToggleCanvasFlipVertical),
-        KeyCode::KeyC => Some(AppCommand::RequestCanvasResize),
+        KeyCode::ArrowLeft => Some(AppCommand::Editor(EditorCommand::RotateCanvasLeft)),
+        KeyCode::ArrowRight => Some(AppCommand::Editor(EditorCommand::RotateCanvasRight)),
+        KeyCode::KeyH => Some(AppCommand::Editor(
+            EditorCommand::ToggleCanvasFlipHorizontal,
+        )),
+        KeyCode::KeyV => Some(AppCommand::Editor(EditorCommand::ToggleCanvasFlipVertical)),
+        KeyCode::KeyC => Some(AppCommand::Editor(EditorCommand::RequestCanvasResize)),
         _ => None,
     }
 }
@@ -745,9 +747,9 @@ fn document_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<A
         return None;
     }
     match (key, modifiers.shift_key()) {
-        (KeyCode::KeyS, false) => Some(AppCommand::SaveArtwork),
-        (KeyCode::KeyE, true) => Some(AppCommand::ExportPng),
-        (KeyCode::KeyG, false) => Some(AppCommand::ShowGallery),
+        (KeyCode::KeyS, false) => Some(AppCommand::Editor(EditorCommand::SaveArtwork)),
+        (KeyCode::KeyE, true) => Some(AppCommand::Editor(EditorCommand::ExportPng)),
+        (KeyCode::KeyG, false) => Some(AppCommand::Navigation(NavigationCommand::ShowGallery)),
         _ => None,
     }
 }
@@ -757,8 +759,10 @@ fn history_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<Ap
         return None;
     }
     match (key, modifiers.shift_key()) {
-        (KeyCode::KeyZ, false) => Some(AppCommand::Undo),
-        (KeyCode::KeyZ, true) | (KeyCode::KeyY, false) => Some(AppCommand::Redo),
+        (KeyCode::KeyZ, false) => Some(AppCommand::Editor(EditorCommand::Undo)),
+        (KeyCode::KeyZ, true) | (KeyCode::KeyY, false) => {
+            Some(AppCommand::Editor(EditorCommand::Redo))
+        }
         _ => None,
     }
 }
@@ -1111,7 +1115,7 @@ mod tests {
     fn maps_canvas_view_shortcuts() {
         assert_eq!(
             canvas_command_for_key(KeyCode::KeyR, ModifiersState::SHIFT),
-            Some(AppCommand::ResetCanvasRotation)
+            Some(AppCommand::Editor(EditorCommand::ResetCanvasRotation))
         );
         assert_eq!(
             canvas_command_for_key(KeyCode::KeyR, ModifiersState::empty()),
@@ -1120,23 +1124,25 @@ mod tests {
         let canvas_modifiers = ModifiersState::CONTROL | ModifiersState::ALT;
         assert_eq!(
             canvas_command_for_key(KeyCode::ArrowLeft, canvas_modifiers),
-            Some(AppCommand::RotateCanvasLeft)
+            Some(AppCommand::Editor(EditorCommand::RotateCanvasLeft))
         );
         assert_eq!(
             canvas_command_for_key(KeyCode::ArrowRight, canvas_modifiers),
-            Some(AppCommand::RotateCanvasRight)
+            Some(AppCommand::Editor(EditorCommand::RotateCanvasRight))
         );
         assert_eq!(
             canvas_command_for_key(KeyCode::KeyH, canvas_modifiers),
-            Some(AppCommand::ToggleCanvasFlipHorizontal)
+            Some(AppCommand::Editor(
+                EditorCommand::ToggleCanvasFlipHorizontal
+            ))
         );
         assert_eq!(
             canvas_command_for_key(KeyCode::KeyV, canvas_modifiers),
-            Some(AppCommand::ToggleCanvasFlipVertical)
+            Some(AppCommand::Editor(EditorCommand::ToggleCanvasFlipVertical))
         );
         assert_eq!(
             canvas_command_for_key(KeyCode::KeyC, canvas_modifiers),
-            Some(AppCommand::RequestCanvasResize)
+            Some(AppCommand::Editor(EditorCommand::RequestCanvasResize))
         );
     }
 
@@ -1144,18 +1150,18 @@ mod tests {
     fn maps_document_shortcuts() {
         assert_eq!(
             document_command_for_key(KeyCode::KeyS, ModifiersState::CONTROL),
-            Some(AppCommand::SaveArtwork)
+            Some(AppCommand::Editor(EditorCommand::SaveArtwork))
         );
         assert_eq!(
             document_command_for_key(
                 KeyCode::KeyE,
                 ModifiersState::CONTROL | ModifiersState::SHIFT,
             ),
-            Some(AppCommand::ExportPng)
+            Some(AppCommand::Editor(EditorCommand::ExportPng))
         );
         assert_eq!(
             document_command_for_key(KeyCode::KeyG, ModifiersState::CONTROL),
-            Some(AppCommand::ShowGallery)
+            Some(AppCommand::Navigation(NavigationCommand::ShowGallery))
         );
         assert_eq!(
             document_command_for_key(
@@ -1219,18 +1225,18 @@ mod tests {
     fn maps_linux_history_shortcuts() {
         assert_eq!(
             history_command_for_key(KeyCode::KeyZ, ModifiersState::CONTROL),
-            Some(AppCommand::Undo)
+            Some(AppCommand::Editor(EditorCommand::Undo))
         );
         assert_eq!(
             history_command_for_key(
                 KeyCode::KeyZ,
                 ModifiersState::CONTROL | ModifiersState::SHIFT,
             ),
-            Some(AppCommand::Redo)
+            Some(AppCommand::Editor(EditorCommand::Redo))
         );
         assert_eq!(
             history_command_for_key(KeyCode::KeyY, ModifiersState::CONTROL),
-            Some(AppCommand::Redo)
+            Some(AppCommand::Editor(EditorCommand::Redo))
         );
         assert_eq!(
             history_command_for_key(KeyCode::KeyZ, ModifiersState::SHIFT),

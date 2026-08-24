@@ -12,7 +12,9 @@ mod imp {
     #[cfg(target_os = "macos")]
     use muda::AboutMetadata;
 
-    use super::super::command::AppCommand;
+    use super::super::command::{
+        AppCommand, EditorCommand, NavigationCommand, SettingsCommand, UiCommand,
+    };
 
     const NEW_ARTWORK_ID: &str = "chromazen.file.new-artwork";
     const SAVE_ARTWORK_ID: &str = "chromazen.file.save-artwork";
@@ -369,26 +371,36 @@ mod imp {
 
     fn command_for_id(id: &MenuId) -> Option<AppCommand> {
         match id.as_ref() {
-            NEW_ARTWORK_ID => Some(AppCommand::NewArtwork),
-            SAVE_ARTWORK_ID => Some(AppCommand::SaveArtwork),
-            EXPORT_PNG_ID => Some(AppCommand::ExportPng),
-            ADD_REFERENCE_ID => Some(AppCommand::AddReferences),
-            IMPORT_BRUSHES_ID => Some(AppCommand::ImportBrushes),
-            SHOW_GALLERY_ID => Some(AppCommand::ShowGallery),
-            QUIT_ID => Some(AppCommand::Quit),
-            UNDO_ID => Some(AppCommand::Undo),
-            REDO_ID => Some(AppCommand::Redo),
-            ROTATE_CANVAS_LEFT_ID => Some(AppCommand::RotateCanvasLeft),
-            ROTATE_CANVAS_RIGHT_ID => Some(AppCommand::RotateCanvasRight),
-            RESET_CANVAS_ROTATION_ID => Some(AppCommand::ResetCanvasRotation),
-            FLIP_CANVAS_HORIZONTAL_ID => Some(AppCommand::ToggleCanvasFlipHorizontal),
-            FLIP_CANVAS_VERTICAL_ID => Some(AppCommand::ToggleCanvasFlipVertical),
-            RESIZE_CANVAS_ID => Some(AppCommand::RequestCanvasResize),
-            SAVE_SETTINGS_ID => Some(AppCommand::SaveSettings),
-            RELOAD_CONFIGURATION_ID => Some(AppCommand::ReloadConfiguration),
-            RESET_BRUSH_ID => Some(AppCommand::ResetBrush),
-            OPEN_CONFIG_DIRECTORY_ID => Some(AppCommand::OpenConfigDirectory),
-            SHOW_SHORTCUTS_ID => Some(AppCommand::ShowShortcuts),
+            NEW_ARTWORK_ID => Some(AppCommand::Navigation(NavigationCommand::NewArtwork)),
+            SAVE_ARTWORK_ID => Some(AppCommand::Editor(EditorCommand::SaveArtwork)),
+            EXPORT_PNG_ID => Some(AppCommand::Editor(EditorCommand::ExportPng)),
+            ADD_REFERENCE_ID => Some(AppCommand::Editor(EditorCommand::AddReferences)),
+            IMPORT_BRUSHES_ID => Some(AppCommand::Settings(SettingsCommand::ImportBrushes)),
+            SHOW_GALLERY_ID => Some(AppCommand::Navigation(NavigationCommand::ShowGallery)),
+            QUIT_ID => Some(AppCommand::Navigation(NavigationCommand::Quit)),
+            UNDO_ID => Some(AppCommand::Editor(EditorCommand::Undo)),
+            REDO_ID => Some(AppCommand::Editor(EditorCommand::Redo)),
+            ROTATE_CANVAS_LEFT_ID => Some(AppCommand::Editor(EditorCommand::RotateCanvasLeft)),
+            ROTATE_CANVAS_RIGHT_ID => Some(AppCommand::Editor(EditorCommand::RotateCanvasRight)),
+            RESET_CANVAS_ROTATION_ID => {
+                Some(AppCommand::Editor(EditorCommand::ResetCanvasRotation))
+            }
+            FLIP_CANVAS_HORIZONTAL_ID => Some(AppCommand::Editor(
+                EditorCommand::ToggleCanvasFlipHorizontal,
+            )),
+            FLIP_CANVAS_VERTICAL_ID => {
+                Some(AppCommand::Editor(EditorCommand::ToggleCanvasFlipVertical))
+            }
+            RESIZE_CANVAS_ID => Some(AppCommand::Editor(EditorCommand::RequestCanvasResize)),
+            SAVE_SETTINGS_ID => Some(AppCommand::Settings(SettingsCommand::Save)),
+            RELOAD_CONFIGURATION_ID => {
+                Some(AppCommand::Settings(SettingsCommand::ReloadConfiguration))
+            }
+            RESET_BRUSH_ID => Some(AppCommand::Settings(SettingsCommand::ResetBrush)),
+            OPEN_CONFIG_DIRECTORY_ID => {
+                Some(AppCommand::Settings(SettingsCommand::OpenConfigDirectory))
+            }
+            SHOW_SHORTCUTS_ID => Some(AppCommand::Ui(UiCommand::ShowShortcuts)),
             _ => None,
         }
     }
@@ -401,83 +413,85 @@ mod imp {
         fn maps_stable_menu_ids_to_commands() {
             assert_eq!(
                 command_for_id(&MenuId::new(NEW_ARTWORK_ID)),
-                Some(AppCommand::NewArtwork)
+                Some(AppCommand::Navigation(NavigationCommand::NewArtwork))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(SAVE_ARTWORK_ID)),
-                Some(AppCommand::SaveArtwork)
+                Some(AppCommand::Editor(EditorCommand::SaveArtwork))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(EXPORT_PNG_ID)),
-                Some(AppCommand::ExportPng)
+                Some(AppCommand::Editor(EditorCommand::ExportPng))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(ADD_REFERENCE_ID)),
-                Some(AppCommand::AddReferences)
+                Some(AppCommand::Editor(EditorCommand::AddReferences))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(IMPORT_BRUSHES_ID)),
-                Some(AppCommand::ImportBrushes)
+                Some(AppCommand::Settings(SettingsCommand::ImportBrushes))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(SHOW_GALLERY_ID)),
-                Some(AppCommand::ShowGallery)
+                Some(AppCommand::Navigation(NavigationCommand::ShowGallery))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(QUIT_ID)),
-                Some(AppCommand::Quit)
+                Some(AppCommand::Navigation(NavigationCommand::Quit))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(UNDO_ID)),
-                Some(AppCommand::Undo)
+                Some(AppCommand::Editor(EditorCommand::Undo))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(REDO_ID)),
-                Some(AppCommand::Redo)
+                Some(AppCommand::Editor(EditorCommand::Redo))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(ROTATE_CANVAS_LEFT_ID)),
-                Some(AppCommand::RotateCanvasLeft)
+                Some(AppCommand::Editor(EditorCommand::RotateCanvasLeft))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(ROTATE_CANVAS_RIGHT_ID)),
-                Some(AppCommand::RotateCanvasRight)
+                Some(AppCommand::Editor(EditorCommand::RotateCanvasRight))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(RESET_CANVAS_ROTATION_ID)),
-                Some(AppCommand::ResetCanvasRotation)
+                Some(AppCommand::Editor(EditorCommand::ResetCanvasRotation))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(FLIP_CANVAS_HORIZONTAL_ID)),
-                Some(AppCommand::ToggleCanvasFlipHorizontal)
+                Some(AppCommand::Editor(
+                    EditorCommand::ToggleCanvasFlipHorizontal
+                ))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(FLIP_CANVAS_VERTICAL_ID)),
-                Some(AppCommand::ToggleCanvasFlipVertical)
+                Some(AppCommand::Editor(EditorCommand::ToggleCanvasFlipVertical))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(RESIZE_CANVAS_ID)),
-                Some(AppCommand::RequestCanvasResize)
+                Some(AppCommand::Editor(EditorCommand::RequestCanvasResize))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(SAVE_SETTINGS_ID)),
-                Some(AppCommand::SaveSettings)
+                Some(AppCommand::Settings(SettingsCommand::Save))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(RELOAD_CONFIGURATION_ID)),
-                Some(AppCommand::ReloadConfiguration)
+                Some(AppCommand::Settings(SettingsCommand::ReloadConfiguration))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(RESET_BRUSH_ID)),
-                Some(AppCommand::ResetBrush)
+                Some(AppCommand::Settings(SettingsCommand::ResetBrush))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(OPEN_CONFIG_DIRECTORY_ID)),
-                Some(AppCommand::OpenConfigDirectory)
+                Some(AppCommand::Settings(SettingsCommand::OpenConfigDirectory))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(SHOW_SHORTCUTS_ID)),
-                Some(AppCommand::ShowShortcuts)
+                Some(AppCommand::Ui(UiCommand::ShowShortcuts))
             );
             assert_eq!(command_for_id(&MenuId::new("unknown")), None);
         }

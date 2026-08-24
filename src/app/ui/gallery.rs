@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::artwork::{ArtworkId, ArtworkSummary};
 
-use super::super::command::AppCommand;
+use super::super::command::{AppCommand, GalleryCommand, NavigationCommand};
 
 #[derive(Default)]
 pub(super) struct GalleryUi {
@@ -62,7 +62,7 @@ impl GalleryUi {
                     .on_hover_text("New artwork")
                     .clicked()
                 {
-                    commands.push(AppCommand::NewArtwork);
+                    commands.push(AppCommand::Navigation(NavigationCommand::NewArtwork));
                 }
                 if let Some(warning) = warning {
                     ui.add_space(8.0);
@@ -100,8 +100,8 @@ impl GalleryUi {
                                                 ui.close();
                                             }
                                             if ui.button("Duplicate").clicked() {
-                                                commands.push(AppCommand::DuplicateArtwork(
-                                                    artwork.id.clone(),
+                                                commands.push(AppCommand::Gallery(
+                                                    GalleryCommand::Duplicate(artwork.id.clone()),
                                                 ));
                                                 ui.close();
                                             }
@@ -114,8 +114,9 @@ impl GalleryUi {
                                             }
                                         });
                                         if open.clicked() {
-                                            commands
-                                                .push(AppCommand::OpenArtwork(artwork.id.clone()));
+                                            commands.push(AppCommand::Navigation(
+                                                NavigationCommand::OpenArtwork(artwork.id.clone()),
+                                            ));
                                         }
                                         ui.add_space(8.0);
                                         ui.vertical_centered(|ui| {
@@ -206,10 +207,10 @@ impl GalleryUi {
                             && ui.input(|input| input.key_pressed(egui::Key::Enter))
                             && !title.trim().is_empty());
                     if submit {
-                        commands.push(AppCommand::RenameArtwork {
+                        commands.push(AppCommand::Gallery(GalleryCommand::Rename {
                             id: id.clone(),
                             title: title.clone(),
-                        });
+                        }));
                         close = true;
                     }
                 });
@@ -240,7 +241,7 @@ impl GalleryUi {
                         .button(egui::RichText::new("Delete").color(egui::Color32::LIGHT_RED))
                         .clicked()
                     {
-                        commands.push(AppCommand::DeleteArtwork(id.clone()));
+                        commands.push(AppCommand::Gallery(GalleryCommand::Delete(id.clone())));
                         close = true;
                     }
                 });
