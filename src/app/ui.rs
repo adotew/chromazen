@@ -975,7 +975,7 @@ fn show_tool_button(
         PaintTool::Brush => (
             egui::include_image!("../../assets/icons/paintbrush.svg"),
             "Brush",
-            "B",
+            "D / B",
             egui::Color32::from_rgb(169, 186, 200),
         ),
         PaintTool::Eraser => (

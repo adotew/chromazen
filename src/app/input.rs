@@ -717,7 +717,7 @@ fn editor_tool_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<Editor
         return None;
     }
     match key {
-        KeyCode::KeyB => Some(PaintTool::Brush.into()),
+        KeyCode::KeyD | KeyCode::KeyB => Some(PaintTool::Brush.into()),
         KeyCode::KeyE => Some(PaintTool::Eraser.into()),
         KeyCode::KeyS => Some(PaintTool::Smudge.into()),
         KeyCode::KeyT => Some(EditorTool::Transform),
@@ -956,6 +956,10 @@ mod tests {
 
     #[test]
     fn maps_tool_shortcuts() {
+        assert_eq!(
+            editor_tool_for_key(KeyCode::KeyD, ModifiersState::empty()),
+            Some(PaintTool::Brush.into())
+        );
         assert_eq!(
             editor_tool_for_key(KeyCode::KeyB, ModifiersState::empty()),
             Some(PaintTool::Brush.into())

@@ -140,7 +140,7 @@ impl GuiLayer {
                                 ui,
                                 "Tools",
                                 &[
-                                    ("Brush / Eraser / Smudge", "B / E / S"),
+                                    ("Brush / Eraser / Smudge", "D/B, E, S"),
                                     ("Transform", "T"),
                                     ("Cycle paint tools", "Shift-Tab"),
                                     ("Show or hide panels", "Tab"),
