@@ -43,6 +43,12 @@ const MAX_CANVAS_DIMENSION: u32 = 8192;
 const MAX_CANVAS_PIXELS: u64 = 32 * 1024 * 1024;
 const DOCUMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const STROKE_MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+const WORKSPACE_BACKGROUND_COLOR: wgpu::Color = wgpu::Color {
+    r: 0.5,
+    g: 0.5,
+    b: 0.5,
+    a: 1.0,
+};
 const LAYER_PREVIEW_SIZE: u32 = 128;
 // Eight simulation steps per brush radius retain tip detail without dense-pass overhead.
 const SMUDGE_MIN_STEP_RATIO: f32 = 0.125;
@@ -1851,12 +1857,7 @@ impl PaintRenderer {
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.5,
-                            g: 0.5,
-                            b: 0.5,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(WORKSPACE_BACKGROUND_COLOR),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
