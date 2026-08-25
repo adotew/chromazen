@@ -241,24 +241,10 @@ mod imp {
             false,
             Some(Accelerator::new(Some(Modifiers::SHIFT), Code::KeyR)),
         );
-        let flip_horizontal = MenuItem::with_id(
-            FLIP_CANVAS_HORIZONTAL_ID,
-            "Flip Horizontally",
-            false,
-            Some(Accelerator::new(
-                Some(CMD_OR_CTRL | Modifiers::ALT),
-                Code::KeyH,
-            )),
-        );
-        let flip_vertical = MenuItem::with_id(
-            FLIP_CANVAS_VERTICAL_ID,
-            "Flip Vertically",
-            false,
-            Some(Accelerator::new(
-                Some(CMD_OR_CTRL | Modifiers::ALT),
-                Code::KeyV,
-            )),
-        );
+        let flip_horizontal =
+            MenuItem::with_id(FLIP_CANVAS_HORIZONTAL_ID, "Flip Horizontally", false, None);
+        let flip_vertical =
+            MenuItem::with_id(FLIP_CANVAS_VERTICAL_ID, "Flip Vertically", false, None);
         let resize = MenuItem::with_id(
             RESIZE_CANVAS_ID,
             "Crop / Resize Canvas",

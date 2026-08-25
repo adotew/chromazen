@@ -102,6 +102,8 @@ struct EyedropperDrag {
 pub(super) enum KeyboardShortcut {
     TogglePanels,
     CycleTool,
+    FlipCanvasHorizontal,
+    FlipCanvasVertical,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -666,12 +668,16 @@ fn keyboard_shortcut_for_key(
     repeat: bool,
     modifiers: ModifiersState,
 ) -> Option<KeyboardShortcut> {
-    if key != KeyCode::Tab || state != ElementState::Pressed || repeat {
+    if state != ElementState::Pressed || repeat {
         return None;
     }
-    match modifiers {
-        modifiers if modifiers.is_empty() => Some(KeyboardShortcut::TogglePanels),
-        ModifiersState::SHIFT => Some(KeyboardShortcut::CycleTool),
+    match (key, modifiers) {
+        (KeyCode::Tab, modifiers) if modifiers.is_empty() => Some(KeyboardShortcut::TogglePanels),
+        (KeyCode::Tab, ModifiersState::SHIFT) => Some(KeyboardShortcut::CycleTool),
+        (KeyCode::KeyF, modifiers) if modifiers.is_empty() => {
+            Some(KeyboardShortcut::FlipCanvasHorizontal)
+        }
+        (KeyCode::KeyF, ModifiersState::SHIFT) => Some(KeyboardShortcut::FlipCanvasVertical),
         _ => None,
     }
 }
@@ -733,10 +739,6 @@ fn canvas_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<App
     match key {
         KeyCode::ArrowLeft => Some(AppCommand::Editor(EditorCommand::RotateCanvasLeft)),
         KeyCode::ArrowRight => Some(AppCommand::Editor(EditorCommand::RotateCanvasRight)),
-        KeyCode::KeyH => Some(AppCommand::Editor(
-            EditorCommand::ToggleCanvasFlipHorizontal,
-        )),
-        KeyCode::KeyV => Some(AppCommand::Editor(EditorCommand::ToggleCanvasFlipVertical)),
         KeyCode::KeyC => Some(AppCommand::Editor(EditorCommand::RequestCanvasResize)),
         _ => None,
     }
@@ -817,6 +819,28 @@ mod tests {
                 ModifiersState::SHIFT,
             ),
             Some(KeyboardShortcut::CycleTool)
+        );
+    }
+
+    #[test]
+    fn maps_canvas_flip_shortcuts() {
+        assert_eq!(
+            keyboard_shortcut_for_key(
+                KeyCode::KeyF,
+                ElementState::Pressed,
+                false,
+                ModifiersState::empty(),
+            ),
+            Some(KeyboardShortcut::FlipCanvasHorizontal)
+        );
+        assert_eq!(
+            keyboard_shortcut_for_key(
+                KeyCode::KeyF,
+                ElementState::Pressed,
+                false,
+                ModifiersState::SHIFT,
+            ),
+            Some(KeyboardShortcut::FlipCanvasVertical)
         );
     }
 
@@ -1128,16 +1152,6 @@ mod tests {
         assert_eq!(
             canvas_command_for_key(KeyCode::ArrowRight, canvas_modifiers),
             Some(AppCommand::Editor(EditorCommand::RotateCanvasRight))
-        );
-        assert_eq!(
-            canvas_command_for_key(KeyCode::KeyH, canvas_modifiers),
-            Some(AppCommand::Editor(
-                EditorCommand::ToggleCanvasFlipHorizontal
-            ))
-        );
-        assert_eq!(
-            canvas_command_for_key(KeyCode::KeyV, canvas_modifiers),
-            Some(AppCommand::Editor(EditorCommand::ToggleCanvasFlipVertical))
         );
         assert_eq!(
             canvas_command_for_key(KeyCode::KeyC, canvas_modifiers),

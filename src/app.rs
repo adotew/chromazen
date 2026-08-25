@@ -271,6 +271,17 @@ impl ApplicationHandler<AppEvent> for App {
                                 false
                             }
                         }
+                        KeyboardShortcut::FlipCanvasHorizontal => {
+                            self.pending_commands.push(AppCommand::Editor(
+                                EditorCommand::ToggleCanvasFlipHorizontal,
+                            ));
+                            true
+                        }
+                        KeyboardShortcut::FlipCanvasVertical => {
+                            self.pending_commands
+                                .push(AppCommand::Editor(EditorCommand::ToggleCanvasFlipVertical));
+                            true
+                        }
                     };
                     if changed {
                         self.next_repaint = None;
