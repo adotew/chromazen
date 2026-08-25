@@ -37,6 +37,7 @@ use crate::{
 };
 
 pub(crate) const DEFAULT_CANVAS_SIZE: [u32; 2] = [4000, 4000];
+pub(crate) const DEFAULT_BACKGROUND_COLOR: [f32; 4] = [1.0; 4];
 const MAX_CANVAS_DIMENSION: u32 = 8192;
 // Caps the baseline layer, history, smudge, and mask allocations to a safe working set.
 const MAX_CANVAS_PIXELS: u64 = 32 * 1024 * 1024;
@@ -331,7 +332,7 @@ impl PaintRenderer {
             resources,
             layers: vec![first_layer],
             selection: LayerId(1),
-            background_color: [1.0; 4],
+            background_color: DEFAULT_BACKGROUND_COLOR,
             next_layer_id: 2,
             next_layer_number: 2,
             next_layer_resource_id: 2,
@@ -823,7 +824,7 @@ impl PaintRenderer {
         clear_layer(self.gpu.device(), self.gpu.queue(), &layer.view);
         self.layers = vec![layer];
         self.selection = id;
-        self.background_color = [1.0; 4];
+        self.background_color = DEFAULT_BACKGROUND_COLOR;
         self.next_layer_id = 2;
         self.next_layer_number = 2;
         self.stamp_queue.clear();
