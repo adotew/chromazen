@@ -196,9 +196,15 @@ impl App {
                 .update_texture(paint.device(), paint.queue(), *id, image_delta);
         }
 
-        let paint_jobs = gui
-            .context
-            .tessellate(full_output.shapes, full_output.pixels_per_point);
+        let (mut paint_jobs, glass_stages) = if gui.has_glass_regions() {
+            gui.tessellate_with_glass(full_output.shapes, full_output.pixels_per_point)
+        } else {
+            (
+                gui.context
+                    .tessellate(full_output.shapes, full_output.pixels_per_point),
+                Vec::new(),
+            )
+        };
         let frame = match paint.acquire_frame() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -219,7 +225,12 @@ impl App {
                 label: Some("frame encoder"),
             });
 
-        paint.render_to_view(&mut encoder, &view, brush_cursor);
+        let glass_active = !glass_stages.is_empty();
+        if glass_active {
+            paint.render_to_view(&mut encoder, gui.glass_scene_view(), brush_cursor);
+        } else {
+            paint.render_to_view(&mut encoder, &view, brush_cursor);
+        }
         let canvas_needs_redraw = paint.has_pending_stamps();
 
         let screen_descriptor = ScreenDescriptor {
@@ -233,7 +244,16 @@ impl App {
             &paint_jobs,
             &screen_descriptor,
         );
-        {
+        if glass_active {
+            gui.render_glass_ui(
+                paint.queue(),
+                &mut encoder,
+                &view,
+                &mut paint_jobs,
+                &glass_stages,
+                &screen_descriptor,
+            );
+        } else {
             let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("egui pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {

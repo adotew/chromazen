@@ -2,6 +2,7 @@ use super::*;
 
 impl GuiLayer {
     pub fn run_editor(&mut self, window: &Window, state: EditorUiState<'_>) -> egui::FullOutput {
+        self.glass_regions.clear();
         let EditorUiState {
             layers,
             tool,
@@ -45,18 +46,35 @@ impl GuiLayer {
             }
 
             if self.color_window_open {
-                egui::Window::new("Color")
-                    .id(egui::Id::new("floating color picker"))
+                let window_id = egui::Id::new("floating color picker");
+                self.mark_glass_surface(
+                    egui::LayerId::new(egui::Order::Middle, window_id),
+                    GlassSurface::Color,
+                );
+                let frame = glass_window_frame(ui.style());
+                let response = egui::Window::new("Color")
+                    .id(window_id)
                     .default_pos(egui::pos2(24.0, 80.0))
                     .default_width(280.0)
                     .resizable(false)
                     .collapsible(false)
+                    .frame(frame)
                     .show(ui.ctx(), |ui| self.show_brush_color_picker(ui));
+                if let Some(response) = response {
+                    self.register_glass_region(GlassSurface::Color, response.response.rect, 16.0);
+                    paint_glass_window_border(ui.ctx(), &response.response);
+                }
             }
 
             if self.layers_window_open {
+                let window_id = egui::Id::new("floating layers");
+                self.mark_glass_surface(
+                    egui::LayerId::new(egui::Order::Middle, window_id),
+                    GlassSurface::Layers,
+                );
+                let frame = glass_window_frame(ui.style());
                 let layers_response = egui::Window::new("Layers")
-                    .id(egui::Id::new("floating layers"))
+                    .id(window_id)
                     .default_pos(egui::pos2(340.0, 80.0))
                     .auto_sized()
                     .default_width(LAYER_PANEL_WIDTH)
@@ -64,10 +82,13 @@ impl GuiLayer {
                     .max_width(LAYER_PANEL_WIDTH)
                     .max_height(LAYER_LIST_MAX_HEIGHT + 48.0)
                     .collapsible(false)
+                    .frame(frame)
                     .show(ui.ctx(), |ui| {
                         self.show_layers_panel(ui, layers, background)
                     });
                 if let Some(response) = layers_response {
+                    self.register_glass_region(GlassSurface::Layers, response.response.rect, 16.0);
+                    paint_glass_window_border(ui.ctx(), &response.response);
                     let button_rect = egui::Rect::from_min_size(
                         response.response.rect.left_top() + egui::vec2(8.0, 6.0),
                         egui::Vec2::splat(28.0),
@@ -120,7 +141,12 @@ impl GuiLayer {
                 self.layer_transform_drag = None;
             }
 
-            let selected_tool = egui::Area::new(egui::Id::new("tool rail"))
+            let toolbar_id = egui::Id::new("tool rail");
+            self.mark_glass_surface(
+                egui::LayerId::new(egui::Order::Foreground, toolbar_id),
+                GlassSurface::Toolbar,
+            );
+            let selected_tool = egui::Area::new(toolbar_id)
                 .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 12.0))
                 .order(egui::Order::Foreground)
                 .show(ui.ctx(), |ui| self.show_toolbar(ui, tool))

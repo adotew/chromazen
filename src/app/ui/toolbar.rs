@@ -84,7 +84,8 @@ impl GuiLayer {
             ),
             egui::Sense::hover(),
         );
-        paint_rounded_panel(ui, rect, egui::CornerRadius::same(16));
+        self.register_glass_region(GlassSurface::Toolbar, rect, 16.0);
+        paint_glass_panel(ui, rect, egui::CornerRadius::same(16));
         let body = egui::Rect::from_min_max(
             egui::pos2(rect.left() + HORIZONTAL_PADDING, rect.top()),
             egui::pos2(rect.right() - HORIZONTAL_PADDING, rect.bottom()),

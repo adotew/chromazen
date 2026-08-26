@@ -361,12 +361,26 @@ impl ApplicationHandler<AppEvent> for App {
                     WindowEvent::Resized(size) => {
                         if let Some(paint) = self.paint.as_mut() {
                             paint.resize(size);
+                            if let Some(gui) = self.gui.as_mut() {
+                                gui.resize_glass(
+                                    paint.device(),
+                                    paint.surface_size(),
+                                    paint.surface_format(),
+                                );
+                            }
                         }
                         needs_redraw = true;
                     }
                     WindowEvent::ScaleFactorChanged { .. } => {
                         if let Some(paint) = self.paint.as_mut() {
                             paint.resize(window.inner_size());
+                            if let Some(gui) = self.gui.as_mut() {
+                                gui.resize_glass(
+                                    paint.device(),
+                                    paint.surface_size(),
+                                    paint.surface_format(),
+                                );
+                            }
                         }
                         needs_redraw = true;
                     }

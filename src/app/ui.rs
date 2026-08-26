@@ -4,15 +4,17 @@ mod color_picker;
 mod dialogs;
 mod editor;
 mod gallery;
+mod glass;
 mod interaction_geometry;
 mod layer_transform;
 mod layers_panel;
 mod reference_panel;
 mod toolbar;
 
+use glass::{GlassMarker, GlassRegion, GlassRenderer, GlassSurface};
 use interaction_geometry::*;
 
-use std::time::Duration;
+use std::{ops::Range, sync::Arc, time::Duration};
 
 use egui::ViewportId;
 use egui_wgpu::{Renderer as EguiRenderer, RendererOptions};
@@ -103,6 +105,8 @@ pub struct GuiLayer {
     pub context: egui::Context,
     pub state: EguiWinitState,
     pub renderer: EguiRenderer,
+    glass: GlassRenderer,
+    glass_regions: Vec<GlassRegion>,
     pub brush: BrushSettings,
     tool_brushes: [String; 3],
     tool_sizes: [f32; 3],
@@ -133,6 +137,11 @@ pub struct GuiLayer {
     canvas_crop: Option<CanvasCrop>,
     layer_transform_drag: Option<LayerTransformDrag>,
     gallery: gallery::GalleryUi,
+}
+
+pub(crate) struct GlassPaintStage {
+    pub(crate) region_index: Option<usize>,
+    pub(crate) jobs: Range<usize>,
 }
 
 struct MessageDialog {
@@ -300,6 +309,8 @@ impl GuiLayer {
             paint.surface_format(),
             RendererOptions::default(),
         );
+        let glass =
+            GlassRenderer::new(paint.device(), paint.surface_size(), paint.surface_format());
         let preset = &brush_preset.preset;
         let message_dialog = load_error.map(|error| {
             MessageDialog::error(
@@ -312,6 +323,8 @@ impl GuiLayer {
             context,
             state,
             renderer,
+            glass,
+            glass_regions: Vec::with_capacity(3),
             brush: brush_settings_from_config(&config.brush, brush_preset),
             tool_brushes: [
                 brush_preset.id.clone(),
@@ -403,6 +416,7 @@ impl GuiLayer {
         artworks: &[ArtworkSummary],
         discovery_warning: Option<&str>,
     ) -> egui::FullOutput {
+        self.glass_regions.clear();
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
         context.run_ui(raw_input, |ui| {
@@ -435,6 +449,138 @@ impl GuiLayer {
 
     pub(crate) fn take_commands(&mut self) -> Vec<AppCommand> {
         std::mem::take(&mut self.commands)
+    }
+
+    pub(crate) fn has_glass_regions(&self) -> bool {
+        !self.glass_regions.is_empty()
+    }
+
+    pub(crate) fn glass_scene_view(&self) -> &wgpu::TextureView {
+        self.glass.scene_view()
+    }
+
+    pub(crate) fn render_glass_ui(
+        &mut self,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        paint_jobs: &mut [egui::ClippedPrimitive],
+        stages: &[GlassPaintStage],
+        screen_descriptor: &egui_wgpu::ScreenDescriptor,
+    ) {
+        self.glass.prepare_regions(
+            queue,
+            &self.glass_regions,
+            screen_descriptor.pixels_per_point,
+        );
+        for stage in stages {
+            if let Some(region_index) = stage.region_index {
+                self.glass.apply_region(encoder, region_index);
+            }
+            if !stage.jobs.is_empty() {
+                let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("staged egui glass pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: self.glass.scene_view(),
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                let mut pass = pass.forget_lifetime();
+                self.renderer
+                    .render(&mut pass, &paint_jobs[..stage.jobs.end], screen_descriptor);
+                for job in &mut paint_jobs[stage.jobs.clone()] {
+                    job.clip_rect = egui::Rect::NOTHING;
+                }
+            }
+        }
+        self.glass.blit_scene(encoder, target);
+    }
+
+    pub(crate) fn resize_glass(
+        &mut self,
+        device: &wgpu::Device,
+        size: [u32; 2],
+        format: wgpu::TextureFormat,
+    ) {
+        self.glass.resize(device, size, format);
+    }
+
+    fn mark_glass_surface(&self, layer_id: egui::LayerId, surface: GlassSurface) {
+        self.context
+            .layer_painter(layer_id)
+            .add(egui::PaintCallback {
+                rect: self.context.content_rect(),
+                callback: Arc::new(GlassMarker(surface)),
+            });
+    }
+
+    fn register_glass_region(
+        &mut self,
+        surface: GlassSurface,
+        rect: egui::Rect,
+        corner_radius: f32,
+    ) {
+        self.glass_regions.push(GlassRegion::new(
+            surface,
+            rect,
+            corner_radius,
+            self.context.global_style().visuals.dark_mode,
+        ));
+    }
+
+    pub(crate) fn tessellate_with_glass(
+        &self,
+        shapes: Vec<egui::epaint::ClippedShape>,
+        pixels_per_point: f32,
+    ) -> (Vec<egui::ClippedPrimitive>, Vec<GlassPaintStage>) {
+        let mut grouped_shapes = Vec::new();
+        let mut current_shapes = Vec::new();
+        let mut current_region = None;
+
+        for shape in shapes {
+            let marker = match &shape.shape {
+                egui::Shape::Callback(callback) => callback
+                    .callback
+                    .downcast_ref::<GlassMarker>()
+                    .map(|marker| marker.0),
+                _ => None,
+            };
+            if let Some(surface) = marker {
+                if !current_shapes.is_empty() || current_region.is_some() {
+                    grouped_shapes.push((current_region, std::mem::take(&mut current_shapes)));
+                }
+                current_region = self
+                    .glass_regions
+                    .iter()
+                    .position(|region| region.surface() == surface);
+            } else {
+                current_shapes.push(shape);
+            }
+        }
+        if !current_shapes.is_empty() || current_region.is_some() {
+            grouped_shapes.push((current_region, current_shapes));
+        }
+
+        let mut jobs = Vec::new();
+        let mut stages = Vec::with_capacity(grouped_shapes.len());
+        for (region_index, shapes) in grouped_shapes {
+            let start = jobs.len();
+            jobs.extend(self.context.tessellate(shapes, pixels_per_point));
+            stages.push(GlassPaintStage {
+                region_index,
+                jobs: start..jobs.len(),
+            });
+        }
+        (jobs, stages)
     }
 
     pub(crate) fn brush_size_range(&self) -> std::ops::RangeInclusive<f32> {
@@ -1187,9 +1333,48 @@ fn install_rounded_ui_style(context: &egui::Context) {
     });
 }
 
-fn paint_rounded_panel(ui: &egui::Ui, rect: egui::Rect, corner_radius: egui::CornerRadius) {
+fn glass_window_frame(style: &egui::Style) -> egui::Frame {
+    egui::Frame::window(style)
+        .shadow(egui::Shadow::NONE)
+        .fill(glass_fill(style.visuals.dark_mode))
+        .stroke(egui::Stroke::NONE)
+}
+
+fn paint_glass_window_border(context: &egui::Context, response: &egui::Response) {
+    context.layer_painter(response.layer_id).rect_stroke(
+        response.rect,
+        egui::CornerRadius::same(16),
+        glass_border(context.global_style().visuals.dark_mode),
+        egui::StrokeKind::Inside,
+    );
+}
+
+fn paint_glass_panel(ui: &egui::Ui, rect: egui::Rect, corner_radius: egui::CornerRadius) {
     ui.painter()
-        .rect_filled(rect, corner_radius, ui.visuals().window_fill());
+        .rect_filled(rect, corner_radius, glass_fill(ui.visuals().dark_mode));
+    ui.painter().rect_stroke(
+        rect,
+        corner_radius,
+        glass_border(ui.visuals().dark_mode),
+        egui::StrokeKind::Inside,
+    );
+}
+
+fn glass_fill(dark_mode: bool) -> egui::Color32 {
+    if dark_mode {
+        egui::Color32::from_rgba_unmultiplied(17, 19, 24, 173)
+    } else {
+        egui::Color32::from_rgba_unmultiplied(248, 250, 252, 184)
+    }
+}
+
+fn glass_border(dark_mode: bool) -> egui::Stroke {
+    let color = if dark_mode {
+        egui::Color32::from_white_alpha(30)
+    } else {
+        egui::Color32::from_black_alpha(24)
+    };
+    egui::Stroke::new(1.0, color)
 }
 
 fn brush_settings_from_config(

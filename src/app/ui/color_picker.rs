@@ -1,6 +1,8 @@
 use egui::{Color32, Response, Sense, Ui, ecolor::Hsva, ecolor::HsvaGamma, epaint::Mesh};
 
 const GRADIENT_STEPS: u32 = 36;
+const SLIDER_THUMB_SHADOW_OFFSET: f32 = 1.5;
+const SLIDER_THUMB_SHADOW_ALPHA: u8 = 48;
 
 #[derive(Clone, Copy)]
 struct PickerState {
@@ -112,8 +114,14 @@ fn color_slider_1d(ui: &mut Ui, value: &mut f32, color_at: impl Fn(f32) -> Color
 
         let x = egui::lerp(track_rect.x_range(), *value);
         let picked = color_at(*value);
+        let thumb_center = egui::pos2(x, track_rect.center().y);
+        ui.painter().circle_filled(
+            thumb_center + egui::vec2(0.0, SLIDER_THUMB_SHADOW_OFFSET),
+            thumb_radius,
+            Color32::from_black_alpha(SLIDER_THUMB_SHADOW_ALPHA),
+        );
         ui.painter()
-            .circle_filled(egui::pos2(x, track_rect.center().y), thumb_radius, picked);
+            .circle_filled(thumb_center, thumb_radius, picked);
     }
 
     response
@@ -136,12 +144,12 @@ fn color_slider_2d(
     if ui.is_rect_visible(rect) {
         let visuals = ui.style().interact(&response);
         let mut mesh = Mesh::default();
-        for x_index in 0..=GRADIENT_STEPS {
-            for y_index in 0..=GRADIENT_STEPS {
+        for y_index in 0..=GRADIENT_STEPS {
+            let y_t = y_index as f32 / GRADIENT_STEPS as f32;
+            let y = egui::lerp(rect.bottom()..=rect.top(), y_t);
+            for x_index in 0..=GRADIENT_STEPS {
                 let x_t = x_index as f32 / GRADIENT_STEPS as f32;
-                let y_t = y_index as f32 / GRADIENT_STEPS as f32;
                 let x = egui::lerp(rect.x_range(), x_t);
-                let y = egui::lerp(rect.bottom()..=rect.top(), y_t);
                 mesh.colored_vertex(egui::pos2(x, y), color_at(x_t, y_t));
 
                 if x_index < GRADIENT_STEPS && y_index < GRADIENT_STEPS {
