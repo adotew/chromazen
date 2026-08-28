@@ -37,6 +37,7 @@ pub(super) enum EditorCommand {
     SelectLayer(LayerId),
     AddLayer,
     DuplicateSelectedLayer,
+    ClearLayer,
     DeleteSelectedLayer,
     RenameLayer {
         id: LayerId,

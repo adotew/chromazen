@@ -42,6 +42,7 @@ impl App {
                 | EditorCommand::SelectLayer(_)
                 | EditorCommand::AddLayer
                 | EditorCommand::DuplicateSelectedLayer
+                | EditorCommand::ClearLayer
                 | EditorCommand::DeleteSelectedLayer
                 | EditorCommand::RenameLayer { .. }
                 | EditorCommand::MergeLayerDown(_)
@@ -154,6 +155,11 @@ impl App {
             EditorCommand::DuplicateSelectedLayer => {
                 if let Some(paint) = self.paint.as_mut() {
                     paint.duplicate_selected_layer();
+                }
+            }
+            EditorCommand::ClearLayer => {
+                if let Some(paint) = self.paint.as_mut() {
+                    paint.clear_selected_layer();
                 }
             }
             EditorCommand::DeleteSelectedLayer => {

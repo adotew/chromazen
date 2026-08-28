@@ -106,7 +106,7 @@ impl GuiLayer {
                             .get(layer_index + 1)
                             .is_some_and(|upper| upper.clipped);
                     let can_delete =
-                        layers.layers.len() > 1 && (layer_index != 0 || !layers.layers[1].clipped);
+                        layers.layers.len() == 1 || (layer_index != 0 || !layers.layers[1].clipped);
                     row.row.context_menu(|ui| {
                         if ui.button("Rename").clicked() {
                             start_rename = true;
@@ -146,6 +146,11 @@ impl GuiLayer {
                             ui.close();
                         }
                         ui.separator();
+                        if ui.button("Clear Layer").clicked() {
+                            self.commands
+                                .push(AppCommand::Editor(EditorCommand::ClearLayer));
+                            ui.close();
+                        }
                         if ui
                             .add_enabled(
                                 can_delete,

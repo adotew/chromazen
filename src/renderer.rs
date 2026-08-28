@@ -1439,16 +1439,18 @@ impl PaintRenderer {
     }
 
     pub(crate) fn can_delete_selected_layer(&self) -> bool {
-        self.layers.len() > 1
-            && self
-                .selected_layer_index()
-                .is_some_and(|index| index != 0 || !self.layers[1].clipped)
-            && self.active_stroke.is_none()
-            && !self.history.stroke_active()
-            && !self.stamp_queue.has_pending()
+        if self.layers.len() == 1 {
+            return self.document_is_idle();
+        }
+        self.selected_layer_index()
+            .is_some_and(|index| index != 0 || !self.layers[1].clipped)
+            && self.document_is_idle()
     }
 
     pub(crate) fn delete_selected_layer(&mut self) -> bool {
+        if self.layers.len() == 1 {
+            return self.clear_selected_layer();
+        }
         if !self.can_delete_selected_layer() {
             return false;
         }
@@ -1470,6 +1472,65 @@ impl PaintRenderer {
         );
         self.layer_versions.remove(&selection_before);
         self.mark_metadata_changed();
+        true
+    }
+
+    pub(crate) fn clear_selected_layer(&mut self) -> bool {
+        if !self.document_is_idle() {
+            return false;
+        }
+        let Some(layer_index) = self.selected_layer_index() else {
+            return false;
+        };
+        let layer_id = self.layers[layer_index].id;
+        if !self.history.begin_stroke(layer_id) {
+            return false;
+        }
+        let mut encoder =
+            self.gpu
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("clear layer encoder"),
+                });
+        self.history.ensure_layer_synced(
+            &mut encoder,
+            layer_id,
+            &self.layers[layer_index].texture,
+            self.document_size,
+        );
+        {
+            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("clear layer pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.layers[layer_index].view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        }
+        let full_rect = TextureRect {
+            x: 0,
+            y: 0,
+            width: self.document_size[0],
+            height: self.document_size[1],
+        };
+        self.history.commit_stroke(
+            self.gpu.device(),
+            &mut encoder,
+            layer_id,
+            &self.layers[layer_index].texture,
+            full_rect,
+        );
+        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.mark_layer_changed(layer_id);
         true
     }
 
