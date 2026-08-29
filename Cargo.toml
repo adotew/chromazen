@@ -25,6 +25,9 @@ wgpu = "29.0.3"
 winit = "0.30.13"
 rfd = "0.17.2"
 
+[build-dependencies]
+winresource = "0.1"
+
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 muda = { version = "0.19.3", default-features = false }
 raw-window-handle = "0.6.2"

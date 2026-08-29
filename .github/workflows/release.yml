@@ -1,0 +1,47 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    env:
+      MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./packaging/macos/build-app.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Chromazen-macos
+          path: dist/Chromazen.dmg
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release
+      - run: Compress-Archive -Path target/release/Chromazen.exe -DestinationPath Chromazen-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Chromazen-windows
+          path: Chromazen-windows-x64.zip
+
+  release:
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "Chromazen-*"
+          merge-multiple: true
+          path: dist
+      - run: gh release create "$GITHUB_REF_NAME" --generate-notes dist/*
+        env:
+          GH_TOKEN: ${{ github.token }}
