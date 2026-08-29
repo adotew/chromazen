@@ -16,6 +16,11 @@ jobs:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
+      - if: env.MACOS_SIGNING_IDENTITY != ''
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          p12-password: ${{ secrets.MACOS_CERTIFICATE_P12_PASSWORD }}
       - run: ./packaging/macos/build-app.sh
       - uses: actions/upload-artifact@v4
         with:
