@@ -44,7 +44,14 @@ else
   echo "WARNING: ad-hoc signed (MACOS_SIGNING_IDENTITY unset) — users will need to bypass Gatekeeper."
 fi
 
-hdiutil create -volname "$APP" -srcfolder "$BUNDLE" -ov -format UDZO "$DMG"
+# Standard drag-to-install DMG: app beside an Applications shortcut.
+STAGING="$ROOT/dist/dmg-staging"
+rm -rf "$STAGING"
+mkdir -p "$STAGING"
+cp -R "$BUNDLE" "$STAGING/"
+ln -s /Applications "$STAGING/Applications"
+hdiutil create -volname "$APP" -srcfolder "$STAGING" -ov -format UDZO "$DMG"
+rm -rf "$STAGING"
 
 # Notarize and staple, when credentials are provided.
 if [ -n "${APPLE_ID:-}" ]; then
