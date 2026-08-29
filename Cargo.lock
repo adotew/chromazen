@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "Chromazen"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "atomic-write-file",
  "block2 0.6.2",
