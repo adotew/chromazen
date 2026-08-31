@@ -45,48 +45,97 @@ else
 fi
 
 # Drag-to-install DMG with a polished layout: background image + positioned icons.
-STAGING="$ROOT/dist/dmg-staging"
-TMP_DMG="$ROOT/dist/$APP-tmp.dmg"
-rm -rf "$STAGING" "$TMP_DMG" "$DMG"
+STAGING=$(mktemp -d "$ROOT/dist/dmg-staging.XXXXXX")
+TMP_DMG="$ROOT/dist/$APP-tmp-$$.dmg"
+MOUNT=""
+DEVICE=""
+
+# Finder can briefly keep the image busy after writing its layout.
+detach_dmg() {
+  local delay
+  for delay in 1 2 4; do
+    if hdiutil detach "$1"; then
+      return 0
+    fi
+    sleep "$delay"
+  done
+  hdiutil detach -force "$1"
+}
+
+cleanup_dmg() {
+  if [ -n "$DEVICE" ] && ! detach_dmg "$DEVICE" >/dev/null 2>&1; then
+    echo "WARNING: Could not detach $DEVICE; temporary files were preserved." >&2
+    return
+  fi
+  rm -rf "$STAGING" "$TMP_DMG" "$DMG"
+}
+trap cleanup_dmg EXIT
+
+rm -f "$TMP_DMG" "$DMG"
 mkdir -p "$STAGING/.background"
 cp -R "$BUNDLE" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"
 cp "$ROOT/packaging/macos/dmg-background.png" "$STAGING/.background/background.png"
-# Finder respects PNG DPI; this makes the 2000x1212 artwork fill the 660x400 window.
-sips --setProperty dpiWidth 218.182 --setProperty dpiHeight 218.182 \
+# A 2x, 144-DPI image fills Finder's 660x400-point window on Retina displays.
+sips --resampleHeightWidth 800 1320 \
+  --setProperty dpiWidth 144 --setProperty dpiHeight 144 \
   "$STAGING/.background/background.png" >/dev/null
 
 # Build writable, mount, lay out icons with Finder, compress to UDZO.
 hdiutil create -volname "$APP" -srcfolder "$STAGING" -ov -fs HFS+ -format UDRW "$TMP_DMG"
-MOUNT=$(hdiutil attach "$TMP_DMG" -nobrowse -noautoopen | awk '/\/Volumes\//{print $3; exit}')
+ATTACH_OUTPUT=$(hdiutil attach "$TMP_DMG" -readwrite -nobrowse -noautoopen -mountrandom /Volumes)
+DEVICE=$(printf '%s\n' "$ATTACH_OUTPUT" | awk '/^\/dev\// {print $1; exit}')
+MOUNT=$(printf '%s\n' "$ATTACH_OUTPUT" | awk -F '\t' '/\/Volumes\// {print $NF; exit}')
+if [ -z "$DEVICE" ] || [ -z "$MOUNT" ]; then
+  echo "Could not identify the mounted DMG." >&2
+  exit 1
+fi
 chflags hidden "$MOUNT/.background"
 
-osascript <<OSA
-set d to POSIX file "$MOUNT" as alias
-tell application "Finder"
-  open d
-  set w to container window of d
-  tell w
-    set current view to icon view
-    set toolbar visible to false
-    set statusbar visible to false
-    set the bounds to {100, 150, 760, 550}
+osascript - "$(basename "$MOUNT")" <<'OSA'
+on run argv
+  tell application "Finder"
+    tell disk (item 1 of argv)
+      open
+      set w to container window
+      tell w
+        set current view to icon view
+        set toolbar visible to false
+        set statusbar visible to false
+        set the bounds to {100, 150, 760, 550}
+      end tell
+      set opts to icon view options of w
+      tell opts
+        set arrangement to not arranged
+        set icon size to 128
+        set shows item info to false
+      end tell
+      set background picture of opts to file ".background:background.png"
+      set position of item "Chromazen.app" to {170, 180}
+      set position of item "Applications" to {490, 180}
+      close
+      open
+    end tell
+    delay 3
   end tell
-  set opts to icon view options of w
-  tell opts
-    set arrangement to not arranged
-    set icon size to 128
-    set shows item info to false
-  end tell
-  set background picture of opts to POSIX file "$MOUNT/.background/background.png"
-  set position of item "Chromazen" of w to {170, 180}
-  set position of item "Applications" of w to {490, 180}
-end tell
+end run
 OSA
 
-hdiutil detach "$MOUNT"
+if [ ! -f "$MOUNT/.DS_Store" ]; then
+  echo "Finder did not save the DMG layout." >&2
+  exit 1
+fi
+sync
+detach_dmg "$DEVICE"
+DEVICE=""
 hdiutil convert "$TMP_DMG" -format UDZO -imagekey zlib-level=9 -o "$DMG"
+
+if [ -n "${MACOS_SIGNING_IDENTITY:-}" ]; then
+  codesign --force --timestamp --sign "$MACOS_SIGNING_IDENTITY" "$DMG"
+fi
+hdiutil verify "$DMG"
 rm -rf "$STAGING" "$TMP_DMG"
+trap - EXIT
 
 # Notarize and staple, when credentials are provided.
 if [ -n "${APPLE_ID:-}" ]; then
@@ -96,6 +145,7 @@ if [ -n "${APPLE_ID:-}" ]; then
     --team-id "$APPLE_TEAM_ID"
   xcrun notarytool submit "$DMG" --keychain-profile chromazen-notary --wait
   xcrun stapler staple "$DMG"
+  xcrun stapler validate "$DMG"
 fi
 
 if [ "${1:-}" = "--install" ]; then
