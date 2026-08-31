@@ -47,6 +47,10 @@ impl GlassRegion {
         self.surface
     }
 
+    pub(super) fn overlaps(self, other: Self) -> bool {
+        self.rect.intersects(other.rect)
+    }
+
     fn to_raw(self, pixels_per_point: f32, surface_size: [u32; 2]) -> Option<GlassRegionRaw> {
         let scale = pixels_per_point.max(f32::EPSILON);
         let max_x = surface_size[0] as f32;
@@ -379,7 +383,7 @@ impl GlassRenderer {
         );
     }
 
-    pub(super) fn apply_region(&self, encoder: &mut wgpu::CommandEncoder, region_index: usize) {
+    pub(super) fn prepare_blur(&self, encoder: &mut wgpu::CommandEncoder) {
         self.render_scene_pass(
             encoder,
             "glass scene downsample pass",
@@ -397,7 +401,9 @@ impl GlassRenderer {
             &self.vertical_view,
             &self.vertical_bind_group,
         );
+    }
 
+    pub(super) fn apply_region(&self, encoder: &mut wgpu::CommandEncoder, region_index: usize) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("glass region composite pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -723,5 +729,21 @@ mod tests {
             false,
         );
         assert!(region.to_raw(2.0, [100, 120]).is_none());
+    }
+
+    #[test]
+    fn overlapping_glass_regions_are_detected() {
+        let region = |min, max| {
+            GlassRegion::new(
+                GlassSurface::Toolbar,
+                egui::Rect::from_min_max(min, max),
+                16.0,
+                false,
+            )
+        };
+        let first = region(egui::pos2(0.0, 0.0), egui::pos2(20.0, 20.0));
+
+        assert!(first.overlaps(region(egui::pos2(10.0, 10.0), egui::pos2(30.0, 30.0))));
+        assert!(!first.overlaps(region(egui::pos2(21.0, 21.0), egui::pos2(30.0, 30.0))));
     }
 }

@@ -473,9 +473,21 @@ impl GuiLayer {
             &self.glass_regions,
             screen_descriptor.pixels_per_point,
         );
+        // ponytail: Reuse the blur until a later panel overlaps content composited since it.
+        let mut blur_prepared = false;
+        let mut regions_since_blur = Vec::with_capacity(self.glass_regions.len());
         for stage in stages {
             if let Some(region_index) = stage.region_index {
+                let overlaps_stale_region = regions_since_blur.iter().any(|&previous_index| {
+                    self.glass_regions[region_index].overlaps(self.glass_regions[previous_index])
+                });
+                if !blur_prepared || overlaps_stale_region {
+                    self.glass.prepare_blur(encoder);
+                    blur_prepared = true;
+                    regions_since_blur.clear();
+                }
                 self.glass.apply_region(encoder, region_index);
+                regions_since_blur.push(region_index);
             }
             if !stage.jobs.is_empty() {
                 let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
