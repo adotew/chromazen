@@ -44,14 +44,49 @@ else
   echo "WARNING: ad-hoc signed (MACOS_SIGNING_IDENTITY unset) — users will need to bypass Gatekeeper."
 fi
 
-# Standard drag-to-install DMG: app beside an Applications shortcut.
+# Drag-to-install DMG with a polished layout: background image + positioned icons.
 STAGING="$ROOT/dist/dmg-staging"
-rm -rf "$STAGING"
-mkdir -p "$STAGING"
+TMP_DMG="$ROOT/dist/$APP-tmp.dmg"
+rm -rf "$STAGING" "$TMP_DMG" "$DMG"
+mkdir -p "$STAGING/.background"
 cp -R "$BUNDLE" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"
-hdiutil create -volname "$APP" -srcfolder "$STAGING" -ov -format UDZO "$DMG"
-rm -rf "$STAGING"
+cp "$ROOT/packaging/macos/dmg-background.png" "$STAGING/.background/background.png"
+# Finder respects PNG DPI; this makes the 2000x1212 artwork fill the 660x400 window.
+sips --setProperty dpiWidth 218.182 --setProperty dpiHeight 218.182 \
+  "$STAGING/.background/background.png" >/dev/null
+
+# Build writable, mount, lay out icons with Finder, compress to UDZO.
+hdiutil create -volname "$APP" -srcfolder "$STAGING" -ov -fs HFS+ -format UDRW "$TMP_DMG"
+MOUNT=$(hdiutil attach "$TMP_DMG" -nobrowse -noautoopen | awk '/\/Volumes\//{print $3; exit}')
+chflags hidden "$MOUNT/.background"
+
+osascript <<OSA
+set d to POSIX file "$MOUNT" as alias
+tell application "Finder"
+  open d
+  set w to container window of d
+  tell w
+    set current view to icon view
+    set toolbar visible to false
+    set statusbar visible to false
+    set the bounds to {100, 150, 760, 550}
+  end tell
+  set opts to icon view options of w
+  tell opts
+    set arrangement to not arranged
+    set icon size to 128
+    set shows item info to false
+  end tell
+  set background picture of opts to POSIX file "$MOUNT/.background/background.png"
+  set position of item "Chromazen" of w to {170, 180}
+  set position of item "Applications" of w to {490, 180}
+end tell
+OSA
+
+hdiutil detach "$MOUNT"
+hdiutil convert "$TMP_DMG" -format UDZO -imagekey zlib-level=9 -o "$DMG"
+rm -rf "$STAGING" "$TMP_DMG"
 
 # Notarize and staple, when credentials are provided.
 if [ -n "${APPLE_ID:-}" ]; then
