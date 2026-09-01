@@ -98,46 +98,13 @@ impl GuiLayer {
                 egui::vec2(TOOL_WIDTH, TOOL_RAIL_THICKNESS),
             );
             let response = show_tool_button(ui, tool_rect, paint_tool, tool == active_tool);
-            if tool != active_tool {
-                if response.clicked() {
-                    egui::Popup::close_all(ui.ctx());
+            if response.clicked() {
+                egui::Popup::close_all(ui.ctx());
+                if tool == active_tool {
+                    self.brush_window_open = !self.brush_window_open;
+                } else {
                     selected_tool = Some(tool);
                 }
-                continue;
-            }
-
-            let popup_id = egui::Popup::default_response_id(&response);
-            let selected_brush = self.tool_brushes[tool_index(paint_tool)].clone();
-            let brushes = self.brushes.clone();
-            egui::Popup::menu(&response)
-                .align(egui::RectAlign::BOTTOM_START)
-                .width(300.0)
-                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                .show(|ui| {
-                    egui::ScrollArea::vertical()
-                        .max_height(360.0)
-                        .show(ui, |ui| {
-                            for brush in &brushes {
-                                let selected = brush.id == selected_brush;
-                                let preview = self.brush_preview_texture(&brush.id);
-                                let response = show_brush_row(ui, &brush.name, preview, selected);
-                                if response.clicked() {
-                                    if !selected {
-                                        self.commands.push(AppCommand::Settings(
-                                            SettingsCommand::SwitchBrush {
-                                                tool: paint_tool,
-                                                id: brush.id.clone(),
-                                            },
-                                        ));
-                                    }
-                                    ui.close();
-                                }
-                                ui.add_space(4.0);
-                            }
-                        });
-                });
-            if egui::Popup::is_id_open(ui.ctx(), popup_id) {
-                self.cache_next_missing_brush_preview();
             }
         }
 

@@ -60,6 +60,26 @@ impl GuiLayer {
                 self.panel_layout.color_panel_pos = [min.x, min.y];
             }
 
+            if self.brush_window_open
+                && let Some(paint_tool) = tool.paint_tool()
+                && let Some(response) = egui::Window::new("Brush")
+                    .id(egui::Id::new("floating brush"))
+                    .default_pos(egui::pos2(
+                        self.panel_layout.brush_panel_pos[0],
+                        self.panel_layout.brush_panel_pos[1],
+                    ))
+                    .auto_sized()
+                    .default_width(BRUSH_PANEL_WIDTH)
+                    .min_width(BRUSH_PANEL_WIDTH)
+                    .max_width(BRUSH_PANEL_WIDTH)
+                    .resizable(false)
+                    .collapsible(false)
+                    .show(ui.ctx(), |ui| self.show_brush_panel(ui, paint_tool))
+            {
+                let min = response.response.rect.min;
+                self.panel_layout.brush_panel_pos = [min.x, min.y];
+            }
+
             if self.layers_window_open {
                 let layers_response = egui::Window::new("Layers")
                     .id(egui::Id::new("floating layers"))
@@ -111,6 +131,7 @@ impl GuiLayer {
                         self.commands
                             .push(AppCommand::Editor(EditorCommand::CancelLayerTransform));
                     } else {
+                        self.brush_window_open = false;
                         self.color_window_open = false;
                         self.layers_window_open = false;
                     }

@@ -1,3 +1,4 @@
+mod brush_panel;
 mod brush_preview;
 mod canvas_crop;
 mod color_picker;
@@ -38,6 +39,8 @@ use super::{
 };
 
 const TOOL_RAIL_THICKNESS: f32 = 42.0;
+const BRUSH_PANEL_WIDTH: f32 = 240.0;
+const BRUSH_PRESET_LIST_MAX_HEIGHT: f32 = 320.0;
 const LAYER_PANEL_WIDTH: f32 = 300.0;
 const LAYER_LIST_MAX_HEIGHT: f32 = 440.0;
 
@@ -126,6 +129,7 @@ pub struct GuiLayer {
     pointer_over_selected_reference: bool,
     brush_previews: Vec<(String, egui::TextureHandle)>,
     failed_brush_previews: Vec<String>,
+    brush_window_open: bool,
     color_window_open: bool,
     layers_window_open: bool,
     panel_layout: PanelLayout,
@@ -348,6 +352,7 @@ impl GuiLayer {
             pointer_over_selected_reference: false,
             brush_previews: Vec::new(),
             failed_brush_previews: Vec::new(),
+            brush_window_open: false,
             color_window_open: false,
             layers_window_open: false,
             panel_layout: config.panel_layout,
@@ -424,7 +429,8 @@ impl GuiLayer {
     }
 
     pub(crate) fn toggle_panels(&mut self) {
-        let open = !self.color_window_open && !self.layers_window_open;
+        let open = !self.brush_window_open && !self.color_window_open && !self.layers_window_open;
+        self.brush_window_open = open;
         self.color_window_open = open;
         self.layers_window_open = open;
     }
@@ -666,54 +672,6 @@ fn selectable_row(
     };
     ui.painter().rect_filled(rect, 12, fill);
     (rect, response)
-}
-
-fn show_brush_row(
-    ui: &mut egui::Ui,
-    name: &str,
-    texture_id: Option<egui::TextureId>,
-    selected: bool,
-) -> egui::Response {
-    let (rect, response) = selectable_row(ui, 58.0, egui::Sense::click(), selected);
-    let dark_mode = ui.visuals().dark_mode;
-    let visuals = ui.style().interact(&response);
-    let painter = ui.painter();
-
-    painter
-        .with_clip_rect(egui::Rect::from_min_max(
-            rect.min,
-            egui::pos2(rect.min.x + 82.0, rect.max.y),
-        ))
-        .text(
-            egui::pos2(rect.min.x + 10.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            name,
-            egui::TextStyle::Button.resolve(ui.style()),
-            visuals.text_color(),
-        );
-
-    let preview = egui::Rect::from_min_max(
-        egui::pos2(rect.min.x + 82.0, rect.min.y + 5.0),
-        egui::pos2(rect.max.x - 8.0, rect.max.y - 5.0),
-    );
-    if let Some(texture_id) = texture_id {
-        painter.image(
-            texture_id,
-            preview,
-            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-            visuals.text_color(),
-        );
-    } else {
-        painter.line_segment(
-            [preview.left_center(), preview.right_center()],
-            egui::Stroke::new(
-                2.0_f32,
-                egui::Color32::from_gray(if dark_mode { 90 } else { 175 }),
-            ),
-        );
-    }
-
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 struct LayerRow<'a> {
