@@ -7,7 +7,7 @@ use winit::{
 };
 
 use crate::{
-    paint::{BrushSettings, PaintTool, StrokePoint, StrokeSmoother},
+    paint::{BrushSettings, PaintTool, StrokePoint, StrokePositionFilter, StrokeSmoother},
     platform::{PenEvent, PressureStateHandle},
     renderer::PaintRenderer,
 };
@@ -147,14 +147,22 @@ pub struct PaintInputController {
     resize_drag: Option<BrushResizeDrag>,
     eyedropper_drag: Option<EyedropperDrag>,
     last_point: Option<StrokePoint>,
+    last_raw_point: Option<StrokePoint>,
     last_pan_pos: [f32; 2],
+    position_filter: StrokePositionFilter,
     smoother: StrokeSmoother,
+    input_clock: Option<Instant>,
+    scale_factor: Option<f32>,
     modifiers: ModifiersState,
     tool: EditorTool,
     previous_paint_tool: PaintTool,
 }
 
 impl PaintInputController {
+    pub(crate) fn set_scale_factor(&mut self, scale_factor: f32) {
+        self.scale_factor = Some(scale_factor.max(f32::EPSILON));
+    }
+
     pub fn tool(&self) -> EditorTool {
         self.tool
     }
@@ -360,7 +368,20 @@ impl PaintInputController {
                 }
 
                 if self.is_drawing {
-                    let point = self.stroke_point_from_window(paint, next, *brush, pressure_state);
+                    let time = self.sample_time(pressure_state);
+                    let raw_point =
+                        self.stroke_point_from_window(paint, next, *brush, pressure_state);
+                    self.last_raw_point = Some(raw_point);
+                    // Keep filter tuning independent of display scale and canvas zoom.
+                    let scale_factor = self.scale_factor.unwrap_or(1.0);
+                    let logical = scale_point(next, 1.0 / scale_factor);
+                    let filtered = self.position_filter.filter(logical, time);
+                    let document = paint.window_to_document(scale_point(filtered, scale_factor));
+                    let point = StrokePoint {
+                        x: document[0],
+                        y: document[1],
+                        ..raw_point
+                    };
                     let smoothed_points = self.smoother.push(point);
                     let queued = self.queue_smoothed_points(paint, smoothed_points, *brush);
                     return queued > 0;
@@ -428,6 +449,7 @@ impl PaintInputController {
                         return false;
                     }
                     self.stroke_uses_pen_pressure = pressure_state.pen_input_active();
+                    let time = self.sample_time(pressure_state);
                     let point = self.stroke_point_from_window(
                         paint,
                         self.cursor_pos,
@@ -439,6 +461,10 @@ impl PaintInputController {
                     }
                     self.is_drawing = true;
                     self.last_point = Some(point);
+                    self.last_raw_point = Some(point);
+                    let scale_factor = self.scale_factor.unwrap_or(1.0);
+                    self.position_filter
+                        .reset(scale_point(self.cursor_pos, 1.0 / scale_factor), time);
                     self.smoother.begin(point);
                     tool != PaintTool::Smudge && paint.queue_stamp(point)
                 }
@@ -589,6 +615,13 @@ impl PaintInputController {
         self.select_tool(tool)
     }
 
+    fn sample_time(&mut self, pressure_state: &PressureStateHandle) -> Duration {
+        pressure_state
+            .brush_sample()
+            .1
+            .unwrap_or_else(|| self.input_clock.get_or_insert_with(Instant::now).elapsed())
+    }
+
     fn stroke_point_from_window(
         &self,
         paint: &PaintRenderer,
@@ -624,7 +657,11 @@ impl PaintInputController {
     fn end_stroke(&mut self, paint: &mut PaintRenderer, brush: BrushSettings) -> bool {
         let was_active = self.is_drawing || self.is_panning;
         let queued = if self.is_drawing {
-            let smoothed_points = self.smoother.finish();
+            let smoothed_points = if let Some(point) = self.last_raw_point {
+                self.smoother.finish_at(point)
+            } else {
+                self.smoother.finish()
+            };
             let queued = self.queue_smoothed_points(paint, smoothed_points, brush);
             paint.end_stroke();
             queued
@@ -636,8 +673,13 @@ impl PaintInputController {
         self.stroke_uses_pen_pressure = false;
         self.is_panning = false;
         self.last_point = None;
+        self.last_raw_point = None;
         queued > 0 || was_active
     }
+}
+
+fn scale_point(point: [f32; 2], scale: f32) -> [f32; 2] {
+    [point[0] * scale, point[1] * scale]
 }
 
 fn pointer_angle(center: [f32; 2], point: [f32; 2]) -> f32 {
@@ -1195,6 +1237,7 @@ mod tests {
             PenEvent::Down {
                 position: [10.0, 20.0],
                 pressure: 0.5,
+                time: Duration::from_millis(10),
             },
             2.0,
         );
@@ -1215,6 +1258,7 @@ mod tests {
                 position: [3.5, 7.25],
                 pressure: 0.0,
                 contact: false,
+                time: Duration::from_millis(20),
             },
             1.0,
         );

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Duration};
 
 use super::StrokePoint;
 
@@ -10,6 +10,81 @@ const MIN_OPACITY_DELTA: f32 = 0.025;
 const CURVE_FLATNESS_PX: f32 = 0.35;
 const MAX_ADAPTIVE_DEPTH: usize = 10;
 const MAX_CURVE_SAMPLES: usize = 96;
+
+// One Euro parameters use logical screen points: Hz and inverse points, respectively.
+const MIN_FILTER_CUTOFF_HZ: f32 = 1.0;
+const FILTER_BETA: f32 = 0.05;
+const DERIVATIVE_FILTER_CUTOFF_HZ: f32 = 1.0;
+const FALLBACK_SAMPLE_INTERVAL: Duration = Duration::from_micros(8_333);
+
+#[derive(Debug)]
+pub(crate) struct StrokePositionFilter {
+    filtered_position: [f32; 2],
+    filtered_velocity: [f32; 2],
+    previous_time: Duration,
+    sample_interval: Duration,
+    min_cutoff_hz: f32,
+    beta: f32,
+    initialized: bool,
+}
+
+impl Default for StrokePositionFilter {
+    fn default() -> Self {
+        Self::with_parameters(MIN_FILTER_CUTOFF_HZ, FILTER_BETA)
+    }
+}
+
+impl StrokePositionFilter {
+    fn with_parameters(min_cutoff_hz: f32, beta: f32) -> Self {
+        Self {
+            filtered_position: [0.0; 2],
+            filtered_velocity: [0.0; 2],
+            previous_time: Duration::ZERO,
+            sample_interval: FALLBACK_SAMPLE_INTERVAL,
+            min_cutoff_hz,
+            beta,
+            initialized: false,
+        }
+    }
+
+    pub(crate) fn reset(&mut self, position: [f32; 2], time: Duration) -> [f32; 2] {
+        self.filtered_position = position;
+        self.filtered_velocity = [0.0; 2];
+        self.previous_time = time;
+        self.sample_interval = FALLBACK_SAMPLE_INTERVAL;
+        self.initialized = true;
+        position
+    }
+
+    pub(crate) fn filter(&mut self, position: [f32; 2], time: Duration) -> [f32; 2] {
+        if !self.initialized {
+            return self.reset(position, time);
+        }
+
+        if let Some(elapsed) = time
+            .checked_sub(self.previous_time)
+            .filter(|elapsed| !elapsed.is_zero())
+        {
+            self.sample_interval = elapsed;
+        }
+        self.previous_time = time;
+        let dt = self.sample_interval.as_secs_f32();
+        let derivative_alpha = low_pass_alpha(dt, DERIVATIVE_FILTER_CUTOFF_HZ);
+        for (axis, raw) in position.into_iter().enumerate() {
+            let velocity = (raw - self.filtered_position[axis]) / dt;
+            self.filtered_velocity[axis] =
+                low_pass(self.filtered_velocity[axis], velocity, derivative_alpha);
+        }
+
+        let speed = self.filtered_velocity[0].hypot(self.filtered_velocity[1]);
+        let cutoff = self.min_cutoff_hz + self.beta * speed;
+        let alpha = low_pass_alpha(dt, cutoff);
+        for (filtered, raw) in self.filtered_position.iter_mut().zip(position) {
+            *filtered = low_pass(*filtered, raw, alpha);
+        }
+        self.filtered_position
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 struct CurveInterval {
@@ -41,6 +116,14 @@ impl StrokeSmoother {
 
         self.points.push_back(point);
         self.emit_available_segment()
+    }
+
+    pub(crate) fn finish_at(&mut self, point: StrokePoint) -> Vec<StrokePoint> {
+        if let Some(last) = self.points.back_mut() {
+            *last = point;
+        }
+        self.latest_raw_point = Some(point);
+        self.finish()
     }
 
     pub(crate) fn finish(&mut self) -> Vec<StrokePoint> {
@@ -359,6 +442,14 @@ fn same_stroke_point(a: StrokePoint, b: StrokePoint) -> bool {
     a.x == b.x && a.y == b.y && a.radius == b.radius && a.opacity == b.opacity
 }
 
+fn low_pass(previous: f32, value: f32, alpha: f32) -> f32 {
+    previous + alpha * (value - previous)
+}
+
+fn low_pass_alpha(dt: f32, cutoff_hz: f32) -> f32 {
+    1.0 / (1.0 + 1.0 / (std::f32::consts::TAU * cutoff_hz * dt))
+}
+
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
@@ -401,6 +492,68 @@ mod tests {
                     .fold(f32::INFINITY, f32::min)
             })
             .fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn position_filter_reduces_stationary_jitter() {
+        let mut filter = StrokePositionFilter::default();
+        filter.reset([0.0; 2], Duration::ZERO);
+        let mut raw_squared_error = 0.0;
+        let mut filtered_squared_error = 0.0;
+        let mut noise_state = 0x1234_5678_u32;
+
+        for index in 1..=240 {
+            noise_state = noise_state
+                .wrapping_mul(1_664_525)
+                .wrapping_add(1_013_904_223);
+            let noise = (noise_state >> 8) as f32 / 8_388_607.5 - 1.0;
+            let raw = [noise, -noise];
+            let filtered = filter.filter(raw, FALLBACK_SAMPLE_INTERVAL * index);
+            raw_squared_error += raw[0] * raw[0] + raw[1] * raw[1];
+            filtered_squared_error += filtered[0] * filtered[0] + filtered[1] * filtered[1];
+        }
+
+        assert!(filtered_squared_error < raw_squared_error * 0.25);
+    }
+
+    #[test]
+    fn duplicate_filter_timestamps_remain_finite() {
+        let mut filter = StrokePositionFilter::default();
+        filter.reset([0.0; 2], Duration::ZERO);
+
+        let filtered = filter.filter([10.0, 5.0], Duration::ZERO);
+
+        assert!(filtered.into_iter().all(f32::is_finite));
+    }
+
+    #[test]
+    fn position_filter_is_stable_across_sample_rates() {
+        fn replay(sample_rate: u32) -> f32 {
+            let mut filter = StrokePositionFilter::default();
+            filter.reset([0.0; 2], Duration::ZERO);
+            let samples = sample_rate / 2;
+            let mut output = [0.0; 2];
+            for index in 1..=samples {
+                let seconds = index as f32 / sample_rate as f32;
+                output = filter.filter([seconds * 1_000.0, 0.0], Duration::from_secs_f32(seconds));
+            }
+            output[0]
+        }
+
+        assert!((replay(60) - replay(240)).abs() < 2.0);
+    }
+
+    #[test]
+    fn finish_at_replaces_the_filtered_tip() {
+        let mut smoother = StrokeSmoother::default();
+        smoother.begin(point(0.0, 0.0));
+        smoother.push(point(8.0, 0.0));
+        smoother.push(point(10.0, 0.0));
+
+        let output = smoother.finish_at(point(12.0, 0.0));
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0].x, 12.0);
     }
 
     #[test]

@@ -1,4 +1,7 @@
 #[cfg(any(target_os = "windows", test))]
+use std::time::Duration;
+
+#[cfg(any(target_os = "windows", test))]
 use super::PenEvent;
 
 #[cfg(any(target_os = "windows", test))]
@@ -18,6 +21,7 @@ pub(super) struct WindowsPenSample {
     pub position: [f32; 2],
     pub pressure: Option<f32>,
     pub contact: bool,
+    pub time: Duration,
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -27,11 +31,13 @@ pub(super) fn events_for_sample(sample: WindowsPenSample) -> Vec<PenEvent> {
         WindowsPenAction::Down => vec![PenEvent::Down {
             position: sample.position,
             pressure,
+            time: sample.time,
         }],
         WindowsPenAction::Motion => vec![PenEvent::Motion {
             position: sample.position,
             pressure,
             contact: sample.contact,
+            time: sample.time,
         }],
         WindowsPenAction::Up => vec![PenEvent::Up],
         WindowsPenAction::Cancel => vec![PenEvent::Up, PenEvent::Leave],
@@ -78,12 +84,14 @@ mod tests {
             position: [12.0, 24.0],
             pressure: None,
             contact: true,
+            time: Duration::from_millis(12),
         };
         assert_eq!(
             events_for_sample(down),
             vec![PenEvent::Down {
                 position: [12.0, 24.0],
                 pressure: 1.0,
+                time: Duration::from_millis(12),
             }]
         );
 
@@ -98,6 +106,7 @@ mod tests {
                 position: [12.0, 24.0],
                 pressure: 0.0,
                 contact: false,
+                time: Duration::from_millis(12),
             }]
         );
     }
@@ -109,6 +118,7 @@ mod tests {
             position: [0.0; 2],
             pressure: Some(0.7),
             contact: false,
+            time: Duration::from_millis(18),
         };
         assert_eq!(events_for_sample(sample), vec![PenEvent::Up]);
         assert_eq!(
@@ -195,7 +205,7 @@ mod imp {
         WindowsPenAction, WindowsPenSample, events_for_sample, normalize_pressure,
         physical_to_logical,
     };
-    use crate::platform::PenEvent;
+    use crate::platform::{MillisecondClock, PenEvent};
 
     type PenSink = Box<dyn Fn(PenEvent)>;
 
@@ -209,6 +219,7 @@ mod imp {
         target_hwnd: Option<usize>,
         active_pointer: Option<u32>,
         active_contact: bool,
+        clock: MillisecondClock,
         sink: Option<PenSink>,
     }
 
@@ -255,6 +266,7 @@ mod imp {
             state.target_hwnd = Some(hwnd);
             state.active_pointer = None;
             state.active_contact = false;
+            state.clock = MillisecondClock::default();
             state.sink = Some(Box::new(sink));
             drop(state);
             Ok(Some(Self { router, hwnd }))
@@ -331,6 +343,7 @@ mod imp {
                 position: physical_to_logical([point.x, point.y], dpi),
                 pressure: normalize_pressure(info.pressure, info.penMask & PEN_MASK_PRESSURE != 0),
                 contact,
+                time: self.clock.observe(info.pointerInfo.dwTime),
             });
             if action == WindowsPenAction::Cancel {
                 self.active_pointer = None;

@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct PressureStateHandle(Arc<Mutex<PressureState>>);
@@ -8,6 +11,7 @@ struct PressureState {
     pressure: f32,
     pen_active: bool,
     pen_in_proximity: bool,
+    sample_time: Option<Duration>,
 }
 
 impl Default for PressureState {
@@ -16,6 +20,7 @@ impl Default for PressureState {
             pressure: 1.0,
             pen_active: false,
             pen_in_proximity: false,
+            sample_time: None,
         }
     }
 }
@@ -34,10 +39,12 @@ impl PressureState {
 
 impl PressureStateHandle {
     pub fn brush_pressure(&self) -> f32 {
-        self.0
-            .lock()
-            .expect("pressure state poisoned")
-            .brush_pressure()
+        self.brush_sample().0
+    }
+
+    pub(crate) fn brush_sample(&self) -> (f32, Option<Duration>) {
+        let state = self.0.lock().expect("pressure state poisoned");
+        (state.brush_pressure(), state.sample_time)
     }
 
     pub(crate) fn pen_input_active(&self) -> bool {
@@ -58,17 +65,19 @@ impl PressureStateHandle {
         }
     }
 
-    pub(crate) fn note_pen_pressure(
+    pub(crate) fn note_pen_pressure_at(
         &self,
         pressure: f32,
         active: bool,
         is_pen_device: bool,
+        sample_time: Option<Duration>,
     ) -> bool {
         let mut state = self.0.lock().expect("pressure state poisoned");
         let before = state.brush_pressure();
         state.pressure = pressure.clamp(0.0, 1.0);
         state.pen_active = active;
         state.pen_in_proximity |= is_pen_device;
+        state.sample_time = sample_time;
         (state.brush_pressure() - before).abs() > f32::EPSILON
     }
 
@@ -78,6 +87,7 @@ impl PressureStateHandle {
         state.pressure = 0.0;
         state.pen_active = false;
         state.pen_in_proximity |= is_pen_device;
+        state.sample_time = None;
         (state.brush_pressure() - before).abs() > f32::EPSILON
     }
 
@@ -88,6 +98,7 @@ impl PressureStateHandle {
         state.pressure = 0.0;
         state.pen_active = false;
         state.pen_in_proximity = in_proximity;
+        state.sample_time = None;
         (state.brush_pressure() - before).abs() > f32::EPSILON
     }
 
@@ -111,8 +122,9 @@ mod tests {
         pressure.set_pen_proximity(true);
         assert_eq!(pressure.brush_pressure(), 0.0);
 
-        pressure.note_pen_pressure(0.4, true, true);
-        assert_eq!(pressure.brush_pressure(), 0.4);
+        let sample_time = Duration::from_millis(12);
+        pressure.note_pen_pressure_at(0.4, true, true, Some(sample_time));
+        assert_eq!(pressure.brush_sample(), (0.4, Some(sample_time)));
 
         pressure.end_pen_contact(true);
         assert_eq!(pressure.brush_pressure(), 0.0);
@@ -124,7 +136,7 @@ mod tests {
     #[test]
     fn pen_stroke_does_not_fall_back_to_full_mouse_pressure() {
         let pressure = PressureStateHandle::default();
-        pressure.note_pen_pressure(0.4, true, true);
+        pressure.note_pen_pressure_at(0.4, true, true, None);
         assert!(pressure.pen_input_active());
         assert_eq!(pressure.stroke_pressure(true), 0.4);
 

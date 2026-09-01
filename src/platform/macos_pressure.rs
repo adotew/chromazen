@@ -20,7 +20,7 @@ impl MacosPressureMonitor {
 
 #[cfg(target_os = "macos")]
 mod macos_impl {
-    use std::{ptr::NonNull, sync::Arc};
+    use std::{ptr::NonNull, sync::Arc, time::Duration};
 
     use block2::{DynBlock, RcBlock};
     use objc2::{MainThreadMarker, rc::Retained, runtime::AnyObject};
@@ -73,13 +73,19 @@ mod macos_impl {
                     NSPointingDeviceType::Pen | NSPointingDeviceType::Eraser
                 );
                 let pressure = event.pressure();
+                let sample_time = Duration::from_secs_f64(event.timestamp().max(0.0));
                 let has_meaningful_pressure = pressure > 0.0;
                 let should_use_pressure = is_pen_device || has_meaningful_pressure;
 
                 let changed = match event_type {
                     NSEventType::LeftMouseDown | NSEventType::LeftMouseDragged => {
                         if should_use_pressure {
-                            pressure_state.note_pen_pressure(pressure, true, is_pen_device)
+                            pressure_state.note_pen_pressure_at(
+                                pressure,
+                                true,
+                                is_pen_device,
+                                Some(sample_time),
+                            )
                         } else {
                             pressure_state.reset_pen_state()
                         }
@@ -88,10 +94,11 @@ mod macos_impl {
                         pressure_state.end_pen_contact(is_pen_device)
                     }
                     NSEventType::TabletPoint | NSEventType::Pressure if should_use_pressure => {
-                        pressure_state.note_pen_pressure(
+                        pressure_state.note_pen_pressure_at(
                             pressure,
                             has_meaningful_pressure,
                             is_pen_device,
+                            Some(sample_time),
                         )
                     }
                     NSEventType::TabletProximity => {

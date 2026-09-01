@@ -151,6 +151,7 @@ impl ApplicationHandler<AppEvent> for App {
                 .expect("failed to create window"),
         );
 
+        self.input.set_scale_factor(window.scale_factor() as f32);
         self.native_menu
             .install(window.as_ref())
             .unwrap_or_else(|error| panic!("failed to install native menu: {error}"));
@@ -365,6 +366,7 @@ impl ApplicationHandler<AppEvent> for App {
                         needs_redraw = true;
                     }
                     WindowEvent::ScaleFactorChanged { .. } => {
+                        self.input.set_scale_factor(window.scale_factor() as f32);
                         if let Some(paint) = self.paint.as_mut() {
                             paint.resize(window.inner_size());
                         }
@@ -419,14 +421,18 @@ impl App {
             return;
         };
         match event {
-            PenEvent::Down { pressure, .. } => {
-                self.pressure_state.note_pen_pressure(pressure, true, true);
+            PenEvent::Down { pressure, time, .. } => {
+                self.pressure_state
+                    .note_pen_pressure_at(pressure, true, true, Some(time));
             }
             PenEvent::Motion {
-                pressure, contact, ..
+                pressure,
+                contact,
+                time,
+                ..
             } => {
                 self.pressure_state
-                    .note_pen_pressure(pressure, contact, true);
+                    .note_pen_pressure_at(pressure, contact, true, Some(time));
             }
             PenEvent::Up => {}
             PenEvent::Leave => {}

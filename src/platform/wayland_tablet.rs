@@ -53,7 +53,7 @@ mod imp {
     };
     use winit::window::Window;
 
-    use crate::platform::PenEvent;
+    use crate::platform::{MillisecondClock, PenEvent};
 
     pub struct WaylandTabletMonitor {
         shutdown: Arc<AtomicBool>,
@@ -187,6 +187,7 @@ mod imp {
         tablet_seats: Vec<ZwpTabletSeatV2>,
         tablets: Vec<ZwpTabletV2>,
         tools: Vec<ZwpTabletToolV2>,
+        clock: MillisecondClock,
         frame: TabletFrame,
     }
 
@@ -199,6 +200,7 @@ mod imp {
         pressure_supported: bool,
         action: FrameAction,
         updated: bool,
+        time: std::time::Duration,
     }
 
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -226,6 +228,7 @@ mod imp {
                 tablet_seats: Vec::new(),
                 tablets: Vec::new(),
                 tools: Vec::new(),
+                clock: MillisecondClock::default(),
                 frame: TabletFrame::default(),
             }
         }
@@ -245,7 +248,8 @@ mod imp {
             (self.sink)(event);
         }
 
-        fn emit_pending_frame_event(&mut self) {
+        fn emit_pending_frame_event(&mut self, milliseconds: u32) {
+            self.frame.time = self.clock.observe(milliseconds);
             if let Some(event) = self.frame.take_pen_event() {
                 self.emit_pen_event(event);
             }
@@ -270,11 +274,13 @@ mod imp {
                 FrameAction::Down => Some(PenEvent::Down {
                     position: self.position,
                     pressure: self.effective_pressure(),
+                    time: self.time,
                 }),
                 FrameAction::None if self.proximity && self.updated => Some(PenEvent::Motion {
                     position: self.position,
                     pressure: self.effective_pressure(),
                     contact: self.tip_down,
+                    time: self.time,
                 }),
                 FrameAction::None => None,
             };
@@ -479,7 +485,9 @@ mod imp {
                     state.frame.tip_down = false;
                     state.frame.action = FrameAction::Up;
                 }
-                zwp_tablet_tool_v2::Event::Frame { .. } => state.emit_pending_frame_event(),
+                zwp_tablet_tool_v2::Event::Frame { time } => {
+                    state.emit_pending_frame_event(time);
+                }
                 _ => {}
             }
         }
@@ -507,6 +515,7 @@ mod imp {
                     position: [24.0, 48.0],
                     pressure: 0.25,
                     contact: true,
+                    time: std::time::Duration::ZERO,
                 })
             );
             assert!(!frame.updated);
@@ -527,6 +536,7 @@ mod imp {
                 Some(PenEvent::Down {
                     position: [10.0, 20.0],
                     pressure: 1.0,
+                    time: std::time::Duration::ZERO,
                 })
             );
         }
