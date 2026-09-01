@@ -44,20 +44,29 @@ impl GuiLayer {
                     .push(AppCommand::Editor(EditorCommand::DeleteReference(id)));
             }
 
-            if self.color_window_open {
-                egui::Window::new("Color")
+            if self.color_window_open
+                && let Some(response) = egui::Window::new("Color")
                     .id(egui::Id::new("floating color picker"))
-                    .default_pos(egui::pos2(24.0, 80.0))
+                    .default_pos(egui::pos2(
+                        self.panel_layout.color_panel_pos[0],
+                        self.panel_layout.color_panel_pos[1],
+                    ))
                     .default_width(280.0)
                     .resizable(false)
                     .collapsible(false)
-                    .show(ui.ctx(), |ui| self.show_brush_color_picker(ui));
+                    .show(ui.ctx(), |ui| self.show_brush_color_picker(ui))
+            {
+                let min = response.response.rect.min;
+                self.panel_layout.color_panel_pos = [min.x, min.y];
             }
 
             if self.layers_window_open {
                 let layers_response = egui::Window::new("Layers")
                     .id(egui::Id::new("floating layers"))
-                    .default_pos(egui::pos2(340.0, 80.0))
+                    .default_pos(egui::pos2(
+                        self.panel_layout.layers_panel_pos[0],
+                        self.panel_layout.layers_panel_pos[1],
+                    ))
                     .auto_sized()
                     .default_width(LAYER_PANEL_WIDTH)
                     .min_width(LAYER_PANEL_WIDTH)
@@ -68,6 +77,8 @@ impl GuiLayer {
                         self.show_layers_panel(ui, layers, background)
                     });
                 if let Some(response) = layers_response {
+                    let min = response.response.rect.min;
+                    self.panel_layout.layers_panel_pos = [min.x, min.y];
                     let button_rect = egui::Rect::from_min_size(
                         response.response.rect.left_top() + egui::vec2(8.0, 6.0),
                         egui::Vec2::splat(28.0),

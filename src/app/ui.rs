@@ -21,7 +21,7 @@ use winit::window::Window;
 
 use crate::{
     artwork::ArtworkSummary,
-    config::{AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset},
+    config::{AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset, PanelLayout},
     paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings},
     renderer::{
         CanvasSizeConstraints, DEFAULT_CANVAS_SIZE, DropEdge, LayerContentBounds, LayerId,
@@ -128,6 +128,7 @@ pub struct GuiLayer {
     failed_brush_previews: Vec<String>,
     color_window_open: bool,
     layers_window_open: bool,
+    panel_layout: PanelLayout,
     canvas_size_constraints: CanvasSizeConstraints,
     new_artwork_dialog: Option<NewArtworkDialog>,
     canvas_crop: Option<CanvasCrop>,
@@ -349,6 +350,7 @@ impl GuiLayer {
             failed_brush_previews: Vec::new(),
             color_window_open: false,
             layers_window_open: false,
+            panel_layout: config.panel_layout,
             canvas_size_constraints: paint.canvas_size_constraints(),
             new_artwork_dialog: None,
             canvas_crop: None,
@@ -443,7 +445,13 @@ impl GuiLayer {
 
     pub(crate) fn settings_for_save(
         &self,
-    ) -> (CurrentBrushConfig, [String; 3], [f32; 3], [f32; 3]) {
+    ) -> (
+        CurrentBrushConfig,
+        [String; 3],
+        [f32; 3],
+        [f32; 3],
+        PanelLayout,
+    ) {
         let mut brush = self.current_brush_config();
         brush.size = self.tool_sizes[tool_index(PaintTool::Brush)];
         brush.opacity = self.tool_opacities[tool_index(PaintTool::Brush)];
@@ -452,6 +460,7 @@ impl GuiLayer {
             self.tool_brushes.clone(),
             self.tool_sizes,
             self.tool_opacities,
+            self.panel_layout,
         )
     }
 
@@ -546,6 +555,7 @@ impl GuiLayer {
         self.brush.size =
             self.tool_sizes[index].clamp(*self.size_range.start(), *self.size_range.end());
         self.brush.opacity = self.tool_opacities[index];
+        self.panel_layout = config.panel_layout;
         self.context.request_repaint();
     }
 }

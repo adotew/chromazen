@@ -37,6 +37,7 @@ pub(crate) struct AppConfig {
     pub(crate) eraser_opacity: f32,
     pub(crate) smudge_opacity: f32,
     pub(crate) brush: CurrentBrushConfig,
+    pub(crate) panel_layout: PanelLayout,
 }
 
 impl Default for AppConfig {
@@ -51,6 +52,28 @@ impl Default for AppConfig {
             eraser_opacity: CurrentBrushConfig::default().opacity,
             smudge_opacity: CurrentBrushConfig::default().opacity,
             brush: CurrentBrushConfig::default(),
+            panel_layout: PanelLayout::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct PanelLayout {
+    /// Top-left corner of the floating Color panel, in points.
+    pub(crate) color_panel_pos: [f32; 2],
+    /// Top-left corner of the floating Layers panel, in points.
+    pub(crate) layers_panel_pos: [f32; 2],
+}
+
+pub(crate) const DEFAULT_COLOR_PANEL_POS: [f32; 2] = [24.0, 80.0];
+pub(crate) const DEFAULT_LAYERS_PANEL_POS: [f32; 2] = [340.0, 80.0];
+
+impl Default for PanelLayout {
+    fn default() -> Self {
+        Self {
+            color_panel_pos: DEFAULT_COLOR_PANEL_POS,
+            layers_panel_pos: DEFAULT_LAYERS_PANEL_POS,
         }
     }
 }
@@ -353,6 +376,10 @@ mod tests {
         config.eraser_opacity = 0.6;
         config.smudge_opacity = 0.8;
         config.brush.color = [1, 2, 3, 255];
+        config.panel_layout = PanelLayout {
+            color_panel_pos: [5.0, 6.0],
+            layers_panel_pos: [70.0, 80.0],
+        };
 
         store.save_app_config(&config).expect("save config");
 

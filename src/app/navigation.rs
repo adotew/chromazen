@@ -18,6 +18,24 @@ impl App {
                 self.autosave.request_save();
             }
         }
+        if let Some(gui) = self.gui.as_ref() {
+            let (brush, tool_brushes, tool_sizes, tool_opacities, panel_layout) =
+                gui.settings_for_save();
+            if let Some(effect) = self.settings.handle_command(SettingsCommand::Save {
+                brush,
+                tool_brushes,
+                tool_sizes,
+                tool_opacities,
+                panel_layout,
+            }) {
+                match effect {
+                    SettingsEffect::Success(_) => {}
+                    SettingsEffect::Error(error) => {
+                        log::error!("failed to save settings on exit: {error}")
+                    }
+                }
+            }
+        }
         if let Some(gui) = self.gui.as_mut() {
             gui.close_new_artwork_dialog();
         }

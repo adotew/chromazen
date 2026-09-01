@@ -264,7 +264,7 @@ impl App {
                 self.brush_import.start(tool, paths);
             }
             AppSettingsCommand::Save => {
-                let Some((brush, tool_brushes, tool_sizes, tool_opacities)) =
+                let Some((brush, tool_brushes, tool_sizes, tool_opacities, panel_layout)) =
                     self.gui.as_ref().map(GuiLayer::settings_for_save)
                 else {
                     return;
@@ -274,6 +274,7 @@ impl App {
                     tool_brushes,
                     tool_sizes,
                     tool_opacities,
+                    panel_layout,
                 }]);
             }
             AppSettingsCommand::ReloadConfiguration => {
