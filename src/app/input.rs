@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use winit::{
     dpi::PhysicalPosition,
     event::{DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent},
-    keyboard::{KeyCode, ModifiersState, PhysicalKey},
+    keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey},
 };
 
 use crate::{
@@ -12,7 +12,7 @@ use crate::{
     renderer::PaintRenderer,
 };
 
-use super::command::{AppCommand, EditorCommand, NavigationCommand};
+use super::command::{AppCommand, EditorCommand, NavigationCommand, UiCommand};
 
 const EYEDROPPER_DRAG_SAMPLE_INTERVAL: Duration = Duration::from_millis(33);
 const ROTATION_SNAP_INTERVAL: f32 = std::f32::consts::FRAC_PI_2;
@@ -293,9 +293,7 @@ impl PaintInputController {
         if event.state != ElementState::Pressed || event.repeat {
             return None;
         }
-        let PhysicalKey::Code(key) = event.physical_key else {
-            return None;
-        };
+        let key = logical_shortcut_key(&event.logical_key)?;
         application_command_for_key(key, self.modifiers)
             .or_else(|| canvas_command_for_key(key, self.modifiers))
             .or_else(|| document_command_for_key(key, self.modifiers))
@@ -768,16 +766,35 @@ fn editor_tool_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<Editor
     }
 }
 
+fn logical_shortcut_key(key: &Key) -> Option<KeyCode> {
+    match key {
+        Key::Character(character) => match character.as_str().to_ascii_lowercase().as_str() {
+            "n" => Some(KeyCode::KeyN),
+            "s" => Some(KeyCode::KeyS),
+            "e" => Some(KeyCode::KeyE),
+            "g" => Some(KeyCode::KeyG),
+            "z" => Some(KeyCode::KeyZ),
+            "y" => Some(KeyCode::KeyY),
+            "r" => Some(KeyCode::KeyR),
+            "c" => Some(KeyCode::KeyC),
+            "/" | "?" => Some(KeyCode::Slash),
+            _ => None,
+        },
+        Key::Named(NamedKey::ArrowLeft) => Some(KeyCode::ArrowLeft),
+        Key::Named(NamedKey::ArrowRight) => Some(KeyCode::ArrowRight),
+        _ => None,
+    }
+}
+
 fn application_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<AppCommand> {
-    if key == KeyCode::KeyN
-        && modifiers.control_key()
-        && !modifiers.shift_key()
-        && !modifiers.alt_key()
-        && !modifiers.super_key()
-    {
-        Some(AppCommand::Navigation(NavigationCommand::NewArtwork))
-    } else {
-        None
+    match (key, modifiers) {
+        (KeyCode::KeyN, ModifiersState::CONTROL) => {
+            Some(AppCommand::Navigation(NavigationCommand::NewArtwork))
+        }
+        (KeyCode::Slash, ModifiersState::SHIFT) => {
+            Some(AppCommand::Ui(UiCommand::ShowShortcuts))
+        }
+        _ => None,
     }
 }
 
@@ -1195,10 +1212,30 @@ mod tests {
     }
 
     #[test]
+    fn logical_application_shortcuts_follow_the_keyboard_layout() {
+        assert_eq!(
+            logical_shortcut_key(&Key::Character("z".into())),
+            Some(KeyCode::KeyZ)
+        );
+        assert_eq!(
+            logical_shortcut_key(&Key::Character("Y".into())),
+            Some(KeyCode::KeyY)
+        );
+        assert_eq!(
+            logical_shortcut_key(&Key::Named(NamedKey::ArrowLeft)),
+            Some(KeyCode::ArrowLeft)
+        );
+    }
+
+    #[test]
     fn maps_application_shortcuts() {
         assert_eq!(
             application_command_for_key(KeyCode::KeyN, ModifiersState::CONTROL),
             Some(AppCommand::Navigation(NavigationCommand::NewArtwork))
+        );
+        assert_eq!(
+            application_command_for_key(KeyCode::Slash, ModifiersState::SHIFT),
+            Some(AppCommand::Ui(UiCommand::ShowShortcuts))
         );
         for modifiers in [
             ModifiersState::empty(),

@@ -290,6 +290,26 @@ impl ApplicationHandler<AppEvent> for App {
                     }
                     return;
                 }
+                // Application shortcuts behave like native menu accelerators and take precedence
+                // over egui keyboard focus. This also keeps them working after an egui menu closes.
+                let platform_command = (!navigation_pending)
+                    .then(|| self.input.command_for_platform_shortcut(&event))
+                    .flatten()
+                    .filter(|command| {
+                        let is_new_artwork = matches!(
+                            command,
+                            AppCommand::Navigation(NavigationCommand::NewArtwork)
+                        );
+                        (!canvas_crop_active || is_new_artwork)
+                            && (self.screen == AppScreen::Editor || is_new_artwork)
+                    });
+                if let Some(command) = platform_command {
+                    self.pending_commands.push(command);
+                    self.next_repaint = None;
+                    window.request_redraw();
+                    return;
+                }
+
                 let egui_response = gui.state.on_window_event(window.as_ref(), &event);
                 let mut needs_redraw = egui_response.repaint || cursor_changed;
                 let egui_consumed = egui_response.consumed;
@@ -321,21 +341,7 @@ impl ApplicationHandler<AppEvent> for App {
                     needs_redraw |= gui.close_popups();
                 }
 
-                let platform_command = (!navigation_pending && !egui_consumed)
-                    .then(|| self.input.command_for_platform_shortcut(&event))
-                    .flatten()
-                    .filter(|command| {
-                        let is_new_artwork = matches!(
-                            command,
-                            AppCommand::Navigation(NavigationCommand::NewArtwork)
-                        );
-                        (!canvas_crop_active || is_new_artwork)
-                            && (self.screen == AppScreen::Editor || is_new_artwork)
-                    });
-                if let Some(command) = platform_command {
-                    self.pending_commands.push(command);
-                    needs_redraw = true;
-                } else if self.screen == AppScreen::Editor
+                if self.screen == AppScreen::Editor
                     && !navigation_pending
                     && !canvas_crop_active
                     && (self.input.has_active_document_drag()
