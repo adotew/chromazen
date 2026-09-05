@@ -284,7 +284,7 @@ impl PaintInputController {
     }
 
     pub fn command_for_platform_shortcut(&self, event: &WindowEvent) -> Option<AppCommand> {
-        if cfg!(any(target_os = "macos", target_os = "windows")) {
+        if cfg!(target_os = "macos") {
             return None;
         }
         let WindowEvent::KeyboardInput { event, .. } = event else {
@@ -296,7 +296,8 @@ impl PaintInputController {
         let PhysicalKey::Code(key) = event.physical_key else {
             return None;
         };
-        canvas_command_for_key(key, self.modifiers)
+        application_command_for_key(key, self.modifiers)
+            .or_else(|| canvas_command_for_key(key, self.modifiers))
             .or_else(|| document_command_for_key(key, self.modifiers))
             .or_else(|| history_command_for_key(key, self.modifiers))
     }
@@ -767,6 +768,19 @@ fn editor_tool_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<Editor
     }
 }
 
+fn application_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<AppCommand> {
+    if key == KeyCode::KeyN
+        && modifiers.control_key()
+        && !modifiers.shift_key()
+        && !modifiers.alt_key()
+        && !modifiers.super_key()
+    {
+        Some(AppCommand::Navigation(NavigationCommand::NewArtwork))
+    } else {
+        None
+    }
+}
+
 fn canvas_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<AppCommand> {
     if key == KeyCode::KeyR && modifiers == ModifiersState::SHIFT {
         return Some(AppCommand::Editor(EditorCommand::ResetCanvasRotation));
@@ -1181,6 +1195,21 @@ mod tests {
     }
 
     #[test]
+    fn maps_application_shortcuts() {
+        assert_eq!(
+            application_command_for_key(KeyCode::KeyN, ModifiersState::CONTROL),
+            Some(AppCommand::Navigation(NavigationCommand::NewArtwork))
+        );
+        for modifiers in [
+            ModifiersState::empty(),
+            ModifiersState::CONTROL | ModifiersState::SHIFT,
+            ModifiersState::CONTROL | ModifiersState::ALT,
+        ] {
+            assert_eq!(application_command_for_key(KeyCode::KeyN, modifiers), None);
+        }
+    }
+
+    #[test]
     fn maps_canvas_view_shortcuts() {
         assert_eq!(
             canvas_command_for_key(KeyCode::KeyR, ModifiersState::SHIFT),
@@ -1283,7 +1312,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_linux_history_shortcuts() {
+    fn maps_non_macos_history_shortcuts() {
         assert_eq!(
             history_command_for_key(KeyCode::KeyZ, ModifiersState::CONTROL),
             Some(AppCommand::Editor(EditorCommand::Undo))

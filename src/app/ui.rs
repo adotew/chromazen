@@ -8,6 +8,7 @@ mod gallery;
 mod interaction_geometry;
 mod layer_transform;
 mod layers_panel;
+mod menu;
 mod reference_panel;
 mod toolbar;
 
@@ -31,6 +32,8 @@ use crate::{
     },
 };
 
+#[cfg(not(target_os = "macos"))]
+use super::command::UiCommand;
 use super::{
     autosave::SaveStatus,
     command::{AppCommand, EditorCommand, NavigationCommand, SettingsCommand},
@@ -75,6 +78,33 @@ const CROP_SHORTCUT: &str = "⌘-Option-C";
 #[cfg(not(target_os = "macos"))]
 const CROP_SHORTCUT: &str = "Ctrl-Alt-C";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ApplicationMenuState {
+    pub(crate) document_enabled: bool,
+    pub(crate) can_undo: bool,
+    pub(crate) can_redo: bool,
+    pub(crate) canvas_enabled: bool,
+    pub(crate) export_enabled: bool,
+}
+
+impl ApplicationMenuState {
+    pub(crate) fn new(
+        in_editor: bool,
+        canvas_crop_active: bool,
+        can_undo: bool,
+        can_redo: bool,
+        export_in_progress: bool,
+    ) -> Self {
+        Self {
+            document_enabled: in_editor,
+            can_undo: in_editor && !canvas_crop_active && can_undo,
+            can_redo: in_editor && !canvas_crop_active && can_redo,
+            canvas_enabled: in_editor && !canvas_crop_active,
+            export_enabled: in_editor && !export_in_progress,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct BrushResizeLabel {
     pub(crate) center: [f32; 2],
@@ -88,6 +118,7 @@ pub(crate) struct EyedropperIndicator {
 }
 
 pub(crate) struct EditorUiState<'a> {
+    pub(crate) menu: ApplicationMenuState,
     pub(crate) layers: &'a LayerSnapshot,
     pub(crate) tool: EditorTool,
     pub(crate) layer_transform: Option<LayerTransform>,
@@ -1214,6 +1245,33 @@ pub fn repaint_delay(output: &egui::FullOutput) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn application_menu_disables_document_actions_in_gallery() {
+        let state = ApplicationMenuState::new(false, false, true, true, false);
+
+        assert!(!state.document_enabled);
+        assert!(!state.can_undo);
+        assert!(!state.can_redo);
+        assert!(!state.canvas_enabled);
+        assert!(!state.export_enabled);
+    }
+
+    #[test]
+    fn application_menu_respects_transient_editor_restrictions() {
+        let cropping = ApplicationMenuState::new(true, true, true, true, false);
+        assert!(cropping.document_enabled);
+        assert!(!cropping.can_undo);
+        assert!(!cropping.can_redo);
+        assert!(!cropping.canvas_enabled);
+        assert!(cropping.export_enabled);
+
+        let exporting = ApplicationMenuState::new(true, false, true, false, true);
+        assert!(exporting.can_undo);
+        assert!(!exporting.can_redo);
+        assert!(exporting.canvas_enabled);
+        assert!(!exporting.export_enabled);
+    }
 
     #[test]
     fn error_dialog_hides_technical_details() {

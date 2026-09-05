@@ -1,4 +1,4 @@
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 mod imp {
     use muda::{
         Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
@@ -6,10 +6,6 @@ mod imp {
     };
     use winit::window::Window;
 
-    #[cfg(target_os = "windows")]
-    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-
-    #[cfg(target_os = "macos")]
     use muda::AboutMetadata;
 
     use super::super::command::{
@@ -54,7 +50,6 @@ mod imp {
         pub(crate) fn new() -> Result<Self, String> {
             let menu = Menu::new();
 
-            #[cfg(target_os = "macos")]
             menu.append(&application_menu()?)
                 .map_err(|error| format!("failed to add application menu: {error}"))?;
 
@@ -125,21 +120,7 @@ mod imp {
                 return Ok(());
             }
 
-            #[cfg(target_os = "macos")]
             self.menu.init_for_nsapp();
-
-            #[cfg(target_os = "windows")]
-            {
-                let window_handle = _window
-                    .window_handle()
-                    .map_err(|error| format!("failed to get window handle: {error}"))?;
-                let RawWindowHandle::Win32(handle) = window_handle.as_raw() else {
-                    return Err("expected a Win32 window handle on Windows".to_owned());
-                };
-                unsafe { self.menu.init_for_hwnd(handle.hwnd.get()) }
-                    .map_err(|error| format!("failed to install Windows menu: {error}"))?;
-            }
-
             self.installed = true;
             Ok(())
         }
@@ -206,10 +187,7 @@ mod imp {
             false,
             Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyZ)),
         );
-        #[cfg(target_os = "macos")]
         let redo_accelerator = Accelerator::new(Some(CMD_OR_CTRL | Modifiers::SHIFT), Code::KeyZ);
-        #[cfg(target_os = "windows")]
-        let redo_accelerator = Accelerator::new(Some(CMD_OR_CTRL), Code::KeyY);
         let redo = MenuItem::with_id(REDO_ID, "Redo", false, Some(redo_accelerator));
         let menu = Submenu::with_items("Edit", true, &[&undo, &redo])
             .map_err(|error| format!("failed to build edit menu: {error}"))?;
@@ -313,7 +291,6 @@ mod imp {
             .map_err(|error| format!("failed to build help menu: {error}"))
     }
 
-    #[cfg(target_os = "macos")]
     fn application_menu() -> Result<Submenu, String> {
         let about = PredefinedMenuItem::about(
             Some("About Chromazen"),
@@ -484,13 +461,13 @@ mod imp {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 pub(super) use imp::NativeMenu;
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(target_os = "macos"))]
 pub(super) struct NativeMenu;
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(target_os = "macos"))]
 impl NativeMenu {
     pub(super) fn new() -> Result<Self, String> {
         Ok(Self)

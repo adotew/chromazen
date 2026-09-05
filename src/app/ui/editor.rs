@@ -3,6 +3,7 @@ use super::*;
 impl GuiLayer {
     pub fn run_editor(&mut self, window: &Window, state: EditorUiState<'_>) -> egui::FullOutput {
         let EditorUiState {
+            menu,
             layers,
             tool,
             layer_transform,
@@ -28,6 +29,7 @@ impl GuiLayer {
         let context = self.context.clone();
 
         context.run_ui(raw_input, |ui| {
+            self.show_application_menu(ui.ctx(), menu);
             if !ui.ctx().egui_wants_keyboard_input()
                 && ui
                     .ctx()

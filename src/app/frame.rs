@@ -58,6 +58,7 @@ impl App {
             return;
         };
 
+        let menu = self.application_menu_state();
         let (full_output, commands) = {
             let Some(gui) = self.gui.as_mut() else {
                 return;
@@ -100,6 +101,7 @@ impl App {
                     gui.run_editor(
                         window,
                         EditorUiState {
+                            menu,
                             layers: &layer_snapshot,
                             tool: self.input.tool(),
                             layer_transform: paint.active_layer_transform(),

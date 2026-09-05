@@ -43,7 +43,7 @@ use self::{
     reference_load::ReferenceLoadController,
     references::ReferenceBoard,
     settings::{SettingsCommand, SettingsController, SettingsEffect},
-    ui::{BrushResizeLabel, EditorUiState, EyedropperIndicator, GuiLayer},
+    ui::{ApplicationMenuState, BrushResizeLabel, EditorUiState, EyedropperIndicator, GuiLayer},
 };
 use crate::{
     paint::PaintTool,
@@ -321,13 +321,18 @@ impl ApplicationHandler<AppEvent> for App {
                     needs_redraw |= gui.close_popups();
                 }
 
-                let history_command = (self.screen == AppScreen::Editor
-                    && !navigation_pending
-                    && !canvas_crop_active
-                    && !egui_consumed)
+                let platform_command = (!navigation_pending && !egui_consumed)
                     .then(|| self.input.command_for_platform_shortcut(&event))
-                    .flatten();
-                if let Some(command) = history_command {
+                    .flatten()
+                    .filter(|command| {
+                        let is_new_artwork = matches!(
+                            command,
+                            AppCommand::Navigation(NavigationCommand::NewArtwork)
+                        );
+                        (!canvas_crop_active || is_new_artwork)
+                            && (self.screen == AppScreen::Editor || is_new_artwork)
+                    });
+                if let Some(command) = platform_command {
                     self.pending_commands.push(command);
                     needs_redraw = true;
                 } else if self.screen == AppScreen::Editor

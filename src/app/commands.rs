@@ -438,20 +438,31 @@ impl App {
         }
     }
 
-    pub(super) fn sync_history_menu(&self) {
+    pub(super) fn application_menu_state(&self) -> ApplicationMenuState {
         let in_editor = self.screen == AppScreen::Editor;
         let canvas_crop_active =
             in_editor && self.gui.as_ref().is_some_and(GuiLayer::canvas_crop_active);
-        let (can_undo, can_redo) = (in_editor && !canvas_crop_active)
-            .then_some(self.paint.as_ref())
-            .flatten()
+        let (can_undo, can_redo) = self
+            .paint
+            .as_ref()
             .map_or((false, false), |paint| (paint.can_undo(), paint.can_redo()));
-        self.native_menu.set_history_enabled(can_undo, can_redo);
-        self.native_menu.set_document_enabled(in_editor);
+        ApplicationMenuState::new(
+            in_editor,
+            canvas_crop_active,
+            can_undo,
+            can_redo,
+            self.export.is_exporting(),
+        )
+    }
+
+    pub(super) fn sync_history_menu(&self) {
+        let state = self.application_menu_state();
         self.native_menu
-            .set_canvas_enabled(in_editor && !canvas_crop_active);
+            .set_history_enabled(state.can_undo, state.can_redo);
         self.native_menu
-            .set_export_enabled(in_editor && !self.export.is_exporting());
+            .set_document_enabled(state.document_enabled);
+        self.native_menu.set_canvas_enabled(state.canvas_enabled);
+        self.native_menu.set_export_enabled(state.export_enabled);
     }
 
     pub(super) fn handle_settings_commands(&mut self, commands: Vec<SettingsCommand>) {
