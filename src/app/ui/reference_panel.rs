@@ -201,6 +201,7 @@ impl GuiLayer {
         reference: &ReferenceImage,
     ) {
         response.context_menu(|ui| {
+            apply_menu_item_padding(ui);
             ui.set_min_width(80.0);
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
             if ui

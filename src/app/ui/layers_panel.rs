@@ -108,6 +108,7 @@ impl GuiLayer {
                     let can_delete =
                         layers.layers.len() == 1 || (layer_index != 0 || !layers.layers[1].clipped);
                     row.row.context_menu(|ui| {
+                        apply_menu_item_padding(ui);
                         if ui.button("Rename").clicked() {
                             start_rename = true;
                             ui.close();

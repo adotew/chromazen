@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::artwork::{ArtworkId, ArtworkSummary};
 
 use super::super::command::{AppCommand, GalleryCommand, NavigationCommand};
+use super::apply_menu_item_padding;
 
 #[derive(Default)]
 pub(super) struct GalleryUi {
@@ -92,6 +93,7 @@ impl GalleryUi {
                                         let open =
                                             show_artwork_thumbnail(ui, self.thumbnail(&artwork.id));
                                         open.context_menu(|ui| {
+                                            apply_menu_item_padding(ui);
                                             if ui.button("Rename").clicked() {
                                                 self.rename = Some((
                                                     artwork.id.clone(),

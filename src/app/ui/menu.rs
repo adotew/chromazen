@@ -14,31 +14,23 @@ impl GuiLayer {
             .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 12.0))
             .order(egui::Order::Foreground)
             .show(context, |ui| {
-                let response = ui.allocate_response(
-                    egui::Vec2::splat(36.0),
-                    egui::Sense::click(),
-                );
+                let response = ui.allocate_response(egui::Vec2::splat(36.0), egui::Sense::click());
                 response.widget_info(|| {
-                    egui::WidgetInfo::labeled(
-                        egui::WidgetType::Button,
-                        true,
-                        "Application menu",
-                    )
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Application menu")
                 });
-                egui::Image::new(egui::include_image!(
-                    "../../../assets/icons/menu.svg"
-                ))
-                .fit_to_exact_size(egui::Vec2::splat(18.0))
-                .tint(egui::Color32::from_white_alpha(200))
-                .alt_text("Application menu")
-                .paint_at(
-                    ui,
-                    egui::Rect::from_center_size(
-                        response.rect.center(),
-                        egui::Vec2::splat(18.0),
-                    ),
-                );
+                egui::Image::new(egui::include_image!("../../../assets/icons/menu.svg"))
+                    .fit_to_exact_size(egui::Vec2::splat(18.0))
+                    .tint(egui::Color32::from_white_alpha(170))
+                    .alt_text("Application menu")
+                    .paint_at(
+                        ui,
+                        egui::Rect::from_center_size(
+                            response.rect.center(),
+                            egui::Vec2::splat(18.0),
+                        ),
+                    );
                 let _ = egui::Popup::menu(&response).show(|ui| {
+                    apply_menu_item_padding(ui);
                     ui.set_min_width(210.0);
                     SubMenuButton::new("File").ui(ui, |ui| {
                         ui.set_min_width(260.0);
@@ -237,8 +229,11 @@ fn menu_item(
     command: AppCommand,
     commands: &mut Vec<AppCommand>,
 ) {
+    apply_menu_item_padding(ui);
     let mut button = egui::Button::new(label);
     if let Some(shortcut) = shortcut {
+        let shortcut = egui::RichText::new(shortcut)
+            .color(ui.visuals().text_color().gamma_multiply(0.6));
         button = button.right_text(shortcut);
     }
     if ui.add_enabled(enabled, button).clicked() {

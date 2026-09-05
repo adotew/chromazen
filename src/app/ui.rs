@@ -1134,6 +1134,7 @@ fn install_fonts(context: &egui::Context) {
 
 fn install_rounded_ui_style(context: &egui::Context) {
     context.all_styles_mut(|style| {
+        apply_button_padding(style);
         let dark_mode = style.visuals.dark_mode;
         let visuals = &mut style.visuals;
         visuals.window_corner_radius = egui::CornerRadius::same(16);
@@ -1185,6 +1186,14 @@ fn install_rounded_ui_style(context: &egui::Context) {
         visuals.slider_trailing_fill = true;
         visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
     });
+}
+
+fn apply_button_padding(style: &mut egui::Style) {
+    style.spacing.button_padding = egui::vec2(8.0, 4.0);
+}
+
+fn apply_menu_item_padding(ui: &mut egui::Ui) {
+    apply_button_padding(ui.style_mut());
 }
 
 fn paint_rounded_panel(ui: &egui::Ui, rect: egui::Rect, corner_radius: egui::CornerRadius) {
