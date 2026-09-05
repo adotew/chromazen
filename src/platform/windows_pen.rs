@@ -174,7 +174,7 @@ mod imp {
 mod imp {
     use std::{
         cell::RefCell,
-        panic::{AssertUnwindSafe, catch_unwind},
+        panic::{catch_unwind, AssertUnwindSafe},
         ptr,
         rc::Rc,
         sync::Arc,
@@ -187,9 +187,9 @@ mod imp {
         UI::{
             HiDpi::GetDpiForWindow,
             Input::Pointer::{
-                GetPointerPenInfo, GetPointerPenInfoHistory, GetPointerType, POINTER_FLAG_CANCELED,
-                POINTER_FLAG_CAPTURECHANGED, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT,
-                POINTER_FLAG_UP, POINTER_PEN_INFO, SkipPointerFrameMessages,
+                GetPointerPenInfo, GetPointerPenInfoHistory, GetPointerType,
+                SkipPointerFrameMessages, POINTER_FLAG_CANCELED, POINTER_FLAG_CAPTURECHANGED,
+                POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT, POINTER_FLAG_UP, POINTER_PEN_INFO,
             },
             WindowsAndMessaging::{
                 MSG, PEN_MASK_PRESSURE, PT_PEN, WM_POINTERCAPTURECHANGED, WM_POINTERDOWN,
@@ -202,8 +202,8 @@ mod imp {
     };
 
     use super::{
-        WindowsPenAction, WindowsPenSample, events_for_sample, normalize_pressure,
-        physical_to_logical,
+        events_for_sample, normalize_pressure, physical_to_logical, WindowsPenAction,
+        WindowsPenSample,
     };
     use crate::platform::{MillisecondClock, PenEvent};
 
@@ -338,12 +338,13 @@ mod imp {
             let dpi = unsafe { GetDpiForWindow(hwnd) };
             let contact = flags & POINTER_FLAG_INCONTACT != 0;
             self.active_contact = contact;
+            let time = self.clock.observe(info.pointerInfo.dwTime);
             self.emit_sample(WindowsPenSample {
                 action,
                 position: physical_to_logical([point.x, point.y], dpi),
                 pressure: normalize_pressure(info.pressure, info.penMask & PEN_MASK_PRESSURE != 0),
                 contact,
-                time: self.clock.observe(info.pointerInfo.dwTime),
+                time,
             });
             if action == WindowsPenAction::Cancel {
                 self.active_pointer = None;
