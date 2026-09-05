@@ -255,8 +255,8 @@ impl ApplicationHandler<AppEvent> for App {
                     && let Some(shortcut) = self.input.keyboard_shortcut(&event)
                 {
                     let changed = match shortcut {
-                        KeyboardShortcut::TogglePanels => {
-                            gui.toggle_panels();
+                        KeyboardShortcut::ToggleSidebar => {
+                            gui.toggle_sidebar();
                             true
                         }
                         KeyboardShortcut::CycleTool => {

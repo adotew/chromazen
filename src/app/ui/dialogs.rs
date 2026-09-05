@@ -143,7 +143,7 @@ impl GuiLayer {
                                     ("Brush / Eraser / Smudge", "D/B, E, S"),
                                     ("Transform", "T"),
                                     ("Cycle paint tools", "Shift-Tab"),
-                                    ("Show or hide panels", "Tab"),
+                                    ("Show or hide sidebar", "Tab"),
                                     ("Resize brush", "Shift-drag"),
                                     ("Eyedropper", "Alt/Option"),
                                 ],

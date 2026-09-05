@@ -40,7 +40,7 @@ Press `?` or choose **Help → Keyboard Shortcuts** for the complete shortcut li
 | Action | Control |
 | --- | --- |
 | Brush / Eraser / Smudge / Transform | `B` / `E` / `S` / `T` |
-| Show or hide panels | `Tab` |
+| Show or hide sidebar | `Tab` |
 | Resize brush | `Shift` + left-drag vertically |
 | Eyedropper | Hold `Option` (macOS) or `Alt` |
 | Zoom | Mouse wheel |

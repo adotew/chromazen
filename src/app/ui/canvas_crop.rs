@@ -3,18 +3,29 @@ use super::*;
 impl GuiLayer {
     pub(crate) fn open_canvas_crop(&mut self, size: [u32; 2]) {
         self.new_artwork_dialog = None;
-        let (restore_color_window, restore_layers_window) = self
-            .canvas_crop
-            .as_ref()
-            .map_or((self.color_window_open, self.layers_window_open), |crop| {
-                (crop.restore_color_window, crop.restore_layers_window)
-            });
+        let (restore_sidebar, restore_color_window, restore_layers_window) =
+            self.canvas_crop.as_ref().map_or(
+                (
+                    self.sidebar_visible,
+                    self.color_window_open,
+                    self.layers_window_open,
+                ),
+                |crop| {
+                    (
+                        crop.restore_sidebar,
+                        crop.restore_color_window,
+                        crop.restore_layers_window,
+                    )
+                },
+            );
         self.canvas_crop = Some(CanvasCrop {
             rect: CanvasCropRect::from_size(size),
             drag: None,
+            restore_sidebar,
             restore_color_window,
             restore_layers_window,
         });
+        self.sidebar_visible = false;
         self.color_window_open = false;
         self.layers_window_open = false;
         self.selected_reference = None;
@@ -24,6 +35,7 @@ impl GuiLayer {
 
     pub(crate) fn close_canvas_crop(&mut self) {
         if let Some(crop) = self.canvas_crop.take() {
+            self.sidebar_visible = crop.restore_sidebar;
             self.color_window_open = crop.restore_color_window;
             self.layers_window_open = crop.restore_layers_window;
             self.context.request_repaint();

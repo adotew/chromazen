@@ -44,7 +44,58 @@ impl GuiLayer {
                     .push(AppCommand::Editor(EditorCommand::DeleteReference(id)));
             }
 
-            if self.color_window_open
+            // Keep the full-width contents clipped to the animated panel so the sidebar slides
+            // away instead of flashing empty while egui resizes it.
+            let sidebar_progress = ui.ctx().animate_bool_with_time_and_easing(
+                egui::Id::new("sidebar animation"),
+                self.sidebar_visible,
+                0.18,
+                egui::emath::easing::cubic_in_out,
+            );
+            if sidebar_progress > 0.0 {
+                let sidebar_frame = egui::Frame::side_top_panel(ui.style())
+                    .fill(egui::Color32::TRANSPARENT)
+                    .stroke(egui::Stroke::NONE);
+                egui::Panel::right("tools")
+                    .frame(sidebar_frame)
+                    .show_separator_line(false)
+                    .exact_size(SIDEBAR_WIDTH * sidebar_progress)
+                    .resizable(false)
+                    .show_inside(ui, |panel_ui| {
+                        let component_rect = egui::Frame::side_top_panel(panel_ui.style())
+                            .fill(egui::Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::NONE)
+                            .widget_rect(panel_ui.max_rect());
+                        paint_rounded_panel(panel_ui, component_rect, egui::CornerRadius::ZERO);
+                        let inner_width = SIDEBAR_WIDTH
+                            - egui::Frame::side_top_panel(panel_ui.style())
+                                .inner_margin
+                                .sum()
+                                .x;
+                        let content_rect = egui::Rect::from_min_size(
+                            panel_ui.min_rect().min,
+                            egui::vec2(inner_width, panel_ui.available_height()),
+                        );
+                        let mut content_ui = panel_ui.new_child(
+                            egui::UiBuilder::new()
+                                .id_salt("sidebar contents")
+                                .max_rect(content_rect),
+                        );
+                        content_ui.set_clip_rect(panel_ui.clip_rect());
+
+                        self.show_brush_color_picker(&mut content_ui);
+                        content_ui.add_space(8.0);
+                        content_ui.separator();
+                        if add_layer_button(&mut content_ui) {
+                            self.commands
+                                .push(AppCommand::Editor(EditorCommand::AddLayer));
+                        }
+                        self.show_layers_panel(&mut content_ui, layers, background);
+                    });
+            }
+
+            if !self.sidebar_visible
+                && self.color_window_open
                 && let Some(response) = egui::Window::new("Color")
                     .id(egui::Id::new("floating color picker"))
                     .default_pos(egui::pos2(
@@ -80,7 +131,7 @@ impl GuiLayer {
                 self.panel_layout.brush_panel_pos = [min.x, min.y];
             }
 
-            if self.layers_window_open {
+            if !self.sidebar_visible && self.layers_window_open {
                 let layers_response = egui::Window::new("Layers")
                     .id(egui::Id::new("floating layers"))
                     .default_pos(egui::pos2(
@@ -153,7 +204,10 @@ impl GuiLayer {
             }
 
             let selected_tool = egui::Area::new(egui::Id::new("tool rail"))
-                .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 12.0))
+                .anchor(
+                    egui::Align2::RIGHT_TOP,
+                    egui::vec2(-SIDEBAR_WIDTH * sidebar_progress, 12.0),
+                )
                 .order(egui::Order::Foreground)
                 .show(ui.ctx(), |ui| self.show_toolbar(ui, tool))
                 .inner;

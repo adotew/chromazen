@@ -71,31 +71,40 @@ impl GuiLayer {
         ui: &mut egui::Ui,
         active_tool: EditorTool,
     ) -> Option<EditorTool> {
-        const TOOL_WIDTH: f32 = 40.0;
+        const TOOL_SIZE: f32 = 40.0;
         const TOOL_COUNT: usize = 3;
-        const HORIZONTAL_PADDING: f32 = 6.0;
+        const VERTICAL_PADDING: f32 = 6.0;
 
         let tools = [PaintTool::Brush, PaintTool::Eraser, PaintTool::Smudge];
-        let button_count = TOOL_COUNT + 2;
+        let button_count = TOOL_COUNT + if self.sidebar_visible { 0 } else { 2 };
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(
-                TOOL_WIDTH * button_count as f32 + 2.0 * HORIZONTAL_PADDING,
                 TOOL_RAIL_THICKNESS,
+                TOOL_SIZE * button_count as f32 + 2.0 * VERTICAL_PADDING,
             ),
             egui::Sense::hover(),
         );
-        paint_rounded_panel(ui, rect, egui::CornerRadius::same(16));
+        paint_rounded_panel(
+            ui,
+            rect,
+            egui::CornerRadius {
+                nw: 16,
+                ne: 0,
+                sw: 16,
+                se: 0,
+            },
+        );
         let body = egui::Rect::from_min_max(
-            egui::pos2(rect.left() + HORIZONTAL_PADDING, rect.top()),
-            egui::pos2(rect.right() - HORIZONTAL_PADDING, rect.bottom()),
+            egui::pos2(rect.left(), rect.top() + VERTICAL_PADDING),
+            egui::pos2(rect.right(), rect.bottom() - VERTICAL_PADDING),
         );
 
         let mut selected_tool = None;
         for (index, paint_tool) in tools.into_iter().enumerate() {
             let tool = EditorTool::from(paint_tool);
             let tool_rect = egui::Rect::from_min_size(
-                egui::pos2(body.left() + index as f32 * TOOL_WIDTH, body.top()),
-                egui::vec2(TOOL_WIDTH, TOOL_RAIL_THICKNESS),
+                egui::pos2(body.left(), body.top() + index as f32 * TOOL_SIZE),
+                egui::vec2(TOOL_RAIL_THICKNESS, TOOL_SIZE),
             );
             let response = show_tool_button(ui, tool_rect, paint_tool, tool == active_tool);
             if response.clicked() {
@@ -108,11 +117,11 @@ impl GuiLayer {
             }
         }
 
-        {
-            let separator_x = body.left() + TOOL_COUNT as f32 * TOOL_WIDTH;
+        if !self.sidebar_visible {
+            let separator_y = body.top() + TOOL_COUNT as f32 * TOOL_SIZE;
             let layers_rect = egui::Rect::from_min_size(
-                egui::pos2(separator_x, body.top()),
-                egui::vec2(TOOL_WIDTH, TOOL_RAIL_THICKNESS),
+                egui::pos2(body.left(), separator_y),
+                egui::vec2(TOOL_RAIL_THICKNESS, TOOL_SIZE),
             );
             let layers_response = ui
                 .interact(layers_rect, ui.id().with("Layers"), egui::Sense::click())
@@ -134,7 +143,7 @@ impl GuiLayer {
                 self.layers_window_open = !self.layers_window_open;
             }
 
-            let color_rect = layers_rect.translate(egui::vec2(TOOL_WIDTH, 0.0));
+            let color_rect = layers_rect.translate(egui::vec2(0.0, TOOL_SIZE));
             let color_response = ui
                 .interact(color_rect, ui.id().with("Color"), egui::Sense::click())
                 .on_hover_text("Color");

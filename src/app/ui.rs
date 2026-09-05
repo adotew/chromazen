@@ -38,6 +38,7 @@ use super::{
     references::{ReferenceId, ReferenceImage},
 };
 
+const SIDEBAR_WIDTH: f32 = 300.0;
 const TOOL_RAIL_THICKNESS: f32 = 42.0;
 const BRUSH_PANEL_WIDTH: f32 = 240.0;
 const BRUSH_PRESET_LIST_MAX_HEIGHT: f32 = 320.0;
@@ -129,6 +130,7 @@ pub struct GuiLayer {
     pointer_over_selected_reference: bool,
     brush_previews: Vec<(String, egui::TextureHandle)>,
     failed_brush_previews: Vec<String>,
+    sidebar_visible: bool,
     brush_window_open: bool,
     color_window_open: bool,
     layers_window_open: bool,
@@ -255,6 +257,7 @@ struct CanvasCropDrag {
 struct CanvasCrop {
     rect: CanvasCropRect,
     drag: Option<CanvasCropDrag>,
+    restore_sidebar: bool,
     restore_color_window: bool,
     restore_layers_window: bool,
 }
@@ -352,6 +355,7 @@ impl GuiLayer {
             pointer_over_selected_reference: false,
             brush_previews: Vec::new(),
             failed_brush_previews: Vec::new(),
+            sidebar_visible: true,
             brush_window_open: false,
             color_window_open: false,
             layers_window_open: false,
@@ -428,11 +432,8 @@ impl GuiLayer {
         })
     }
 
-    pub(crate) fn toggle_panels(&mut self) {
-        let open = !self.brush_window_open && !self.color_window_open && !self.layers_window_open;
-        self.brush_window_open = open;
-        self.color_window_open = open;
-        self.layers_window_open = open;
+    pub(crate) fn toggle_sidebar(&mut self) {
+        self.sidebar_visible = !self.sidebar_visible;
     }
 
     pub(crate) fn close_popups(&self) -> bool {
