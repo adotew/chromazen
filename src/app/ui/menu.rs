@@ -232,8 +232,8 @@ fn menu_item(
     apply_menu_item_padding(ui);
     let mut button = egui::Button::new(label);
     if let Some(shortcut) = shortcut {
-        let shortcut = egui::RichText::new(shortcut)
-            .color(ui.visuals().text_color().gamma_multiply(0.6));
+        let shortcut =
+            egui::RichText::new(shortcut).color(ui.visuals().text_color().gamma_multiply(0.6));
         button = button.right_text(shortcut);
     }
     if ui.add_enabled(enabled, button).clicked() {

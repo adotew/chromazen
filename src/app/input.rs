@@ -791,9 +791,7 @@ fn application_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Optio
         (KeyCode::KeyN, ModifiersState::CONTROL) => {
             Some(AppCommand::Navigation(NavigationCommand::NewArtwork))
         }
-        (KeyCode::Slash, ModifiersState::SHIFT) => {
-            Some(AppCommand::Ui(UiCommand::ShowShortcuts))
-        }
+        (KeyCode::Slash, ModifiersState::SHIFT) => Some(AppCommand::Ui(UiCommand::ShowShortcuts)),
         _ => None,
     }
 }

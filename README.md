@@ -25,7 +25,7 @@ Tablet pressure works through AppKit on macOS, Windows Ink on Windows, and table
 
 ## Getting started
 
-Chromazen currently runs from source. Install the [Rust toolchain](https://rustup.rs/), clone this repository, then run:
+To run from source, install the [Rust toolchain](https://rustup.rs/), clone this repository, and run:
 
 ```sh
 cargo run --release

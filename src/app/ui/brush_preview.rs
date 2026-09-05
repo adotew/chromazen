@@ -1,4 +1,4 @@
-use image::{imageops::FilterType, Rgba, RgbaImage};
+use image::{Rgba, RgbaImage, imageops::FilterType};
 
 use crate::config::BrushSummary;
 
@@ -51,11 +51,13 @@ mod tests {
 
         assert_eq!(preview.size, [SIZE as usize, SIZE as usize]);
         assert!(preview.pixels.iter().any(|pixel| pixel.a() > 0));
-        assert!(preview
-            .pixels
-            .iter()
-            .filter(|pixel| pixel.a() > 0)
-            .all(|pixel| pixel.r() == pixel.g() && pixel.g() == pixel.b()));
+        assert!(
+            preview
+                .pixels
+                .iter()
+                .filter(|pixel| pixel.a() > 0)
+                .all(|pixel| pixel.r() == pixel.g() && pixel.g() == pixel.b())
+        );
     }
 
     #[test]

@@ -55,6 +55,8 @@ use crate::{
 };
 
 const WINDOW_TITLE: &str = "Chromazen";
+#[cfg(target_os = "linux")]
+const LINUX_APPLICATION_ID: &str = "io.github.adotew.chromazen";
 
 enum AppEvent {
     Command(AppCommand),
@@ -140,14 +142,18 @@ impl ApplicationHandler<AppEvent> for App {
             return;
         }
 
+        let window_attributes = WindowAttributes::default()
+            .with_title(WINDOW_TITLE)
+            .with_resizable(true)
+            .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 900.0));
+        #[cfg(target_os = "linux")]
+        let window_attributes = {
+            use winit::platform::wayland::WindowAttributesExtWayland;
+            window_attributes.with_name(LINUX_APPLICATION_ID, "chromazen")
+        };
         let window = Arc::new(
             event_loop
-                .create_window(
-                    WindowAttributes::default()
-                        .with_title(WINDOW_TITLE)
-                        .with_resizable(true)
-                        .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 900.0)),
-                )
+                .create_window(window_attributes)
                 .expect("failed to create window"),
         );
 

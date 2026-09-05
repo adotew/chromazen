@@ -258,8 +258,10 @@ fn decode_mask(
         (0, 2) => {
             let source = input.read_bytes(byte_count)?;
             Ok(source
-                .chunks_exact(2)
-                .map(|sample| (u16::from_be_bytes([sample[0], sample[1]]) >> 8) as u8)
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|sample| (u16::from_be_bytes(*sample) >> 8) as u8)
                 .collect())
         }
         (1, 1) => decode_packbits_rows(input, width, height),

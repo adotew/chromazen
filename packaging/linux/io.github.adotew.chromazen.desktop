@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Chromazen
+Comment=A focused application for sketching and painting
+Exec=Chromazen
+Icon=io.github.adotew.chromazen
+Terminal=false
+Categories=Graphics;2DGraphics;RasterGraphics;
+Keywords=painting;drawing;art;graphics;
+StartupNotify=true
+StartupWMClass=io.github.adotew.chromazen

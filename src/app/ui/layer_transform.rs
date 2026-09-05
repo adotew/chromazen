@@ -46,19 +46,19 @@ impl GuiLayer {
         let painter = ui.painter().with_clip_rect(workspace_rect);
         painter.add(egui::Shape::closed_line(
             corners.to_vec(),
-            egui::Stroke::new(2.0, egui::Color32::from_gray(96)),
+            egui::Stroke::new(2.0_f32, egui::Color32::from_gray(96)),
         ));
         let top_center = corners[0] + (corners[1] - corners[0]) * 0.5;
         painter.line_segment(
             [top_center, rotation_handle],
-            egui::Stroke::new(1.5, egui::Color32::from_gray(160)),
+            egui::Stroke::new(1.5_f32, egui::Color32::from_gray(160)),
         );
         paint_resize_handle_markers(&painter, &handles);
         painter.circle_filled(rotation_handle, 7.0, egui::Color32::from_gray(232));
         painter.circle_stroke(
             rotation_handle,
             7.0,
-            egui::Stroke::new(1.5, egui::Color32::from_gray(72)),
+            egui::Stroke::new(1.5_f32, egui::Color32::from_gray(72)),
         );
         painter.text(
             egui::pos2(workspace_rect.center().x, workspace_rect.top() + 16.0),

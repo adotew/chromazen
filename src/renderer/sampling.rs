@@ -92,7 +92,9 @@ pub(super) fn read_composited_color(
 
     let mapped = readback.slice(..).get_mapped_range();
     let samples: Vec<_> = mapped
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .zip(layers)
         .map(|(pixel, layer)| {
             (

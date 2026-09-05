@@ -94,7 +94,7 @@ impl GuiLayer {
                 painter.add(egui::Shape::convex_polygon(
                     screen_corners.to_vec(),
                     egui::Color32::from_white_alpha(8),
-                    egui::Stroke::new(2.0, egui::Color32::from_gray(96)),
+                    egui::Stroke::new(2.0_f32, egui::Color32::from_gray(96)),
                 ));
                 paint_resize_handle_markers(&painter, &handle_positions);
                 painter.text(

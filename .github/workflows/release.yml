@@ -38,16 +38,35 @@ jobs:
           name: Chromazen-windows
           path: Chromazen-windows-x64.zip
 
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: ./packaging/linux/build-appimage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Chromazen-linux
+          path: |
+            dist/Chromazen-linux-x86_64.AppImage
+            dist/Chromazen-linux-x86_64.tar.gz
+
   release:
-    needs: [macos, windows]
+    needs: [macos, windows, linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Verify release version
+        run: |
+          version=$(awk -F'"' '/^version =/ { print $2; exit }' Cargo.toml)
+          test "$GITHUB_REF_NAME" = "v$version"
       - uses: actions/download-artifact@v4
         with:
           pattern: "Chromazen-*"
           merge-multiple: true
           path: dist
+      - name: Generate checksums
+        run: (cd dist && sha256sum * > SHA256SUMS)
       - run: gh release create "$GITHUB_REF_NAME" --generate-notes dist/*
         env:
           GH_TOKEN: ${{ github.token }}

@@ -43,7 +43,7 @@ pub(super) fn paint_resize_handle_markers(
         painter.rect_stroke(
             handle_rect,
             2.0,
-            egui::Stroke::new(1.5, egui::Color32::from_gray(72)),
+            egui::Stroke::new(1.5_f32, egui::Color32::from_gray(72)),
             egui::StrokeKind::Inside,
         );
     }
