@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use egui::containers::menu::MenuButton;
+
 use crate::artwork::{ArtworkId, ArtworkSummary};
 
 use super::super::command::{AppCommand, GalleryCommand, NavigationCommand};
@@ -52,6 +54,7 @@ impl GalleryUi {
                         .fit_to_exact_size(egui::Vec2::splat(18.0))
                         .alt_text("New artwork");
                 let add_button = egui::Button::image(add_icon)
+                    .frame_when_inactive(false)
                     .image_tint_follows_text_color(true)
                     .corner_radius(8);
                 let add_rect = egui::Rect::from_min_size(
@@ -93,27 +96,7 @@ impl GalleryUi {
                                         let open =
                                             show_artwork_thumbnail(ui, self.thumbnail(&artwork.id));
                                         open.context_menu(|ui| {
-                                            apply_menu_item_padding(ui);
-                                            if ui.button("Rename").clicked() {
-                                                self.rename = Some((
-                                                    artwork.id.clone(),
-                                                    artwork.title.clone(),
-                                                ));
-                                                ui.close();
-                                            }
-                                            if ui.button("Duplicate").clicked() {
-                                                commands.push(AppCommand::Gallery(
-                                                    GalleryCommand::Duplicate(artwork.id.clone()),
-                                                ));
-                                                ui.close();
-                                            }
-                                            if ui.button("Delete").clicked() {
-                                                self.delete = Some((
-                                                    artwork.id.clone(),
-                                                    artwork.title.clone(),
-                                                ));
-                                                ui.close();
-                                            }
+                                            self.show_artwork_menu(ui, artwork, commands);
                                         });
                                         if open.clicked() {
                                             commands.push(AppCommand::Navigation(
@@ -121,9 +104,31 @@ impl GalleryUi {
                                             ));
                                         }
                                         ui.add_space(8.0);
-                                        ui.vertical_centered(|ui| {
-                                            ui.strong(&artwork.title);
-                                            ui.label(format_dimensions(artwork.dimensions));
+                                        ui.horizontal_top(|ui| {
+                                            ui.vertical(|ui| {
+                                                ui.strong(&artwork.title);
+                                                ui.label(format_dimensions(artwork.dimensions));
+                                            });
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    let icon = egui::Image::new(egui::include_image!(
+                                                        "../../../assets/icons/ellipsis-vertical.svg"
+                                                    ))
+                                                    .fit_to_exact_size(egui::Vec2::splat(18.0))
+                                                    .alt_text("Artwork menu");
+                                                    let (menu, _) = MenuButton::from_button(
+                                                        egui::Button::image(icon)
+                                                            .frame_when_inactive(false)
+                                                            .corner_radius(8)
+                                                            .min_size(egui::Vec2::splat(32.0)),
+                                                    )
+                                                    .ui(ui, |ui| {
+                                                        self.show_artwork_menu(ui, artwork, commands);
+                                                    });
+                                                    menu.on_hover_text("Artwork menu");
+                                                },
+                                            );
                                         });
                                     });
                                 },
@@ -250,6 +255,29 @@ impl GalleryUi {
             });
         if close {
             self.delete = None;
+        }
+    }
+
+    fn show_artwork_menu(
+        &mut self,
+        ui: &mut egui::Ui,
+        artwork: &ArtworkSummary,
+        commands: &mut Vec<AppCommand>,
+    ) {
+        apply_menu_item_padding(ui);
+        if ui.button("Rename").clicked() {
+            self.rename = Some((artwork.id.clone(), artwork.title.clone()));
+            ui.close();
+        }
+        if ui.button("Duplicate").clicked() {
+            commands.push(AppCommand::Gallery(GalleryCommand::Duplicate(
+                artwork.id.clone(),
+            )));
+            ui.close();
+        }
+        if ui.button("Delete").clicked() {
+            self.delete = Some((artwork.id.clone(), artwork.title.clone()));
+            ui.close();
         }
     }
 }

@@ -124,7 +124,6 @@ pub(crate) struct EditorUiState<'a> {
     pub(crate) layer_transform: Option<LayerTransform>,
     pub(crate) layer_content_bounds: Option<LayerContentBounds>,
     pub(crate) brush_resize_label: Option<BrushResizeLabel>,
-    pub(crate) brush_outline_half_width: f32,
     pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
     pub(crate) save_status: SaveStatus,
     pub(crate) pending_navigation: Option<&'a str>,
@@ -162,7 +161,6 @@ pub struct GuiLayer {
     pointer_over_selected_reference: bool,
     brush_previews: Vec<(String, egui::TextureHandle)>,
     failed_brush_previews: Vec<String>,
-    brush_control_overlay_center: Option<[f32; 2]>,
     sidebar_visible: bool,
     brush_window_open: bool,
     color_window_open: bool,
@@ -388,7 +386,6 @@ impl GuiLayer {
             pointer_over_selected_reference: false,
             brush_previews: Vec::new(),
             failed_brush_previews: Vec::new(),
-            brush_control_overlay_center: None,
             sidebar_visible: true,
             brush_window_open: false,
             color_window_open: false,
@@ -482,10 +479,6 @@ impl GuiLayer {
 
     pub(crate) fn brush_size_range(&self) -> std::ops::RangeInclusive<f32> {
         self.size_range.clone()
-    }
-
-    pub(crate) fn brush_control_overlay_center(&self) -> Option<[f32; 2]> {
-        self.brush_control_overlay_center
     }
 
     pub(crate) fn settings_for_save(
