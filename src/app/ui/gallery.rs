@@ -44,7 +44,7 @@ impl GalleryUi {
                     header_rect.left_center(),
                     egui::Align2::LEFT_CENTER,
                     "Chromazen",
-                    egui::FontId::new(28.0, egui::FontFamily::Name("elms_sans".into())),
+                    egui::FontId::new(28.0, egui::FontFamily::Name("elms_sans_light".into())),
                     ui.visuals().text_color(),
                 );
                 let add_icon =

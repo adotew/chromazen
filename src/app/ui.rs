@@ -124,6 +124,7 @@ pub(crate) struct EditorUiState<'a> {
     pub(crate) layer_transform: Option<LayerTransform>,
     pub(crate) layer_content_bounds: Option<LayerContentBounds>,
     pub(crate) brush_resize_label: Option<BrushResizeLabel>,
+    pub(crate) brush_outline_half_width: f32,
     pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
     pub(crate) save_status: SaveStatus,
     pub(crate) pending_navigation: Option<&'a str>,
@@ -161,6 +162,7 @@ pub struct GuiLayer {
     pointer_over_selected_reference: bool,
     brush_previews: Vec<(String, egui::TextureHandle)>,
     failed_brush_previews: Vec<String>,
+    brush_control_overlay_center: Option<[f32; 2]>,
     sidebar_visible: bool,
     brush_window_open: bool,
     color_window_open: bool,
@@ -386,6 +388,7 @@ impl GuiLayer {
             pointer_over_selected_reference: false,
             brush_previews: Vec::new(),
             failed_brush_previews: Vec::new(),
+            brush_control_overlay_center: None,
             sidebar_visible: true,
             brush_window_open: false,
             color_window_open: false,
@@ -479,6 +482,10 @@ impl GuiLayer {
 
     pub(crate) fn brush_size_range(&self) -> std::ops::RangeInclusive<f32> {
         self.size_range.clone()
+    }
+
+    pub(crate) fn brush_control_overlay_center(&self) -> Option<[f32; 2]> {
+        self.brush_control_overlay_center
     }
 
     pub(crate) fn settings_for_save(
@@ -1114,6 +1121,18 @@ fn install_fonts(context: &egui::Context) {
             "../../assets/fonts/ElmsSans-Medium.ttf"
         ))),
     );
+    fonts.font_data.insert(
+        "elms_sans_regular".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../assets/fonts/ElmsSans-Regular.ttf"
+        ))),
+    );
+    fonts.font_data.insert(
+        "elms_sans_light".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../assets/fonts/ElmsSans-Light.ttf"
+        ))),
+    );
     fonts
         .families
         .get_mut(&egui::FontFamily::Proportional)
@@ -1122,6 +1141,14 @@ fn install_fonts(context: &egui::Context) {
     fonts.families.insert(
         egui::FontFamily::Name("elms_sans".into()),
         vec!["elms_sans".to_owned(), "inter".to_owned()],
+    );
+    fonts.families.insert(
+        egui::FontFamily::Name("elms_sans_regular".into()),
+        vec!["elms_sans_regular".to_owned(), "inter".to_owned()],
+    );
+    fonts.families.insert(
+        egui::FontFamily::Name("elms_sans_light".into()),
+        vec!["elms_sans_light".to_owned(), "inter".to_owned()],
     );
     context.set_fonts(fonts);
     context.all_styles_mut(|style| {
