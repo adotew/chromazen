@@ -1,3 +1,4 @@
+mod brush_controls;
 mod brush_panel;
 mod brush_preview;
 mod canvas_crop;
@@ -106,12 +107,6 @@ impl ApplicationMenuState {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct BrushResizeLabel {
-    pub(crate) center: [f32; 2],
-    pub(crate) outline_half_width: f32,
-}
-
-#[derive(Clone, Copy)]
 pub(crate) struct EyedropperIndicator {
     pub(crate) center: [f32; 2],
     pub(crate) color: egui::Color32,
@@ -123,7 +118,8 @@ pub(crate) struct EditorUiState<'a> {
     pub(crate) tool: EditorTool,
     pub(crate) layer_transform: Option<LayerTransform>,
     pub(crate) layer_content_bounds: Option<LayerContentBounds>,
-    pub(crate) brush_resize_label: Option<BrushResizeLabel>,
+    pub(crate) brush_resize_position: Option<[f32; 2]>,
+    pub(crate) brush_outline_half_size: &'a dyn Fn(f32) -> [f32; 2],
     pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
     pub(crate) save_status: SaveStatus,
     pub(crate) pending_navigation: Option<&'a str>,
@@ -145,6 +141,9 @@ pub struct GuiLayer {
     brushes: Vec<crate::config::BrushSummary>,
     size_range: std::ops::RangeInclusive<f32>,
     default_size: f32,
+    brush_slider_active: bool,
+    brush_slider_focus: Option<egui::Id>,
+    brush_adjustment_preview: Option<crate::renderer::BrushCursor>,
     commands: Vec<AppCommand>,
     message_dialog: Option<MessageDialog>,
     shortcuts_dialog_open: bool,
@@ -370,6 +369,9 @@ impl GuiLayer {
             brushes: catalog.brushes,
             size_range: preset.size.min..=preset.size.max,
             default_size: preset.size.default,
+            brush_slider_active: false,
+            brush_slider_focus: None,
+            brush_adjustment_preview: None,
             commands: Vec::new(),
             message_dialog,
             shortcuts_dialog_open: false,
@@ -445,6 +447,9 @@ impl GuiLayer {
         artworks: &[ArtworkSummary],
         discovery_warning: Option<&str>,
     ) -> egui::FullOutput {
+        self.brush_slider_active = false;
+        self.release_brush_slider_focus();
+        self.brush_adjustment_preview = None;
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
         context.run_ui(raw_input, |ui| {
@@ -510,6 +515,31 @@ impl GuiLayer {
         let index = tool_index(tool);
         self.tool_sizes[index] = self.brush.size;
         self.tool_opacities[index] = self.brush.opacity;
+    }
+
+    pub(crate) fn set_brush_size(&mut self, tool: PaintTool, size: f32) {
+        if size.is_finite() {
+            self.brush.size = size.clamp(*self.size_range.start(), *self.size_range.end());
+            self.store_current_brush_settings_for_tool(tool);
+        }
+    }
+
+    pub(crate) fn set_brush_opacity(&mut self, tool: PaintTool, opacity: f32) {
+        if opacity.is_finite() {
+            self.brush.opacity = opacity.clamp(0.01, 1.0);
+            self.store_current_brush_settings_for_tool(tool);
+        }
+    }
+
+    pub(crate) fn brush_adjustment_preview(&self) -> Option<crate::renderer::BrushCursor> {
+        self.brush_adjustment_preview
+    }
+
+    pub(crate) fn release_brush_slider_focus(&mut self) {
+        if let Some(id) = self.brush_slider_focus.take() {
+            self.context.memory_mut(|memory| memory.surrender_focus(id));
+            self.brush_slider_active = false;
+        }
     }
 
     pub(crate) fn set_brush_color(&mut self, color: [u8; 4]) {
@@ -906,16 +936,14 @@ fn show_eyedropper_indicator(ui: &egui::Ui, indicator: EyedropperIndicator) {
 
 fn show_brush_resize_label(
     ui: &egui::Ui,
-    overlay: BrushResizeLabel,
+    center: [f32; 2],
+    outline_half_width: f32,
+    canvas_rect: egui::Rect,
     brush_size: f32,
     brush_opacity: f32,
 ) {
     let pixels_per_point = ui.ctx().pixels_per_point();
-    let center = egui::pos2(
-        overlay.center[0] / pixels_per_point,
-        overlay.center[1] / pixels_per_point,
-    );
-    let canvas_rect = ui.available_rect_before_wrap();
+    let center = egui::pos2(center[0] / pixels_per_point, center[1] / pixels_per_point);
     if !canvas_rect.contains(center) {
         return;
     }
@@ -927,17 +955,22 @@ fn show_brush_resize_label(
         .layout_no_wrap(text.clone(), font.clone(), egui::Color32::WHITE)
         .size()
         .x;
-    let half_width = overlay.outline_half_width / pixels_per_point;
+    let half_width = outline_half_width / pixels_per_point;
     let gap = 10.0;
     let right_x = center.x + half_width + gap;
-    let (position, align) = if right_x + text_width <= canvas_rect.right() {
-        (egui::pos2(right_x, center.y), egui::Align2::LEFT_CENTER)
+    let x = if right_x + text_width <= canvas_rect.right() {
+        right_x
     } else {
-        (
-            egui::pos2(center.x - half_width - gap, center.y),
-            egui::Align2::RIGHT_CENTER,
-        )
+        center.x - half_width - gap - text_width
     };
+    let position = egui::pos2(
+        x.clamp(
+            canvas_rect.left(),
+            (canvas_rect.right() - text_width).max(canvas_rect.left()),
+        ),
+        center.y.clamp(canvas_rect.top(), canvas_rect.bottom()),
+    );
+    let align = egui::Align2::LEFT_CENTER;
 
     painter.text(
         position + egui::vec2(1.0, 1.0),

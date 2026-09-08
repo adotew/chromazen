@@ -174,7 +174,7 @@ mod imp {
 mod imp {
     use std::{
         cell::RefCell,
-        panic::{catch_unwind, AssertUnwindSafe},
+        panic::{AssertUnwindSafe, catch_unwind},
         ptr,
         rc::Rc,
         sync::Arc,
@@ -187,9 +187,9 @@ mod imp {
         UI::{
             HiDpi::GetDpiForWindow,
             Input::Pointer::{
-                GetPointerPenInfo, GetPointerPenInfoHistory, GetPointerType,
-                SkipPointerFrameMessages, POINTER_FLAG_CANCELED, POINTER_FLAG_CAPTURECHANGED,
-                POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT, POINTER_FLAG_UP, POINTER_PEN_INFO,
+                GetPointerPenInfo, GetPointerPenInfoHistory, GetPointerType, POINTER_FLAG_CANCELED,
+                POINTER_FLAG_CAPTURECHANGED, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT,
+                POINTER_FLAG_UP, POINTER_PEN_INFO, SkipPointerFrameMessages,
             },
             WindowsAndMessaging::{
                 MSG, PEN_MASK_PRESSURE, PT_PEN, WM_POINTERCAPTURECHANGED, WM_POINTERDOWN,
@@ -202,8 +202,8 @@ mod imp {
     };
 
     use super::{
-        events_for_sample, normalize_pressure, physical_to_logical, WindowsPenAction,
-        WindowsPenSample,
+        WindowsPenAction, WindowsPenSample, events_for_sample, normalize_pressure,
+        physical_to_logical,
     };
     use crate::platform::{MillisecondClock, PenEvent};
 

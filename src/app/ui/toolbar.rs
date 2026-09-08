@@ -74,19 +74,34 @@ impl GuiLayer {
         const TOOL_SIZE: f32 = 40.0;
         const TOOL_COUNT: usize = 3;
         const VERTICAL_PADDING: f32 = 6.0;
+        const CONTROLS_GAP: f32 = 8.0;
 
         let tools = [PaintTool::Brush, PaintTool::Eraser, PaintTool::Smudge];
         let button_count = TOOL_COUNT + if self.sidebar_visible { 0 } else { 2 };
+        let toolbar_height = TOOL_SIZE * button_count as f32 + 2.0 * VERTICAL_PADDING;
+        let controls_height = (ui.ctx().content_rect().bottom()
+            - ui.cursor().top()
+            - toolbar_height
+            - CONTROLS_GAP
+            - 12.0)
+            .clamp(0.0, brush_controls::CONTROLS_HEIGHT);
+        let controls_gap = if controls_height > 0.0 {
+            CONTROLS_GAP
+        } else {
+            0.0
+        };
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(
                 TOOL_RAIL_THICKNESS,
-                TOOL_SIZE * button_count as f32 + 2.0 * VERTICAL_PADDING,
+                toolbar_height + controls_gap + controls_height,
             ),
             egui::Sense::hover(),
         );
+        let toolbar_rect =
+            egui::Rect::from_min_size(rect.min, egui::vec2(TOOL_RAIL_THICKNESS, toolbar_height));
         paint_rounded_panel(
             ui,
-            rect,
+            toolbar_rect,
             egui::CornerRadius {
                 nw: 16,
                 ne: 0,
@@ -95,8 +110,11 @@ impl GuiLayer {
             },
         );
         let body = egui::Rect::from_min_max(
-            egui::pos2(rect.left(), rect.top() + VERTICAL_PADDING),
-            egui::pos2(rect.right(), rect.bottom() - VERTICAL_PADDING),
+            egui::pos2(toolbar_rect.left(), toolbar_rect.top() + VERTICAL_PADDING),
+            egui::pos2(
+                toolbar_rect.right(),
+                toolbar_rect.bottom() - VERTICAL_PADDING,
+            ),
         );
 
         let mut selected_tool = None;
@@ -152,6 +170,31 @@ impl GuiLayer {
             if color_response.clicked() {
                 self.color_window_open = !self.color_window_open;
             }
+        }
+        self.brush_slider_active = false;
+        self.brush_slider_focus = None;
+        let controls_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), toolbar_rect.bottom() + controls_gap),
+            rect.right_bottom(),
+        );
+        if controls_height > 0.0 {
+            paint_rounded_panel(
+                ui,
+                controls_rect,
+                egui::CornerRadius {
+                    nw: 16,
+                    ne: 0,
+                    sw: 16,
+                    se: 0,
+                },
+            );
+            let mut controls_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt("brush controls")
+                    .max_rect(controls_rect),
+            );
+            controls_ui.set_clip_rect(controls_rect.intersect(ui.clip_rect()));
+            self.show_brush_controls(&mut controls_ui, active_tool, controls_height);
         }
         selected_tool
     }

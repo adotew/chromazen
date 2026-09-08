@@ -8,7 +8,8 @@ impl GuiLayer {
             tool,
             layer_transform,
             layer_content_bounds,
-            brush_resize_label,
+            brush_resize_position,
+            brush_outline_half_size,
             eyedropper_indicator,
             save_status,
             pending_navigation,
@@ -217,9 +218,17 @@ impl GuiLayer {
                 self.commands
                     .push(AppCommand::Editor(EditorCommand::SelectTool(tool)));
             }
-            if let Some(label) = brush_resize_label {
-                show_brush_resize_label(ui, label, self.brush.size, self.brush.opacity);
-            }
+            let half_size = brush_outline_half_size(self.brush.size);
+            let (axis_x, axis_y) = workspace_view.document_axes_in_window();
+            let outline_half_width =
+                half_size[0] * axis_x[0].abs() + half_size[1] * axis_y[0].abs();
+            self.show_brush_adjustment_preview(
+                ui,
+                brush_resize_position,
+                outline_half_width,
+                workspace_rect,
+                tool,
+            );
             if let Some(indicator) = eyedropper_indicator {
                 show_eyedropper_indicator(ui, indicator);
             }

@@ -187,10 +187,6 @@ impl PaintInputController {
         self.resize_origin
     }
 
-    pub fn brush_resize_is_anchored(&self) -> bool {
-        self.resize_origin.is_some()
-    }
-
     pub fn has_active_document_drag(&self) -> bool {
         self.is_drawing
             || self.is_panning
@@ -1094,7 +1090,6 @@ mod tests {
         assert_eq!(input.brush_resize_pos(), Some([20.0, 30.0]));
         assert!(input.is_resizing_brush());
         assert!(input.has_active_document_drag());
-        assert!(input.brush_resize_is_anchored());
 
         input.resize_drag = None;
         input.cursor_pos = [40.0, 50.0];

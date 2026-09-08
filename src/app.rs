@@ -43,7 +43,7 @@ use self::{
     reference_load::ReferenceLoadController,
     references::ReferenceBoard,
     settings::{SettingsCommand, SettingsController, SettingsEffect},
-    ui::{ApplicationMenuState, BrushResizeLabel, EditorUiState, EyedropperIndicator, GuiLayer},
+    ui::{ApplicationMenuState, EditorUiState, EyedropperIndicator, GuiLayer},
 };
 use crate::{
     paint::PaintTool,
@@ -252,6 +252,16 @@ impl ApplicationHandler<AppEvent> for App {
                 let Some(gui) = self.gui.as_mut() else {
                     return;
                 };
+                // Sliders own arrow keys; other keys return to the existing editor
+                // shortcut routing instead of being swallowed by egui's focus.
+                if matches!(&event, WindowEvent::KeyboardInput { event, .. }
+                if !matches!(event.physical_key,
+                    winit::keyboard::PhysicalKey::Code(
+                        winit::keyboard::KeyCode::ArrowUp | winit::keyboard::KeyCode::ArrowDown
+                    )))
+                {
+                    gui.release_brush_slider_focus();
+                }
                 let cursor_changed = self.input.update_pointer_and_modifier_state(&event);
                 let canvas_crop_active =
                     self.screen == AppScreen::Editor && gui.canvas_crop_active();
@@ -306,8 +316,7 @@ impl ApplicationHandler<AppEvent> for App {
                             command,
                             AppCommand::Navigation(NavigationCommand::NewArtwork)
                         );
-                        (!canvas_crop_active || is_new_artwork)
-                            && (self.screen == AppScreen::Editor || is_new_artwork)
+                        is_new_artwork || (!canvas_crop_active && self.screen == AppScreen::Editor)
                     });
                 if let Some(command) = platform_command {
                     self.pending_commands.push(command);

@@ -71,14 +71,6 @@ impl App {
                 AppScreen::Editor => {
                     gui.sync_layer_thumbnails(paint);
                     let layer_snapshot = paint.layer_snapshot();
-                    let brush_resize_label =
-                        self.input
-                            .brush_resize_pos()
-                            .map(|center| BrushResizeLabel {
-                                center,
-                                outline_half_width: paint.brush_outline_half_size(gui.brush.size)
-                                    [0],
-                            });
                     let eyedropper_indicator =
                         self.input
                             .eyedropper_indicator_pos()
@@ -106,7 +98,8 @@ impl App {
                             tool: self.input.tool(),
                             layer_transform: paint.active_layer_transform(),
                             layer_content_bounds,
-                            brush_resize_label,
+                            brush_resize_position: self.input.brush_resize_pos(),
+                            brush_outline_half_size: &|size| paint.brush_outline_half_size(size),
                             eyedropper_indicator,
                             save_status: status,
                             pending_navigation,
@@ -146,8 +139,6 @@ impl App {
         full_output: egui::FullOutput,
     ) -> Option<RenderOutcome> {
         let cursor_pos = self.input.brush_cursor_pos();
-        let brush_resize_pos = self.input.brush_resize_pos();
-        let resize_is_anchored = self.input.brush_resize_is_anchored();
         let is_resizing_brush = self.input.is_resizing_brush();
         let is_panning = self.input.is_panning();
         let is_rotating_canvas = self.input.is_rotating_canvas();
@@ -164,20 +155,14 @@ impl App {
             self.screen == AppScreen::Editor && gui.reference_resize_active();
         let pointer_over_ui_or_reference =
             pointer_over_ui || pointer_over_reference || reference_drag_active;
-        let brush_cursor = brush_resize_pos
-            .filter(|_| resize_is_anchored || !pointer_over_ui_or_reference)
-            .map(|center| BrushCursor {
-                center,
-                diameter: gui.brush.size,
-            })
-            .or_else(|| {
-                cursor_pos
-                    .filter(|_| !pointer_over_ui_or_reference)
-                    .map(|center| BrushCursor {
-                        center,
-                        diameter: gui.brush.radius(brush_pressure) * 2.0,
-                    })
-            });
+        let brush_cursor = gui.brush_adjustment_preview().or_else(|| {
+            cursor_pos
+                .filter(|_| !pointer_over_ui_or_reference)
+                .map(|center| BrushCursor {
+                    center,
+                    diameter: gui.brush.radius(brush_pressure) * 2.0,
+                })
+        });
         let repaint_delay = ui::repaint_delay(&full_output);
         gui.state
             .handle_platform_output(window, full_output.platform_output);
@@ -190,7 +175,9 @@ impl App {
         }
         let eyedropper_over_canvas = is_eyedropper_active && !pointer_over_ui_or_reference;
         window.set_cursor_visible(
-            is_resizing_brush || (brush_cursor.is_none() && !eyedropper_over_canvas),
+            is_resizing_brush
+                || gui.brush_slider_active()
+                || (brush_cursor.is_none() && !eyedropper_over_canvas),
         );
 
         for (id, image_delta) in &full_output.textures_delta.set {
