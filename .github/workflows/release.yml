@@ -33,10 +33,19 @@ jobs:
       - uses: actions/checkout@v4
       - run: cargo build --release
       - run: Compress-Archive -Path target/release/Chromazen.exe -DestinationPath Chromazen-windows-x64.zip
+      - name: Build installer
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          iscc "packaging/windows/Chromazen.iss" "/DAppVersion=$version"
       - uses: actions/upload-artifact@v4
         with:
           name: Chromazen-windows
-          path: Chromazen-windows-x64.zip
+          path: |
+            Chromazen-windows-x64.zip
+            dist/ChromazenSetup-*.exe
 
   linux:
     runs-on: ubuntu-22.04
