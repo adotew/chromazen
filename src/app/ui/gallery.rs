@@ -4,13 +4,15 @@ use egui::containers::menu::MenuButton;
 
 use crate::artwork::{ArtworkId, ArtworkSummary};
 
-use super::super::command::{AppCommand, GalleryCommand, NavigationCommand};
+use super::super::{
+    command::{AppCommand, GalleryCommand, NavigationCommand},
+    gallery::ThumbnailCompletion,
+};
 use super::apply_menu_item_padding;
 
 #[derive(Default)]
 pub(super) struct GalleryUi {
     thumbnails: Vec<Thumbnail>,
-    failed_thumbnails: Vec<ArtworkId>,
     rename: Option<(ArtworkId, String)>,
     delete: Option<(ArtworkId, String)>,
 }
@@ -31,7 +33,7 @@ impl GalleryUi {
         warning: Option<&str>,
         commands: &mut Vec<AppCommand>,
     ) {
-        self.sync_thumbnails(ui.ctx(), artworks);
+        self.sync_thumbnails(artworks);
         let panel_frame =
             egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin::symmetric(24, 8));
         egui::CentralPanel::default()
@@ -141,51 +143,43 @@ impl GalleryUi {
         self.show_delete_dialog(ui.ctx(), commands);
     }
 
-    fn sync_thumbnails(&mut self, context: &egui::Context, artworks: &[ArtworkSummary]) {
+    fn sync_thumbnails(&mut self, artworks: &[ArtworkSummary]) {
+        self.thumbnails.retain(|thumbnail| {
+            artworks.iter().any(|artwork| {
+                artwork.id == thumbnail.id && artwork.thumbnail_path == thumbnail.path
+            })
+        });
+    }
+
+    pub(super) fn apply_thumbnail(
+        &mut self,
+        context: &egui::Context,
+        completion: ThumbnailCompletion,
+    ) {
         self.thumbnails
-            .retain(|thumbnail| artworks.iter().any(|artwork| artwork.id == thumbnail.id));
-        self.failed_thumbnails
-            .retain(|id| artworks.iter().any(|artwork| artwork.id == *id));
-        for artwork in artworks {
-            let current = self
-                .thumbnails
-                .iter()
-                .find(|thumbnail| thumbnail.id == artwork.id);
-            if current.is_some_and(|thumbnail| thumbnail.path == artwork.thumbnail_path)
-                || self.failed_thumbnails.contains(&artwork.id)
-            {
-                continue;
+            .retain(|thumbnail| thumbnail.id != completion.id);
+        let image = match completion.result {
+            Ok(image) => image,
+            Err(error) => {
+                log::warn!("{error}");
+                return;
             }
-            self.thumbnails
-                .retain(|thumbnail| thumbnail.id != artwork.id);
-            match image::open(&artwork.thumbnail_path) {
-                Ok(image) => {
-                    let image = image.to_rgba8();
-                    let (content_uv, content_aspect) = thumbnail_content_bounds(&image);
-                    let size = [image.width() as usize, image.height() as usize];
-                    let color = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
-                    let texture = context.load_texture(
-                        format!("artwork thumbnail {}", artwork.id.as_str()),
-                        color,
-                        egui::TextureOptions::LINEAR,
-                    );
-                    self.thumbnails.push(Thumbnail {
-                        id: artwork.id.clone(),
-                        path: artwork.thumbnail_path.clone(),
-                        texture,
-                        content_uv,
-                        content_aspect,
-                    });
-                }
-                Err(error) => {
-                    log::warn!(
-                        "failed to load artwork thumbnail {}: {error}",
-                        artwork.thumbnail_path.display()
-                    );
-                    self.failed_thumbnails.push(artwork.id.clone());
-                }
-            }
-        }
+        };
+        let (content_uv, content_aspect) = thumbnail_content_bounds(&image);
+        let size = [image.width() as usize, image.height() as usize];
+        let color = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
+        let texture = context.load_texture(
+            format!("artwork thumbnail {}", completion.id.as_str()),
+            color,
+            egui::TextureOptions::LINEAR,
+        );
+        self.thumbnails.push(Thumbnail {
+            id: completion.id,
+            path: completion.path,
+            texture,
+            content_uv,
+            content_aspect,
+        });
     }
 
     fn thumbnail(&self, id: &ArtworkId) -> Option<&Thumbnail> {

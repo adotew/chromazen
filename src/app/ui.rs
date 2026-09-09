@@ -38,6 +38,7 @@ use super::command::UiCommand;
 use super::{
     autosave::SaveStatus,
     command::{AppCommand, EditorCommand, NavigationCommand, SettingsCommand},
+    gallery::ThumbnailCompletion,
     input::EditorTool,
     references::{ReferenceId, ReferenceImage},
 };
@@ -441,11 +442,16 @@ impl GuiLayer {
         }
     }
 
+    pub fn apply_gallery_thumbnail(&mut self, completion: ThumbnailCompletion) {
+        self.gallery.apply_thumbnail(&self.context, completion);
+    }
+
     pub fn run_gallery(
         &mut self,
         window: &Window,
         artworks: &[ArtworkSummary],
         discovery_warning: Option<&str>,
+        load_dialog_delay: Option<Duration>,
     ) -> egui::FullOutput {
         self.brush_slider_active = false;
         self.release_brush_slider_focus();
@@ -462,6 +468,13 @@ impl GuiLayer {
             }
             self.gallery
                 .show(ui, artworks, discovery_warning, &mut self.commands);
+            if let Some(delay) = load_dialog_delay {
+                if delay.is_zero() {
+                    show_loading_dialog(ui.ctx(), "artwork load dialog", "Opening artwork…");
+                } else {
+                    ui.ctx().request_repaint_after(delay);
+                }
+            }
             self.show_new_artwork_dialog(ui.ctx());
             self.show_message_dialog(ui.ctx());
             self.show_shortcuts_dialog(ui.ctx());

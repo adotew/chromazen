@@ -13,6 +13,35 @@ impl App {
         true
     }
 
+    pub(super) fn apply_artwork_load_completion(&mut self) -> bool {
+        let Some(result) = self.gallery.take_load_completion() else {
+            return false;
+        };
+        if self.pending_exit {
+            return true;
+        }
+        match result {
+            Ok(opened) => self.finish_open_artwork(opened),
+            Err(error) => {
+                if let Some(gui) = self.gui.as_mut() {
+                    gui.open_error_dialog("Chromazen couldn’t open the artwork.", error);
+                }
+            }
+        }
+        true
+    }
+
+    pub(super) fn apply_thumbnail_completions(&mut self) -> bool {
+        let mut changed = false;
+        while let Some(completion) = self.gallery.take_thumbnail_completion() {
+            changed = true;
+            if let Some(gui) = self.gui.as_mut() {
+                gui.apply_gallery_thumbnail(completion);
+            }
+        }
+        changed
+    }
+
     pub(super) fn apply_brush_import_completion(&mut self) -> bool {
         let Some(completion) = self.brush_import.take_completion() else {
             return false;

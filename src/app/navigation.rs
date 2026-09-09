@@ -2,7 +2,7 @@ use super::*;
 
 impl App {
     pub(super) fn has_pending_navigation(&self) -> bool {
-        self.pending_gallery || self.pending_exit
+        self.pending_gallery || self.pending_exit || self.gallery.is_loading()
     }
 
     pub(super) fn request_exit(&mut self) {
@@ -90,15 +90,14 @@ impl App {
         else {
             return;
         };
-        let opened = match self.gallery.load_artwork(id, constraints) {
-            Ok(opened) => opened,
-            Err(error) => {
-                if let Some(gui) = self.gui.as_mut() {
-                    gui.open_error_dialog("Chromazen couldn’t open the artwork.", error);
-                }
-                return;
-            }
-        };
+        if let Err(error) = self.gallery.start_load_artwork(id.clone(), constraints)
+            && let Some(gui) = self.gui.as_mut()
+        {
+            gui.open_error_dialog("Chromazen couldn’t open the artwork.", error);
+        }
+    }
+
+    pub(super) fn finish_open_artwork(&mut self, opened: gallery::OpenedArtwork) {
         let Some(paint) = self.paint.as_mut() else {
             return;
         };

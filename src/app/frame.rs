@@ -4,6 +4,8 @@ impl App {
     pub(super) fn redraw(&mut self, window: &Window, event_loop: &ActiveEventLoop) {
         let mut app_action_processed = self.apply_export_completion();
         app_action_processed |= self.apply_duplicate_completion();
+        app_action_processed |= self.apply_artwork_load_completion();
+        app_action_processed |= self.apply_thumbnail_completions();
         app_action_processed |= self.apply_brush_import_completion();
         app_action_processed |= self.apply_reference_import_completions();
         app_action_processed |= self.apply_reference_load_completions();
@@ -66,7 +68,12 @@ impl App {
             let output = match self.screen {
                 AppScreen::Gallery => {
                     let warning = self.gallery.warning();
-                    gui.run_gallery(window, self.gallery.artworks(), warning.as_deref())
+                    gui.run_gallery(
+                        window,
+                        self.gallery.artworks(),
+                        warning.as_deref(),
+                        self.gallery.load_dialog_delay(),
+                    )
                 }
                 AppScreen::Editor => {
                     gui.sync_layer_thumbnails(paint);
