@@ -74,7 +74,7 @@ impl GuiLayer {
             workspace,
             ui.ctx().pixels_per_point(),
         );
-        self.brush_adjustment_preview = center.map(|center| crate::renderer::BrushCursor {
+        self.brush_adjustment_preview = center.map(|center| chromazen_canvas::BrushCursor {
             center,
             diameter: self.brush.size,
         });

@@ -83,11 +83,7 @@ impl App {
     }
 
     pub(super) fn open_artwork(&mut self, id: &crate::artwork::ArtworkId) {
-        let Some(constraints) = self
-            .paint
-            .as_ref()
-            .map(PaintRenderer::canvas_size_constraints)
-        else {
+        let Some(constraints) = self.paint.as_ref().map(Canvas::canvas_size_constraints) else {
             return;
         };
         if let Err(error) = self.gallery.start_load_artwork(id.clone(), constraints)
@@ -101,7 +97,8 @@ impl App {
         let Some(paint) = self.paint.as_mut() else {
             return;
         };
-        if let Err(error) = paint.load_document(&opened.document, opened.layers) {
+        let canvas_document = crate::artwork::canvas_document(&opened.document);
+        if let Err(error) = paint.load_document(&canvas_document, opened.layers) {
             if let Some(gui) = self.gui.as_mut() {
                 gui.open_error_dialog("Chromazen couldn’t open the artwork.", error);
             }

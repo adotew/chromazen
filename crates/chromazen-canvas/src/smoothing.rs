@@ -18,7 +18,7 @@ const DERIVATIVE_FILTER_CUTOFF_HZ: f32 = 1.0;
 const FALLBACK_SAMPLE_INTERVAL: Duration = Duration::from_micros(8_333);
 
 #[derive(Debug)]
-pub(crate) struct StrokePositionFilter {
+pub struct StrokePositionFilter {
     filtered_position: [f32; 2],
     filtered_velocity: [f32; 2],
     previous_time: Duration,
@@ -47,7 +47,7 @@ impl StrokePositionFilter {
         }
     }
 
-    pub(crate) fn reset(&mut self, position: [f32; 2], time: Duration) -> [f32; 2] {
+    pub fn reset(&mut self, position: [f32; 2], time: Duration) -> [f32; 2] {
         self.filtered_position = position;
         self.filtered_velocity = [0.0; 2];
         self.previous_time = time;
@@ -56,7 +56,7 @@ impl StrokePositionFilter {
         position
     }
 
-    pub(crate) fn filter(&mut self, position: [f32; 2], time: Duration) -> [f32; 2] {
+    pub fn filter(&mut self, position: [f32; 2], time: Duration) -> [f32; 2] {
         if !self.initialized {
             return self.reset(position, time);
         }
@@ -95,20 +95,20 @@ struct CurveInterval {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct StrokeSmoother {
+pub struct StrokeSmoother {
     points: VecDeque<StrokePoint>,
     first_segment_emitted: bool,
     latest_raw_point: Option<StrokePoint>,
 }
 
 impl StrokeSmoother {
-    pub(crate) fn begin(&mut self, point: StrokePoint) {
+    pub fn begin(&mut self, point: StrokePoint) {
         self.reset();
         self.latest_raw_point = Some(point);
         self.points.push_back(point);
     }
 
-    pub(crate) fn push(&mut self, point: StrokePoint) -> Vec<StrokePoint> {
+    pub fn push(&mut self, point: StrokePoint) -> Vec<StrokePoint> {
         self.latest_raw_point = Some(point);
         if self.coalesce_stationary_duplicate(point) {
             return Vec::new();
@@ -118,7 +118,7 @@ impl StrokeSmoother {
         self.emit_available_segment()
     }
 
-    pub(crate) fn finish_at(&mut self, point: StrokePoint) -> Vec<StrokePoint> {
+    pub fn finish_at(&mut self, point: StrokePoint) -> Vec<StrokePoint> {
         if let Some(last) = self.points.back_mut() {
             *last = point;
         }
@@ -126,7 +126,7 @@ impl StrokeSmoother {
         self.finish()
     }
 
-    pub(crate) fn finish(&mut self) -> Vec<StrokePoint> {
+    pub fn finish(&mut self) -> Vec<StrokePoint> {
         let mut smoothed = Vec::new();
 
         if let Some(latest_raw_point) = self.latest_raw_point
@@ -165,7 +165,7 @@ impl StrokeSmoother {
         smoothed
     }
 
-    pub(crate) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.points.clear();
         self.first_segment_emitted = false;
         self.latest_raw_point = None;

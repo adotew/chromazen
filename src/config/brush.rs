@@ -141,7 +141,7 @@ impl Default for PressureConfig {
 pub(crate) struct LoadedBrushPreset {
     pub(crate) id: String,
     pub(crate) preset: BrushPreset,
-    pub(crate) stamp_image: Option<RgbaImage>,
+    pub(crate) stamp_image: RgbaImage,
 }
 
 impl LoadedBrushPreset {
@@ -149,7 +149,8 @@ impl LoadedBrushPreset {
         Self {
             id: DEFAULT_BRUSH_ID.to_owned(),
             preset: BrushPreset::default(),
-            stamp_image: None,
+            stamp_image: load_bundled_stamp(DEFAULT_BRUSH_ID)
+                .expect("bundled brush stamp is valid"),
         }
     }
 
@@ -175,7 +176,7 @@ impl LoadedBrushPreset {
                 },
                 ..BrushPreset::default()
             },
-            stamp_image: None,
+            stamp_image: load_bundled_stamp(SKETCH_ID).expect("bundled brush stamp is valid"),
         }
     }
 
@@ -207,7 +208,7 @@ impl LoadedBrushPreset {
                 },
                 ..BrushPreset::default()
             },
-            stamp_image: Some(load_bundled_stamp(id).expect("bundled brush stamp is valid")),
+            stamp_image: load_bundled_stamp(id).expect("bundled brush stamp is valid"),
         }
     }
 }
@@ -307,7 +308,7 @@ pub(super) fn load_user_brush(
     Ok(LoadedBrushPreset {
         id: id.to_owned(),
         preset,
-        stamp_image: Some(stamp_image),
+        stamp_image,
     })
 }
 

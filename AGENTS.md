@@ -2,11 +2,11 @@
 
 ## Project Structure & Module Organization
 
-Chromazen is a single native Rust binary (`edition = "2024"`). `src/main.rs` initializes logging and starts the winit application in `src/app.rs`. The `src/app/` modules own event handling, commands, menus, editor/gallery UI, autosave, settings, export, brush import, and reference-image loading. Keep UI-only behavior there rather than in the renderer.
+Chromazen is a Rust workspace (`edition = "2024"`) containing the native application and `crates/chromazen-canvas`. `src/main.rs` initializes logging and starts the winit application in `src/app.rs`. The `src/app/` modules own event handling, commands, menus, editor/gallery UI, autosave, settings, export, brush import, and reference-image loading. Keep UI-only behavior there rather than in the canvas engine.
 
-Artwork persistence lives under `src/artwork/`: `format.rs` defines and validates versioned manifests, `store.rs` manages revision directories and atomic commits, and `raster.rs` handles CPU compositing and PNG encoding. Configuration and brush preset discovery/import are under `src/config/`; stroke models and smoothing are under `src/paint/`.
+Artwork persistence lives under `src/artwork/`: `format.rs` defines and validates versioned manifests, `store.rs` manages revision directories and atomic commits, and `raster.rs` handles CPU compositing and PNG encoding. Configuration and brush preset discovery/import are under `src/config/`; application brush settings remain under `src/paint/`.
 
-Platform input belongs in `src/platform/`, behind the appropriate `cfg` gates: AppKit pressure on macOS, Windows Ink on Windows, and Wayland tablet-v2 on Linux. `src/gpu.rs` owns wgpu device/surface setup. `src/renderer.rs` and `src/renderer/` own canvas state, layers, history, persistence readback, stamps, sampling, resources, and view transforms; WGSL programs live in `src/renderer/shaders/`.
+Platform input belongs in `src/platform/`, behind the appropriate `cfg` gates: AppKit pressure on macOS, Windows Ink on Windows, and Wayland tablet-v2 on Linux. `src/gpu.rs` owns wgpu device/surface setup and frame presentation. `crates/chromazen-canvas` owns window-independent canvas state, stroke smoothing, layers, history, persistence readback, stamps, sampling, GPU resources, view transforms, and WGSL programs.
 
 Keep bundled brushes, icons, fonts, and app icons in `assets/`. macOS bundle metadata and assembly scripts live in `packaging/macos/`. Treat `target/` and `dist/` as generated output. Unit tests stay beside their implementation in `#[cfg(test)]` modules.
 
@@ -16,9 +16,10 @@ Use a current stable Rust toolchain with edition 2024 support.
 
 - `cargo run --release` builds and launches the performance-oriented application.
 - `cargo build` performs a faster debug build.
-- `cargo test` runs the colocated unit tests.
+- `cargo test --workspace` runs the colocated unit tests in both workspace packages.
+- `cargo test -p chromazen-canvas --test headless -- --ignored` runs the surfaceless GPU integration test and requires a wgpu adapter.
 - `cargo fmt --all -- --check` verifies formatting; `cargo fmt --all` applies it.
-- `cargo clippy --all-targets --all-features -- -D warnings` treats every lint as an error.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` treats every lint as an error.
 - `./packaging/macos/build-app.sh` builds a release binary, creates and ad-hoc signs `dist/Chromazen.app`, then replaces `/Applications/Chromazen.app`; run it only on macOS when that side effect is intended.
 
 Run formatting, tests, and Clippy before submitting changes.
@@ -40,7 +41,7 @@ Preserve these boundaries and invariants:
 
 Name tests after observable behavior, such as `malformed_config_is_reported_and_preserved`. Add focused regression tests for changes to parsing, migration, persistence, smoothing, coordinate transforms, layer ordering, history metadata, shortcut mapping, stamp batching, and platform-independent input logic. Use temporary directories for filesystem tests.
 
-GPU command correctness and native tablet/menu integration may be checked manually when no reusable headless harness exists. For user-visible changes, exercise the gallery-to-editor flow, autosave/reopen, PNG export, undo/redo, layer operations, references, and affected shortcuts. Test native menus and pressure input on each supported platform touched by the change.
+Use the canvas crate's headless integration test for reusable GPU command checks. Native tablet/menu integration remains manual. For user-visible changes, exercise the gallery-to-editor flow, autosave/reopen, PNG export, undo/redo, layer operations, references, and affected shortcuts. Test native menus and pressure input on each supported platform touched by the change.
 
 ## Commit & Pull Request Guidelines
 

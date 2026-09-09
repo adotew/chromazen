@@ -1,12 +1,13 @@
 use std::{
     path::PathBuf,
-    sync::{mpsc, Arc},
+    sync::{Arc, mpsc},
     time::{Duration, Instant},
 };
 
-use crate::{
-    artwork::{ArtworkId, ArtworkStore, ArtworkSummary, DocumentManifest, ReferenceManifest},
-    renderer::CanvasSizeConstraints,
+use chromazen_canvas::CanvasSizeConstraints;
+
+use crate::artwork::{
+    ArtworkId, ArtworkStore, ArtworkSummary, DocumentManifest, ReferenceManifest,
 };
 
 pub(super) struct OpenedArtwork {
@@ -285,20 +286,24 @@ mod tests {
         let (thumbnail_sender, thumbnail_receiver) = mpsc::channel();
         let id = ArtworkId::new();
         let current_path = PathBuf::from("current.png");
-        assert!(thumbnail_sender
-            .send(ThumbnailCompletion {
-                id: id.clone(),
-                path: PathBuf::from("stale.png"),
-                result: Err("stale".to_owned()),
-            })
-            .is_ok());
-        assert!(thumbnail_sender
-            .send(ThumbnailCompletion {
-                id: id.clone(),
-                path: current_path.clone(),
-                result: Ok(image::RgbaImage::new(1, 1)),
-            })
-            .is_ok());
+        assert!(
+            thumbnail_sender
+                .send(ThumbnailCompletion {
+                    id: id.clone(),
+                    path: PathBuf::from("stale.png"),
+                    result: Err("stale".to_owned()),
+                })
+                .is_ok()
+        );
+        assert!(
+            thumbnail_sender
+                .send(ThumbnailCompletion {
+                    id: id.clone(),
+                    path: current_path.clone(),
+                    result: Ok(image::RgbaImage::new(1, 1)),
+                })
+                .is_ok()
+        );
         let controller = GalleryController {
             store: None,
             artworks: Vec::new(),

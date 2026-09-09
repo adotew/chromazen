@@ -22,15 +22,16 @@ use egui_wgpu::{Renderer as EguiRenderer, RendererOptions};
 use egui_winit::State as EguiWinitState;
 use winit::window::Window;
 
+use chromazen_canvas::{
+    Canvas, CanvasSizeConstraints, DEFAULT_CANVAS_SIZE, DropEdge, LayerContentBounds, LayerId,
+    LayerResourceId, LayerSnapshot, LayerTransform, PaintViewSnapshot, merge_down_target_index,
+};
+
 use crate::{
     artwork::ArtworkSummary,
     config::{AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset, PanelLayout},
+    gpu::GpuContext,
     paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings},
-    renderer::{
-        CanvasSizeConstraints, DEFAULT_CANVAS_SIZE, DropEdge, LayerContentBounds, LayerId,
-        LayerResourceId, LayerSnapshot, LayerTransform, PaintRenderer, PaintViewSnapshot,
-        merge_down_target_index,
-    },
 };
 
 #[cfg(not(target_os = "macos"))]
@@ -144,7 +145,7 @@ pub struct GuiLayer {
     default_size: f32,
     brush_slider_active: bool,
     brush_slider_focus: Option<egui::Id>,
-    brush_adjustment_preview: Option<crate::renderer::BrushCursor>,
+    brush_adjustment_preview: Option<chromazen_canvas::BrushCursor>,
     commands: Vec<AppCommand>,
     message_dialog: Option<MessageDialog>,
     shortcuts_dialog_open: bool,
@@ -316,7 +317,8 @@ struct CanvasCropRequest {
 impl GuiLayer {
     pub fn new(
         window: &Window,
-        paint: &PaintRenderer,
+        gpu: &GpuContext,
+        canvas_size_constraints: CanvasSizeConstraints,
         config: &AppConfig,
         brush_preset: &LoadedBrushPreset,
         catalog: BrushCatalog,
@@ -332,11 +334,11 @@ impl GuiLayer {
             window,
             Some(window.scale_factor() as f32),
             window.theme(),
-            Some(paint.device().limits().max_texture_dimension_2d as usize),
+            Some(gpu.device().limits().max_texture_dimension_2d as usize),
         );
         let renderer = EguiRenderer::new(
-            paint.device(),
-            paint.surface_format(),
+            gpu.device(),
+            gpu.surface_format(),
             RendererOptions::default(),
         );
         let preset = &brush_preset.preset;
@@ -394,7 +396,7 @@ impl GuiLayer {
             color_window_open: false,
             layers_window_open: false,
             panel_layout: config.panel_layout,
-            canvas_size_constraints: paint.canvas_size_constraints(),
+            canvas_size_constraints,
             new_artwork_dialog: None,
             canvas_crop: None,
             layer_transform_drag: None,
@@ -402,7 +404,7 @@ impl GuiLayer {
         }
     }
 
-    pub(crate) fn sync_layer_thumbnails(&mut self, paint: &PaintRenderer) {
+    pub(crate) fn sync_layer_thumbnails(&mut self, paint: &Canvas, device: &wgpu::Device) {
         let current_keys: Vec<_> = paint
             .layer_preview_views()
             .map(|(layer_id, resource_id, _)| LayerPreviewKey {
@@ -431,11 +433,9 @@ impl GuiLayer {
                 .iter()
                 .all(|thumbnail| thumbnail.key != key)
             {
-                let texture_id = self.renderer.register_native_texture(
-                    paint.device(),
-                    view,
-                    wgpu::FilterMode::Linear,
-                );
+                let texture_id =
+                    self.renderer
+                        .register_native_texture(device, view, wgpu::FilterMode::Linear);
                 self.layer_thumbnails
                     .push(LayerThumbnail { key, texture_id });
             }
@@ -530,7 +530,7 @@ impl GuiLayer {
         self.tool_opacities[index] = self.brush.opacity;
     }
 
-    pub(crate) fn brush_adjustment_preview(&self) -> Option<crate::renderer::BrushCursor> {
+    pub(crate) fn brush_adjustment_preview(&self) -> Option<chromazen_canvas::BrushCursor> {
         self.brush_adjustment_preview
     }
 

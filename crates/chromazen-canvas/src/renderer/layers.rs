@@ -1,13 +1,13 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct LayerId(pub(crate) u64);
+pub struct LayerId(pub u64);
 
 /// Identifies one allocation of a layer's GPU resources. Unlike `LayerId`, this
 /// value is never reused when a document is reset or replaced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct LayerResourceId(pub(crate) u64);
+pub struct LayerResourceId(pub u64);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DropEdge {
+pub enum DropEdge {
     Above,
     Below,
 }
@@ -49,26 +49,26 @@ pub(crate) struct PaintLayer {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LayerInfo {
-    pub(crate) id: LayerId,
-    pub(crate) name: String,
-    pub(crate) visible: bool,
-    pub(crate) opacity: u8,
-    pub(crate) clipped: bool,
+pub struct LayerInfo {
+    pub id: LayerId,
+    pub name: String,
+    pub visible: bool,
+    pub opacity: u8,
+    pub clipped: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct LayerSnapshot {
-    pub(crate) layers: Vec<LayerInfo>,
-    pub(crate) selection: LayerId,
-    pub(crate) background_color: [f32; 4],
+pub struct LayerSnapshot {
+    pub layers: Vec<LayerInfo>,
+    pub selection: LayerId,
+    pub background_color: [f32; 4],
 }
 
 pub(crate) fn insertion_index(selected_index: Option<usize>, layer_count: usize) -> usize {
     selected_index.map_or(layer_count, |index| index + 1)
 }
 
-pub(crate) fn merge_down_target_index(layer_index: usize) -> Option<usize> {
+pub fn merge_down_target_index(layer_index: usize) -> Option<usize> {
     layer_index.checked_sub(1)
 }
 

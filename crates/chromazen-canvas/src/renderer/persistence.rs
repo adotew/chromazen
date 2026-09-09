@@ -4,7 +4,7 @@ use super::layers::{LayerId, PaintLayer};
 
 const BYTES_PER_PIXEL: u32 = 4;
 
-pub(crate) struct LayerReadback {
+pub struct LayerReadback {
     device: wgpu::Device,
     layers: Vec<PendingLayerReadback>,
     size: [u32; 2],
@@ -19,7 +19,7 @@ struct PendingLayerReadback {
 }
 
 impl LayerReadback {
-    pub(crate) fn finish(self) -> Result<Vec<(LayerId, image::RgbaImage)>, String> {
+    pub fn finish(self) -> Result<Vec<(LayerId, image::RgbaImage)>, String> {
         self.device
             .poll(wgpu::PollType::wait_indefinitely())
             .map_err(|error| format!("failed to wait for layer readback: {error}"))?;

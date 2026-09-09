@@ -1,8 +1,9 @@
+use chromazen_canvas::{DropEdge, LayerId, LayerTransform};
+
 use crate::{
     app::{input::EditorTool, references::ReferenceId},
     artwork::ArtworkId,
     paint::PaintTool,
-    renderer::{DropEdge, LayerId, LayerTransform},
 };
 
 #[derive(Clone, Debug, PartialEq)]

@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::paint::{BrushSpacing, StrokePoint};
+use crate::{BrushSpacing, StrokePoint};
 
 use super::history::TextureRect;
 
@@ -305,7 +305,7 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::paint::StrokeSmoother;
+    use crate::StrokeSmoother;
 
     fn point(x: f32, y: f32) -> StrokePoint {
         StrokePoint {

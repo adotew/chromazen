@@ -45,13 +45,15 @@ use self::{
     settings::{SettingsCommand, SettingsController, SettingsEffect},
     ui::{ApplicationMenuState, EditorUiState, EyedropperIndicator, GuiLayer},
 };
+use chromazen_canvas::{BrushCursor, Canvas, DEFAULT_CANVAS_SIZE, DocumentVersions};
+
 use crate::{
+    gpu::GpuContext,
     paint::PaintTool,
     platform::{
         MacosPressureMonitor, PenEvent, PressureStateHandle, WaylandTabletMonitor,
         WindowsPenMonitor, WindowsPenRouter,
     },
-    renderer::{BrushCursor, DocumentVersions, PaintRenderer},
 };
 
 const WINDOW_TITLE: &str = "Chromazen";
@@ -101,7 +103,8 @@ struct PenControllers {
 
 pub struct App {
     window: Option<Arc<Window>>,
-    paint: Option<PaintRenderer>,
+    gpu: Option<GpuContext>,
+    paint: Option<Canvas>,
     gui: Option<GuiLayer>,
     input: PaintInputController,
     pressure_state: PressureStateHandle,
@@ -192,14 +195,21 @@ impl ApplicationHandler<AppEvent> for App {
         });
         let catalog = self.settings.take_startup_catalog();
         let startup_error = self.settings.take_startup_error();
-        let paint = pollster::block_on(PaintRenderer::new(
-            window.clone(),
-            self.settings.active_brush(),
-        ))
+        let gpu =
+            pollster::block_on(GpuContext::new(window.clone())).expect("failed to initialize wgpu");
+        let paint = Canvas::new(
+            gpu.device().clone(),
+            gpu.queue().clone(),
+            gpu.surface_format(),
+            gpu.surface_size(),
+            DEFAULT_CANVAS_SIZE,
+            &self.settings.active_brush().stamp_image,
+        )
         .expect("failed to initialize wgpu paint renderer");
         let gui = GuiLayer::new(
             window.as_ref(),
-            &paint,
+            &gpu,
+            paint.canvas_size_constraints(),
             self.settings.config(),
             self.settings.active_brush(),
             catalog,
@@ -207,6 +217,7 @@ impl ApplicationHandler<AppEvent> for App {
         );
 
         self.window = Some(window.clone());
+        self.gpu = Some(gpu);
         self.paint = Some(paint);
         self.gui = Some(gui);
         self.pressure_state = pressure_state;
@@ -386,15 +397,17 @@ impl ApplicationHandler<AppEvent> for App {
 
                 match event {
                     WindowEvent::Resized(size) => {
-                        if let Some(paint) = self.paint.as_mut() {
-                            paint.resize(size);
+                        if let (Some(gpu), Some(paint)) = (self.gpu.as_mut(), self.paint.as_mut()) {
+                            gpu.resize(size);
+                            paint.resize(gpu.surface_size());
                         }
                         needs_redraw = true;
                     }
                     WindowEvent::ScaleFactorChanged { .. } => {
                         self.input.set_scale_factor(window.scale_factor() as f32);
-                        if let Some(paint) = self.paint.as_mut() {
-                            paint.resize(window.inner_size());
+                        if let (Some(gpu), Some(paint)) = (self.gpu.as_mut(), self.paint.as_mut()) {
+                            gpu.resize(window.inner_size());
+                            paint.resize(gpu.surface_size());
                         }
                         needs_redraw = true;
                     }
@@ -488,6 +501,7 @@ impl App {
     ) -> Self {
         Self {
             window: None,
+            gpu: None,
             paint: None,
             gui: None,
             input: PaintInputController::default(),

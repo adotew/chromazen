@@ -8,7 +8,7 @@ version = "0.1.3"
 dependencies = [
  "atomic-write-file",
  "block2 0.6.2",
- "bytemuck",
+ "chromazen-canvas",
  "directories",
  "egui",
  "egui-wgpu",
@@ -415,6 +415,17 @@ name = "cfg_aliases"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
+
+[[package]]
+name = "chromazen-canvas"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "image",
+ "log",
+ "pollster",
+ "wgpu",
+]
 
 [[package]]
 name = "clipboard-win"

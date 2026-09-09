@@ -42,9 +42,9 @@ impl App {
         }
 
         if self
-            .paint
+            .gpu
             .as_ref()
-            .is_none_or(|paint| paint.surface_size()[0] == 0 || paint.surface_size()[1] == 0)
+            .is_none_or(|gpu| gpu.surface_size()[0] == 0 || gpu.surface_size()[1] == 0)
         {
             return;
         }
@@ -53,10 +53,13 @@ impl App {
         .then(|| {
             self.paint
                 .as_mut()
-                .and_then(PaintRenderer::read_selected_layer_content_bounds)
+                .and_then(Canvas::read_selected_layer_content_bounds)
         })
         .flatten();
         let Some(paint) = self.paint.as_ref() else {
+            return;
+        };
+        let Some(gpu) = self.gpu.as_ref() else {
             return;
         };
 
@@ -76,7 +79,7 @@ impl App {
                     )
                 }
                 AppScreen::Editor => {
-                    gui.sync_layer_thumbnails(paint);
+                    gui.sync_layer_thumbnails(paint, gpu.device());
                     let layer_snapshot = paint.layer_snapshot();
                     let eyedropper_indicator =
                         self.input
@@ -152,6 +155,7 @@ impl App {
         let is_pan_modifier_active = self.input.is_pan_modifier_active();
         let is_eyedropper_active = self.input.is_eyedropper_active();
         let brush_pressure = self.pressure_state.brush_pressure();
+        let gpu = self.gpu.as_ref()?;
         let paint = self.paint.as_mut()?;
         let gui = self.gui.as_mut()?;
         let pointer_over_ui = gui.context.is_pointer_over_egui();
@@ -189,17 +193,17 @@ impl App {
 
         for (id, image_delta) in &full_output.textures_delta.set {
             gui.renderer
-                .update_texture(paint.device(), paint.queue(), *id, image_delta);
+                .update_texture(gpu.device(), gpu.queue(), *id, image_delta);
         }
 
         let paint_jobs = gui
             .context
             .tessellate(full_output.shapes, full_output.pixels_per_point);
-        let frame = match paint.acquire_frame() {
+        let frame = match gpu.acquire_frame() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                paint.reconfigure_surface();
+                gpu.reconfigure_surface();
                 return None;
             }
             wgpu::CurrentSurfaceTexture::Timeout
@@ -209,7 +213,7 @@ impl App {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = paint
+        let mut encoder = gpu
             .device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("frame encoder"),
@@ -219,12 +223,12 @@ impl App {
         let canvas_needs_redraw = paint.has_pending_stamps();
 
         let screen_descriptor = ScreenDescriptor {
-            size_in_pixels: paint.surface_size(),
+            size_in_pixels: gpu.surface_size(),
             pixels_per_point: full_output.pixels_per_point,
         };
         let user_cmd_bufs = gui.renderer.update_buffers(
-            paint.device(),
-            paint.queue(),
+            gpu.device(),
+            gpu.queue(),
             &mut encoder,
             &paint_jobs,
             &screen_descriptor,
@@ -251,7 +255,7 @@ impl App {
                 .render(&mut pass, &paint_jobs, &screen_descriptor);
         }
 
-        paint.queue().submit(
+        gpu.queue().submit(
             user_cmd_bufs
                 .into_iter()
                 .chain(std::iter::once(encoder.finish())),
@@ -278,7 +282,7 @@ impl App {
         };
         let tool = change.tool;
         let reset_size = change.reset_size;
-        match paint.try_set_brush_preset(&change.brush) {
+        match paint.try_set_brush_stamp(&change.brush.stamp_image) {
             Ok(false) => {
                 self.settings.restore_pending_brush_change(change);
                 false

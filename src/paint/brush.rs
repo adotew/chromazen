@@ -1,12 +1,5 @@
+use chromazen_canvas::{BrushSpacing, StrokePoint};
 use egui::Color32;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum PaintTool {
-    #[default]
-    Brush,
-    Eraser,
-    Smudge,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BrushSettings {
@@ -65,29 +58,6 @@ impl Default for PressureSettings {
             opacity_gamma: 1.35,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct BrushSpacing {
-    pub(crate) ratio: f32,
-    pub(crate) minimum: f32,
-}
-
-impl Default for BrushSpacing {
-    fn default() -> Self {
-        Self {
-            ratio: 0.03,
-            minimum: 1.0,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct StrokePoint {
-    pub x: f32,
-    pub y: f32,
-    pub radius: f32,
-    pub opacity: f32,
 }
 
 fn pressure_radius(brush_size: f32, pressure: f32, settings: PressureSettings) -> f32 {

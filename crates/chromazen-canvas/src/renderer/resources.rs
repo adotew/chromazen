@@ -71,7 +71,7 @@ impl RenderResources {
         document_size: [u32; 2],
         surface_size: [u32; 2],
         surface_format: wgpu::TextureFormat,
-        preset_stamp: Option<&image::RgbaImage>,
+        brush_stamp: &image::RgbaImage,
     ) -> Result<Self, String> {
         let stamp_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("stamp storage buffer"),
@@ -128,16 +128,7 @@ impl RenderResources {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
 
-        let bundled_brush;
-        let brush_image = if let Some(preset_stamp) = preset_stamp {
-            preset_stamp
-        } else {
-            bundled_brush = image::load_from_memory(include_bytes!("../../assets/charcoal.png"))
-                .map_err(|err| format!("failed to load bundled brush stamp: {err}"))?
-                .to_rgba8();
-            &bundled_brush
-        };
-        let (brush_texture, brush_texture_view) = create_brush_texture(device, queue, brush_image);
+        let (brush_texture, brush_texture_view) = create_brush_texture(device, queue, brush_stamp);
         let brush_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("brush sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -1498,18 +1489,9 @@ impl RenderResources {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        preset_stamp: Option<&image::RgbaImage>,
+        brush_stamp: &image::RgbaImage,
     ) -> Result<(), String> {
-        let bundled_brush;
-        let brush_image = if let Some(preset_stamp) = preset_stamp {
-            preset_stamp
-        } else {
-            bundled_brush = image::load_from_memory(include_bytes!("../../assets/charcoal.png"))
-                .map_err(|error| format!("failed to load bundled brush stamp: {error}"))?
-                .to_rgba8();
-            &bundled_brush
-        };
-        let (brush_texture, brush_texture_view) = create_brush_texture(device, queue, brush_image);
+        let (brush_texture, brush_texture_view) = create_brush_texture(device, queue, brush_stamp);
         let stamp_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("stamp bind group"),
             layout: &self.stamp_bind_group_layout,

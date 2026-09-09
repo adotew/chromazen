@@ -4,14 +4,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use chromazen_canvas::{Canvas, DocumentVersions, LayerId};
 use image::imageops::FilterType;
 
-use crate::{
-    artwork::{
-        ArtworkId, ArtworkStore, CompositeLayer, LayerSource, LayerWrite, ReferenceSource,
-        ReferenceWrite, RevisionWrite, encode_png, flatten_premultiplied_layers,
-    },
-    renderer::{DocumentVersions, LayerId, PaintRenderer},
+use crate::artwork::{
+    ArtworkId, ArtworkStore, CompositeLayer, LayerSource, LayerWrite, ReferenceSource,
+    ReferenceWrite, RevisionWrite, encode_png, flatten_premultiplied_layers,
 };
 
 use super::references::{ReferenceBoard, ReferenceId, ReferenceVersions};
@@ -138,7 +136,7 @@ impl AutosaveController {
         self.session.as_ref().map(|session| session.title.as_str())
     }
 
-    pub(super) fn status(&self, paint: &PaintRenderer, references: &ReferenceBoard) -> SaveStatus {
+    pub(super) fn status(&self, paint: &Canvas, references: &ReferenceBoard) -> SaveStatus {
         let Some(session) = &self.session else {
             return SaveStatus::Clean;
         };
@@ -155,7 +153,7 @@ impl AutosaveController {
         }
     }
 
-    pub(super) fn is_clean(&self, paint: &PaintRenderer, references: &ReferenceBoard) -> bool {
+    pub(super) fn is_clean(&self, paint: &Canvas, references: &ReferenceBoard) -> bool {
         matches!(self.status(paint, references), SaveStatus::Clean)
     }
 
@@ -174,7 +172,7 @@ impl AutosaveController {
         }
     }
 
-    pub(super) fn update(&mut self, paint: &PaintRenderer, references: &ReferenceBoard) -> bool {
+    pub(super) fn update(&mut self, paint: &Canvas, references: &ReferenceBoard) -> bool {
         let mut changed = self.apply_save_completions(paint, references);
         let Some(session) = self.session.as_mut() else {
             return changed;
@@ -214,7 +212,7 @@ impl AutosaveController {
 
     fn start_save_task(
         &mut self,
-        paint: &PaintRenderer,
+        paint: &Canvas,
         references: &ReferenceBoard,
         versions: SaveVersions,
     ) -> Result<(), String> {
@@ -223,7 +221,7 @@ impl AutosaveController {
             .clone()
             .ok_or_else(|| "The artwork data directory is unavailable".to_owned())?;
         let session = self.session.as_mut().expect("save requires a session");
-        let mut document = paint.document_manifest();
+        let mut document = crate::artwork::document_manifest(paint.document_snapshot());
         document.brush_color = self.brush_color;
         document.references = references.manifest();
         let reference_images: Vec<_> = references
@@ -269,11 +267,7 @@ impl AutosaveController {
         Ok(())
     }
 
-    fn apply_save_completions(
-        &mut self,
-        paint: &PaintRenderer,
-        references: &ReferenceBoard,
-    ) -> bool {
+    fn apply_save_completions(&mut self, paint: &Canvas, references: &ReferenceBoard) -> bool {
         let mut changed = false;
         while let Ok(completion) = self.completion_receiver.try_recv() {
             let Some(session) = self.session.as_mut() else {
@@ -305,7 +299,7 @@ impl AutosaveController {
 }
 
 fn capture_save_versions(
-    paint: &PaintRenderer,
+    paint: &Canvas,
     references: &ReferenceBoard,
     brush_color: [u8; 4],
 ) -> SaveVersions {

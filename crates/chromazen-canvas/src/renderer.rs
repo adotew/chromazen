@@ -1,7 +1,6 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::{HashMap, HashSet};
 
 use bytemuck::{Pod, Zeroable};
-use winit::{dpi::PhysicalSize, window::Window};
 
 mod history;
 mod layers;
@@ -22,21 +21,16 @@ use self::{
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue, StampRaw},
     view::PaintView,
 };
-pub(crate) use self::{
+pub use self::{
     layers::{
         DropEdge, LayerId, LayerInfo, LayerResourceId, LayerSnapshot, merge_down_target_index,
     },
     persistence::LayerReadback,
     view::PaintViewSnapshot,
 };
-use crate::{
-    artwork::{DOCUMENT_SCHEMA_VERSION, DocumentManifest, LayerManifest, clipping_base_index},
-    config::LoadedBrushPreset,
-    gpu::GpuContext,
-    paint::{BrushSpacing, PaintTool, StrokePoint},
-};
+use crate::{BrushSpacing, PaintTool, StrokePoint};
 
-pub(crate) const DEFAULT_CANVAS_SIZE: [u32; 2] = [4000, 4000];
+pub const DEFAULT_CANVAS_SIZE: [u32; 2] = [4000, 4000];
 pub(crate) const DEFAULT_BACKGROUND_COLOR: [f32; 4] = [1.0; 4];
 const MAX_CANVAS_DIMENSION: u32 = 8192;
 // Caps the baseline layer, history, smudge, and mask allocations to a safe working set.
@@ -54,13 +48,13 @@ const LAYER_PREVIEW_SIZE: u32 = 128;
 const SMUDGE_MIN_STEP_RATIO: f32 = 0.125;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct CanvasSizeConstraints {
-    pub(crate) max_dimension: u32,
-    pub(crate) max_pixels: u64,
+pub struct CanvasSizeConstraints {
+    pub max_dimension: u32,
+    pub max_pixels: u64,
 }
 
 impl CanvasSizeConstraints {
-    pub(crate) fn validate(self, size: [u32; 2]) -> Result<(), String> {
+    pub fn validate(self, size: [u32; 2]) -> Result<(), String> {
         let [width, height] = size;
         if width == 0 || height == 0 {
             return Err("canvas width and height must be at least 1 pixel".to_owned());
@@ -137,15 +131,15 @@ struct CursorRaw {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct BrushCursor {
-    pub(crate) center: [f32; 2],
-    pub(crate) diameter: f32,
+pub struct BrushCursor {
+    pub center: [f32; 2],
+    pub diameter: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct LayerContentBounds {
-    pub(crate) min: [f32; 2],
-    pub(crate) max: [f32; 2],
+pub struct LayerContentBounds {
+    pub min: [f32; 2],
+    pub max: [f32; 2],
 }
 
 impl LayerContentBounds {
@@ -158,10 +152,10 @@ impl LayerContentBounds {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct LayerTransform {
-    pub(crate) translation: [f32; 2],
-    pub(crate) scale: [f32; 2],
-    pub(crate) rotation: f32,
+pub struct LayerTransform {
+    pub translation: [f32; 2],
+    pub scale: [f32; 2],
+    pub rotation: f32,
 }
 
 impl Default for LayerTransform {
@@ -224,10 +218,52 @@ impl LayerTransform {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct DocumentVersions {
-    pub(crate) generation: u64,
-    pub(crate) metadata: u64,
-    pub(crate) layers: Vec<(LayerId, u64)>,
+pub struct DocumentVersions {
+    pub generation: u64,
+    pub metadata: u64,
+    pub layers: Vec<(LayerId, u64)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CanvasDocument {
+    pub size: [u32; 2],
+    pub background: [u8; 3],
+    pub selected_layer: LayerId,
+    pub layers: Vec<LayerInfo>,
+}
+
+impl CanvasDocument {
+    fn validate(&self) -> Result<(), String> {
+        if self.size.into_iter().any(|dimension| dimension == 0) {
+            return Err("document dimensions must be non-zero".to_owned());
+        }
+        if self.layers.is_empty() {
+            return Err("document must contain at least one layer".to_owned());
+        }
+        if !self
+            .layers
+            .iter()
+            .any(|layer| layer.id == self.selected_layer)
+        {
+            return Err("selected_layer does not identify a document layer".to_owned());
+        }
+        if self.layers[0].clipped {
+            return Err("bottom layer cannot be clipped".to_owned());
+        }
+        let mut ids = HashSet::new();
+        for layer in &self.layers {
+            if layer.id.0 == 0 || !ids.insert(layer.id) {
+                return Err("layer IDs must be non-zero and unique".to_owned());
+            }
+            if layer.name.trim().is_empty() {
+                return Err("layer names must not be empty".to_owned());
+            }
+            if layer.opacity > 100 {
+                return Err("layer opacity must be between 0 and 100".to_owned());
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -276,8 +312,11 @@ impl ActiveStroke {
     }
 }
 
-pub struct PaintRenderer {
-    gpu: GpuContext,
+pub struct Canvas {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    surface_format: wgpu::TextureFormat,
+    surface_size: [u32; 2],
     document_size: [u32; 2],
     resources: RenderResources,
     layers: Vec<PaintLayer>,
@@ -300,40 +339,47 @@ pub struct PaintRenderer {
     last_view_uniform: Option<ViewUniform>,
 }
 
-impl PaintRenderer {
-    pub async fn new(
-        window: Arc<Window>,
-        brush_preset: &LoadedBrushPreset,
+impl Canvas {
+    pub fn new(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        surface_size: [u32; 2],
+        document_size: [u32; 2],
+        brush_stamp: &image::RgbaImage,
     ) -> Result<Self, String> {
-        let gpu = GpuContext::new(window).await?;
-        let device = gpu.device();
-        let queue = gpu.queue();
-        let surface_format = gpu.surface_format();
-
-        let document_size = DEFAULT_CANVAS_SIZE;
+        CanvasSizeConstraints {
+            max_dimension: device
+                .limits()
+                .max_texture_dimension_2d
+                .min(MAX_CANVAS_DIMENSION),
+            max_pixels: MAX_CANVAS_PIXELS,
+        }
+        .validate(document_size)?;
+        validate_brush_stamp(brush_stamp, device.limits().max_texture_dimension_2d)?;
         let resources = RenderResources::new(
-            device,
-            queue,
+            &device,
+            &queue,
             document_size,
-            gpu.surface_size(),
+            surface_size,
             surface_format,
-            brush_preset.stamp_image.as_ref(),
+            brush_stamp,
         )?;
 
         let first_layer = resources.create_paint_layer(
-            device,
+            &device,
             document_size,
             LayerId(1),
             LayerResourceId(1),
             LayerProperties::new("Layer 1".to_owned()),
         );
-        let stamp_aspect = brush_preset
-            .stamp_image
-            .as_ref()
-            .map_or(1.0, |image| image.width() as f32 / image.height() as f32);
-        let history = PaintHistory::new(device, document_size);
+        let stamp_aspect = brush_stamp.width() as f32 / brush_stamp.height() as f32;
+        let history = PaintHistory::new(&device, document_size);
         let mut renderer = Self {
-            gpu,
+            device,
+            queue,
+            surface_format,
+            surface_size,
             document_size,
             resources,
             layers: vec![first_layer],
@@ -361,25 +407,16 @@ impl PaintRenderer {
         Ok(renderer)
     }
 
-    pub fn device(&self) -> &wgpu::Device {
-        self.gpu.device()
+    fn surface_size(&self) -> [u32; 2] {
+        self.surface_size
     }
-    pub fn queue(&self) -> &wgpu::Queue {
-        self.gpu.queue()
-    }
-    pub fn surface_format(&self) -> wgpu::TextureFormat {
-        self.gpu.surface_format()
-    }
-    pub fn surface_size(&self) -> [u32; 2] {
-        self.gpu.surface_size()
-    }
-    pub(crate) fn document_size(&self) -> [u32; 2] {
+    pub fn document_size(&self) -> [u32; 2] {
         self.document_size
     }
     pub fn zoom(&self) -> f32 {
         self.view.zoom()
     }
-    pub(crate) fn view_snapshot(&self) -> PaintViewSnapshot {
+    pub fn view_snapshot(&self) -> PaintViewSnapshot {
         self.view.snapshot()
     }
     pub fn brush_outline_half_size(&self, diameter: f32) -> [f32; 2] {
@@ -394,11 +431,10 @@ impl PaintRenderer {
         self.stamp_queue.has_pending()
     }
 
-    pub(crate) fn canvas_size_constraints(&self) -> CanvasSizeConstraints {
+    pub fn canvas_size_constraints(&self) -> CanvasSizeConstraints {
         CanvasSizeConstraints {
             max_dimension: self
-                .gpu
-                .device()
+                .device
                 .limits()
                 .max_texture_dimension_2d
                 .min(MAX_CANVAS_DIMENSION),
@@ -406,37 +442,34 @@ impl PaintRenderer {
         }
     }
 
-    pub fn resize(&mut self, size: PhysicalSize<u32>) {
-        self.gpu.resize(size);
-        let surface_size = self.gpu.surface_size();
+    pub fn resize(&mut self, size: [u32; 2]) {
+        if size[0] == 0 || size[1] == 0 {
+            return;
+        }
+        self.surface_size = size;
         self.resources
-            .resize_surface(self.gpu.device(), surface_size, self.gpu.surface_format());
-        self.view.set_surface_size(surface_size);
+            .resize_surface(&self.device, size, self.surface_format);
+        self.view.set_surface_size(size);
     }
 
-    pub fn try_set_brush_preset(&mut self, preset: &LoadedBrushPreset) -> Result<bool, String> {
+    pub fn try_set_brush_stamp(&mut self, stamp: &image::RgbaImage) -> Result<bool, String> {
         if self.active_stroke.is_some() || self.stamp_queue.has_pending() {
             return Ok(false);
         }
-        self.resources.replace_brush_stamp(
-            self.gpu.device(),
-            self.gpu.queue(),
-            preset.stamp_image.as_ref(),
-        )?;
-        let stamp_aspect = preset
-            .stamp_image
-            .as_ref()
-            .map_or(1.0, |image| image.width() as f32 / image.height() as f32);
-        self.stamp_queue.set_stamp_aspect(stamp_aspect);
+        validate_brush_stamp(stamp, self.device.limits().max_texture_dimension_2d)?;
+        self.resources
+            .replace_brush_stamp(&self.device, &self.queue, stamp)?;
+        self.stamp_queue
+            .set_stamp_aspect(stamp.width() as f32 / stamp.height() as f32);
         Ok(true)
     }
 
-    pub fn fit_to_screen(&mut self) {
+    fn fit_to_screen(&mut self) {
         self.view
             .fit_to_screen(self.surface_size(), self.document_size);
     }
 
-    pub(crate) fn prepare_canvas_crop_view(&mut self) {
+    pub fn prepare_canvas_crop_view(&mut self) {
         self.fit_to_screen();
         let [width, height] = self.surface_size();
         self.view
@@ -447,37 +480,37 @@ impl PaintRenderer {
         self.view.apply_zoom_at(factor, cursor);
     }
 
-    pub(crate) fn canvas_rotation(&self) -> f32 {
+    pub fn canvas_rotation(&self) -> f32 {
         self.view.snapshot().rotation()
     }
 
-    pub(crate) fn canvas_center_in_window(&self) -> [f32; 2] {
+    pub fn canvas_center_in_window(&self) -> [f32; 2] {
         self.view
             .snapshot()
             .document_to_window(self.document_center())
     }
 
-    pub(crate) fn set_canvas_rotation(&mut self, radians: f32) -> bool {
+    pub fn set_canvas_rotation(&mut self, radians: f32) -> bool {
         let center = self.document_center();
         self.view.set_rotation_around(radians, center)
     }
 
-    pub(crate) fn rotate_canvas_view(&mut self, radians: f32) -> bool {
+    pub fn rotate_canvas_view(&mut self, radians: f32) -> bool {
         let center = self.document_center();
         self.view.rotate_by_around(radians, center)
     }
 
-    pub(crate) fn reset_canvas_rotation(&mut self) -> bool {
+    pub fn reset_canvas_rotation(&mut self) -> bool {
         let center = self.document_center();
         self.view.reset_rotation_around(center)
     }
 
-    pub(crate) fn toggle_canvas_flip_horizontal(&mut self) {
+    pub fn toggle_canvas_flip_horizontal(&mut self) {
         let center = self.document_center();
         self.view.toggle_flip_horizontal_around(center);
     }
 
-    pub(crate) fn toggle_canvas_flip_vertical(&mut self) {
+    pub fn toggle_canvas_flip_vertical(&mut self) {
         let center = self.document_center();
         self.view.toggle_flip_vertical_around(center);
     }
@@ -497,7 +530,7 @@ impl PaintRenderer {
         self.view.window_to_document(point)
     }
 
-    pub(crate) fn window_to_workspace(&self, point: [f32; 2]) -> [f32; 2] {
+    pub fn window_to_workspace(&self, point: [f32; 2]) -> [f32; 2] {
         self.view.snapshot().window_to_workspace(point)
     }
 
@@ -510,8 +543,8 @@ impl PaintRenderer {
             self.document_size,
         )?;
         read_composited_color(
-            self.gpu.device(),
-            self.gpu.queue(),
+            &self.device,
+            &self.queue,
             &self.layers,
             pixel,
             self.background_color,
@@ -525,11 +558,11 @@ impl PaintRenderer {
                 .is_some_and(|index| self.layers[index].visible)
     }
 
-    pub(crate) fn active_layer_transform(&self) -> Option<LayerTransform> {
+    pub fn active_layer_transform(&self) -> Option<LayerTransform> {
         self.active_transform.as_ref().map(|active| active.value)
     }
 
-    pub(crate) fn read_selected_layer_content_bounds(&mut self) -> Option<LayerContentBounds> {
+    pub fn read_selected_layer_content_bounds(&mut self) -> Option<LayerContentBounds> {
         if let Some(active) = self.active_transform.as_ref() {
             return Some(active.bounds);
         }
@@ -546,8 +579,8 @@ impl PaintRenderer {
             return bounds;
         }
         let bounds = persistence::begin_read_layers(
-            self.gpu.device(),
-            self.gpu.queue(),
+            &self.device,
+            &self.queue,
             std::slice::from_ref(&self.layers[layer_index]),
             self.document_size,
         )
@@ -578,24 +611,23 @@ impl PaintRenderer {
             return false;
         }
 
-        let mut encoder =
-            self.gpu
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("layer transform setup encoder"),
-                });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("layer transform setup encoder"),
+            });
         self.history.ensure_layer_synced(
             &mut encoder,
             layer_id,
             &self.layers[layer_index].texture,
             self.document_size,
         );
-        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.queue.submit(std::iter::once(encoder.finish()));
 
         let source = self.history.mirror_view();
         let bind_group = self
             .resources
-            .create_transform_bind_group(self.gpu.device(), &source);
+            .create_transform_bind_group(&self.device, &source);
         self.active_transform = Some(ActiveLayerTransform {
             layer_id,
             bounds,
@@ -605,7 +637,7 @@ impl PaintRenderer {
         true
     }
 
-    pub(crate) fn update_layer_transform(&mut self, transform: LayerTransform) -> bool {
+    pub fn update_layer_transform(&mut self, transform: LayerTransform) -> bool {
         let Some(transform) = transform.normalized() else {
             return false;
         };
@@ -638,13 +670,12 @@ impl PaintRenderer {
             .bounds
             .center();
         self.resources
-            .write_layer_transform_uniform(self.gpu.queue(), transform, pivot);
-        let mut encoder =
-            self.gpu
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("layer transform preview encoder"),
-                });
+            .write_layer_transform_uniform(&self.queue, transform, pivot);
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("layer transform preview encoder"),
+            });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("layer transform preview pass"),
@@ -674,7 +705,7 @@ impl PaintRenderer {
             );
             pass.draw(0..3, 0..1);
         }
-        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.queue.submit(std::iter::once(encoder.finish()));
         self.active_transform
             .as_mut()
             .expect("transform session must exist")
@@ -682,7 +713,7 @@ impl PaintRenderer {
         true
     }
 
-    pub(crate) fn commit_layer_transform(&mut self) -> bool {
+    pub fn commit_layer_transform(&mut self) -> bool {
         let Some(active) = self.active_transform.take() else {
             return false;
         };
@@ -701,25 +732,24 @@ impl PaintRenderer {
             width: self.document_size[0],
             height: self.document_size[1],
         };
-        let mut encoder =
-            self.gpu
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("layer transform commit encoder"),
-                });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("layer transform commit encoder"),
+            });
         self.history.commit_stroke(
-            self.gpu.device(),
+            &self.device,
             &mut encoder,
             active.layer_id,
             &self.layers[layer_index].texture,
             rect,
         );
-        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.queue.submit(std::iter::once(encoder.finish()));
         self.mark_layer_changed(active.layer_id);
         true
     }
 
-    pub(crate) fn cancel_layer_transform(&mut self) -> bool {
+    pub fn cancel_layer_transform(&mut self) -> bool {
         let Some(active) = self.active_transform.take() else {
             return false;
         };
@@ -728,12 +758,11 @@ impl PaintRenderer {
             .iter()
             .position(|layer| layer.id == active.layer_id)
             .expect("transformed layer must exist");
-        let mut encoder =
-            self.gpu
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("layer transform cancel encoder"),
-                });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("layer transform cancel encoder"),
+            });
         let restored = self.history.restore_active_edit(
             &mut encoder,
             active.layer_id,
@@ -745,12 +774,12 @@ impl PaintRenderer {
                 height: self.document_size[1],
             },
         );
-        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.queue.submit(std::iter::once(encoder.finish()));
         self.layers[layer_index].preview_dirty = true;
         restored
     }
 
-    pub(crate) fn document_versions(&self) -> DocumentVersions {
+    pub fn document_versions(&self) -> DocumentVersions {
         let mut layers: Vec<_> = self
             .layers
             .iter()
@@ -769,49 +798,44 @@ impl PaintRenderer {
         }
     }
 
-    pub(crate) fn document_is_idle(&self) -> bool {
+    fn document_is_idle(&self) -> bool {
         self.active_stroke.is_none()
             && !self.history.stroke_active()
             && !self.stamp_queue.has_pending()
     }
 
-    pub(crate) fn document_manifest(&self) -> DocumentManifest {
-        DocumentManifest {
-            schema_version: DOCUMENT_SCHEMA_VERSION,
-            width: self.document_size[0],
-            height: self.document_size[1],
+    pub fn document_snapshot(&self) -> CanvasDocument {
+        CanvasDocument {
+            size: self.document_size,
             background: rgb8(self.background_color),
-            brush_color: [170, 187, 204, 255],
-            selected_layer: self.selection.0,
+            selected_layer: self.selection,
             layers: self
                 .layers
                 .iter()
-                .map(|layer| LayerManifest {
-                    id: layer.id.0,
+                .map(|layer| LayerInfo {
+                    id: layer.id,
                     name: layer.name.clone(),
                     visible: layer.visible,
                     opacity: layer.opacity,
                     clipped: layer.clipped,
-                    file: format!("layers/{}.png", layer.id.0),
                 })
                 .collect(),
-            references: Vec::new(),
         }
     }
 
-    pub(crate) fn begin_document_layer_readback(&self) -> Result<LayerReadback, String> {
+    pub fn begin_document_layer_readback(&self) -> Result<LayerReadback, String> {
         if !self.document_is_idle() {
             return Err("the current document is busy".to_owned());
         }
         Ok(persistence::begin_read_layers(
-            self.gpu.device(),
-            self.gpu.queue(),
+            &self.device,
+            &self.queue,
             &self.layers,
             self.document_size,
         ))
     }
 
-    pub(crate) fn reset_document(&mut self, size: [u32; 2]) -> Result<(), String> {
+    pub fn reset_document(&mut self, size: [u32; 2]) -> Result<(), String> {
         if !self.document_is_idle() {
             return Err("the current document is busy".to_owned());
         }
@@ -821,13 +845,13 @@ impl PaintRenderer {
         let id = LayerId(1);
         let resource_id = self.allocate_layer_resource_id();
         let layer = self.resources.create_paint_layer(
-            self.gpu.device(),
+            &self.device,
             self.document_size,
             id,
             resource_id,
             LayerProperties::new("Layer 1".to_owned()),
         );
-        clear_layer(self.gpu.device(), self.gpu.queue(), &layer.view);
+        clear_layer(&self.device, &self.queue, &layer.view);
         self.layers = vec![layer];
         self.selection = id;
         self.background_color = DEFAULT_BACKGROUND_COLOR;
@@ -842,11 +866,7 @@ impl PaintRenderer {
         Ok(())
     }
 
-    pub(crate) fn resize_canvas(
-        &mut self,
-        size: [u32; 2],
-        origin: [i32; 2],
-    ) -> Result<bool, String> {
+    pub fn resize_canvas(&mut self, size: [u32; 2], origin: [i32; 2]) -> Result<bool, String> {
         if !self.document_is_idle() {
             return Err("the current document is busy".to_owned());
         }
@@ -862,7 +882,7 @@ impl PaintRenderer {
             let resource_id = self.allocate_layer_resource_id();
             let layer = &self.layers[index];
             replacement_layers.push(self.resources.create_paint_layer(
-                self.gpu.device(),
+                &self.device,
                 size,
                 layer.id,
                 resource_id,
@@ -875,12 +895,11 @@ impl PaintRenderer {
             ));
         }
 
-        let mut encoder =
-            self.gpu
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("canvas resize encoder"),
-                });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("canvas resize encoder"),
+            });
         for (source, destination) in self.layers.iter().zip(&replacement_layers) {
             {
                 let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -930,14 +949,14 @@ impl PaintRenderer {
                 );
             }
         }
-        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.queue.submit(std::iter::once(encoder.finish()));
 
         let previous_layers = std::mem::replace(&mut self.layers, replacement_layers);
         let retained_bytes = layer_set_byte_len(before_size, previous_layers.len())
             .max(layer_set_byte_len(size, self.layers.len()));
         self.resources
-            .resize_document(self.gpu.device(), self.gpu.queue(), size);
-        self.history.resize_mirror(self.gpu.device(), size);
+            .resize_document(&self.device, &self.queue, size);
+        self.history.resize_mirror(&self.device, size);
         self.document_size = size;
         self.history
             .record_canvas_resize(before_size, size, previous_layers, retained_bytes);
@@ -947,30 +966,30 @@ impl PaintRenderer {
         Ok(true)
     }
 
-    pub(crate) fn load_document(
+    pub fn load_document(
         &mut self,
-        document: &DocumentManifest,
+        document: &CanvasDocument,
         pixels: Vec<image::RgbaImage>,
     ) -> Result<(), String> {
         if !self.document_is_idle() {
             return Err("the current document is busy".to_owned());
         }
         document.validate()?;
-        let document_size = [document.width, document.height];
+        let document_size = document.size;
         self.canvas_size_constraints().validate(document_size)?;
         if pixels.len() != document.layers.len() {
             return Err("loaded layer count does not match document metadata".to_owned());
         }
 
         for (metadata, image) in document.layers.iter().zip(&pixels) {
-            if image.dimensions() != (document.width, document.height) {
+            if image.dimensions() != (document.size[0], document.size[1]) {
                 return Err(format!(
                     "layer {} has dimensions {}x{}; expected {}x{}",
-                    metadata.id,
+                    metadata.id.0,
                     image.width(),
                     image.height(),
-                    document.width,
-                    document.height
+                    document.size[0],
+                    document.size[1]
                 ));
             }
         }
@@ -980,9 +999,9 @@ impl PaintRenderer {
         for (metadata, image) in document.layers.iter().zip(pixels) {
             let resource_id = self.allocate_layer_resource_id();
             let layer = self.resources.create_paint_layer(
-                self.gpu.device(),
+                &self.device,
                 self.document_size,
-                LayerId(metadata.id),
+                metadata.id,
                 resource_id,
                 LayerProperties {
                     name: metadata.name.clone(),
@@ -991,7 +1010,7 @@ impl PaintRenderer {
                     clipped: metadata.clipped,
                 },
             );
-            self.gpu.queue().write_texture(
+            self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &layer.texture,
                     mip_level: 0,
@@ -1001,12 +1020,12 @@ impl PaintRenderer {
                 image.as_raw(),
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(document.width * 4),
-                    rows_per_image: Some(document.height),
+                    bytes_per_row: Some(document.size[0] * 4),
+                    rows_per_image: Some(document.size[1]),
                 },
                 wgpu::Extent3d {
-                    width: document.width,
-                    height: document.height,
+                    width: document.size[0],
+                    height: document.size[1],
                     depth_or_array_layers: 1,
                 },
             );
@@ -1014,12 +1033,12 @@ impl PaintRenderer {
         }
 
         self.layers = layers;
-        self.selection = LayerId(document.selected_layer);
+        self.selection = document.selected_layer;
         self.background_color = opaque_color(document.background);
         self.next_layer_id = document
             .layers
             .iter()
-            .map(|layer| layer.id)
+            .map(|layer| layer.id.0)
             .max()
             .unwrap_or(0)
             .saturating_add(1);
@@ -1033,7 +1052,7 @@ impl PaintRenderer {
         Ok(())
     }
 
-    pub(crate) fn layer_snapshot(&self) -> LayerSnapshot {
+    pub fn layer_snapshot(&self) -> LayerSnapshot {
         LayerSnapshot {
             layers: self
                 .layers
@@ -1051,7 +1070,7 @@ impl PaintRenderer {
         }
     }
 
-    pub(crate) fn layer_preview_views(
+    pub fn layer_preview_views(
         &self,
     ) -> impl Iterator<Item = (LayerId, LayerResourceId, &wgpu::TextureView)> {
         self.layers
@@ -1059,7 +1078,7 @@ impl PaintRenderer {
             .map(|layer| (layer.id, layer.resource_id, &layer.preview_view))
     }
 
-    pub(crate) fn select_layer(&mut self, id: LayerId) -> bool {
+    pub fn select_layer(&mut self, id: LayerId) -> bool {
         if !self.document_is_idle() || self.selection == id {
             return false;
         }
@@ -1072,7 +1091,7 @@ impl PaintRenderer {
         }
     }
 
-    pub(crate) fn rename_layer(&mut self, id: LayerId, name: &str) -> bool {
+    pub fn rename_layer(&mut self, id: LayerId, name: &str) -> bool {
         if !self.document_is_idle() {
             return false;
         }
@@ -1091,7 +1110,7 @@ impl PaintRenderer {
         true
     }
 
-    pub(crate) fn set_layer_clipped(&mut self, id: LayerId, clipped: bool) -> bool {
+    pub fn set_layer_clipped(&mut self, id: LayerId, clipped: bool) -> bool {
         if !self.document_is_idle() {
             return false;
         }
@@ -1107,7 +1126,7 @@ impl PaintRenderer {
         true
     }
 
-    pub(crate) fn set_layer_visibility(&mut self, id: LayerId, visible: bool) -> bool {
+    pub fn set_layer_visibility(&mut self, id: LayerId, visible: bool) -> bool {
         if !self.document_is_idle() {
             return false;
         }
@@ -1123,7 +1142,7 @@ impl PaintRenderer {
         true
     }
 
-    pub(crate) fn set_layer_opacity(&mut self, id: LayerId, opacity: u8) -> bool {
+    pub fn set_layer_opacity(&mut self, id: LayerId, opacity: u8) -> bool {
         if !self.document_is_idle() || opacity > 100 {
             return false;
         }
@@ -1134,7 +1153,7 @@ impl PaintRenderer {
             return false;
         }
         layer.opacity = opacity;
-        self.gpu.queue().write_buffer(
+        self.queue.write_buffer(
             &layer.settings_buffer,
             0,
             bytemuck::bytes_of(&LayerSettingsUniform {
@@ -1146,7 +1165,7 @@ impl PaintRenderer {
         true
     }
 
-    pub(crate) fn commit_layer_opacity(&mut self, id: LayerId, before: u8, after: u8) -> bool {
+    pub fn commit_layer_opacity(&mut self, id: LayerId, before: u8, after: u8) -> bool {
         if !self.document_is_idle() || before == after || after > 100 {
             return false;
         }
@@ -1160,7 +1179,7 @@ impl PaintRenderer {
         true
     }
 
-    pub(crate) fn move_layer_relative(
+    pub fn move_layer_relative(
         &mut self,
         dragged: LayerId,
         target: LayerId,
@@ -1193,7 +1212,7 @@ impl PaintRenderer {
         true
     }
 
-    pub(crate) fn set_background_color(&mut self, color: [u8; 3]) {
+    pub fn set_background_color(&mut self, color: [u8; 3]) {
         let color = opaque_color(color);
         if self.document_is_idle() && self.background_color != color {
             self.background_color = color;
@@ -1201,7 +1220,7 @@ impl PaintRenderer {
         }
     }
 
-    pub(crate) fn commit_background_color(&mut self, before: [u8; 3], after: [u8; 3]) {
+    pub fn commit_background_color(&mut self, before: [u8; 3], after: [u8; 3]) {
         if !self.document_is_idle() {
             return;
         }
@@ -1214,7 +1233,7 @@ impl PaintRenderer {
         self.history.record_background_color(before, after);
     }
 
-    pub(crate) fn add_layer(&mut self) -> bool {
+    pub fn add_layer(&mut self) -> bool {
         if self.active_stroke.is_some()
             || self.history.stroke_active()
             || self.stamp_queue.has_pending()
@@ -1229,18 +1248,17 @@ impl PaintRenderer {
         self.next_layer_number += 1;
         let resource_id = self.allocate_layer_resource_id();
         let layer = self.resources.create_paint_layer(
-            self.gpu.device(),
+            &self.device,
             self.document_size,
             id,
             resource_id,
             LayerProperties::new(name),
         );
-        let mut encoder =
-            self.gpu
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("new layer clear encoder"),
-                });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("new layer clear encoder"),
+            });
         {
             let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("new layer clear pass"),
@@ -1269,11 +1287,11 @@ impl PaintRenderer {
         );
         self.mark_metadata_changed();
         self.layer_versions.insert(id, self.document_generation);
-        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.queue.submit(std::iter::once(encoder.finish()));
         true
     }
 
-    pub(crate) fn duplicate_selected_layer(&mut self) -> bool {
+    pub fn duplicate_selected_layer(&mut self) -> bool {
         if !self.document_is_idle() {
             return false;
         }
@@ -1292,18 +1310,17 @@ impl PaintRenderer {
             clipped: source.clipped,
         };
         let layer = self.resources.create_paint_layer(
-            self.gpu.device(),
+            &self.device,
             self.document_size,
             id,
             resource_id,
             properties,
         );
-        let mut encoder =
-            self.gpu
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("duplicate layer encoder"),
-                });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("duplicate layer encoder"),
+            });
         encoder.copy_texture_to_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &source.texture,
@@ -1334,11 +1351,11 @@ impl PaintRenderer {
         );
         self.mark_metadata_changed();
         self.layer_versions.insert(id, self.document_generation);
-        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.queue.submit(std::iter::once(encoder.finish()));
         true
     }
 
-    pub(crate) fn can_merge_layer_down(&self, id: LayerId) -> bool {
+    fn can_merge_layer_down(&self, id: LayerId) -> bool {
         self.document_is_idle()
             && self
                 .layers
@@ -1357,7 +1374,7 @@ impl PaintRenderer {
                 })
     }
 
-    pub(crate) fn merge_layer_down(&mut self, id: LayerId) -> bool {
+    pub fn merge_layer_down(&mut self, id: LayerId) -> bool {
         if !self.can_merge_layer_down(id) {
             return false;
         }
@@ -1373,7 +1390,7 @@ impl PaintRenderer {
         let selection_before = self.selection;
         let resource_id = self.allocate_layer_resource_id();
         let merged = self.resources.create_paint_layer(
-            self.gpu.device(),
+            &self.device,
             self.document_size,
             lower_id,
             resource_id,
@@ -1384,14 +1401,13 @@ impl PaintRenderer {
         let lower = self.layers.remove(lower_index);
         let clipped_bind_group = upper.clipped.then(|| {
             self.resources
-                .create_clipped_layer_bind_group(self.gpu.device(), &upper, &lower)
+                .create_clipped_layer_bind_group(&self.device, &upper, &lower)
         });
-        let mut encoder =
-            self.gpu
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("layer merge encoder"),
-                });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("layer merge encoder"),
+            });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("layer merge pass"),
@@ -1420,7 +1436,7 @@ impl PaintRenderer {
             }
             pass.draw(0..3, 0..1);
         }
-        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.queue.submit(std::iter::once(encoder.finish()));
 
         self.layers.insert(lower_index, merged);
         self.selection = lower_id;
@@ -1438,7 +1454,7 @@ impl PaintRenderer {
         true
     }
 
-    pub(crate) fn can_delete_selected_layer(&self) -> bool {
+    fn can_delete_selected_layer(&self) -> bool {
         if self.layers.len() == 1 {
             return self.document_is_idle();
         }
@@ -1447,7 +1463,7 @@ impl PaintRenderer {
             && self.document_is_idle()
     }
 
-    pub(crate) fn delete_selected_layer(&mut self) -> bool {
+    pub fn delete_selected_layer(&mut self) -> bool {
         if self.layers.len() == 1 {
             return self.clear_selected_layer();
         }
@@ -1475,7 +1491,7 @@ impl PaintRenderer {
         true
     }
 
-    pub(crate) fn clear_selected_layer(&mut self) -> bool {
+    pub fn clear_selected_layer(&mut self) -> bool {
         if !self.document_is_idle() {
             return false;
         }
@@ -1486,12 +1502,11 @@ impl PaintRenderer {
         if !self.history.begin_stroke(layer_id) {
             return false;
         }
-        let mut encoder =
-            self.gpu
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("clear layer encoder"),
-                });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("clear layer encoder"),
+            });
         self.history.ensure_layer_synced(
             &mut encoder,
             layer_id,
@@ -1523,13 +1538,13 @@ impl PaintRenderer {
             height: self.document_size[1],
         };
         self.history.commit_stroke(
-            self.gpu.device(),
+            &self.device,
             &mut encoder,
             layer_id,
             &self.layers[layer_index].texture,
             full_rect,
         );
-        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.queue.submit(std::iter::once(encoder.finish()));
         self.mark_layer_changed(layer_id);
         true
     }
@@ -1565,8 +1580,8 @@ impl PaintRenderer {
                 )
             });
             self.resources.prepare_stroke_preview(
-                self.gpu.device(),
-                self.gpu.queue(),
+                &self.device,
+                &self.queue,
                 &self.layers[layer_index].view,
                 &self.layers[layer_index].settings_buffer,
                 clipping_base,
@@ -1575,12 +1590,11 @@ impl PaintRenderer {
         }
         let needs_history_sync = self.history.layer_needs_sync(layer_id);
         if needs_history_sync || tool == PaintTool::Smudge {
-            let mut encoder =
-                self.gpu
-                    .device()
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("stroke setup encoder"),
-                    });
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("stroke setup encoder"),
+                });
             if needs_history_sync {
                 self.history.ensure_layer_synced(
                     &mut encoder,
@@ -1611,7 +1625,7 @@ impl PaintRenderer {
                     },
                 );
             }
-            self.gpu.queue().submit(std::iter::once(encoder.finish()));
+            self.queue.submit(std::iter::once(encoder.finish()));
         }
         self.stamp_queue
             .begin_stroke(active_stroke.stamp_point(origin));
@@ -1629,12 +1643,11 @@ impl PaintRenderer {
             return;
         };
 
-        let mut encoder =
-            self.gpu
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("history commit encoder"),
-                });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("history commit encoder"),
+            });
         let layer_index = self
             .layers
             .iter()
@@ -1689,13 +1702,13 @@ impl PaintRenderer {
             pass.draw(0..3, 0..1);
         }
         self.history.commit_stroke(
-            self.gpu.device(),
+            &self.device,
             &mut encoder,
             active_stroke.layer_id,
             &self.layers[layer_index].texture,
             rect,
         );
-        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.queue.submit(std::iter::once(encoder.finish()));
         self.mark_layer_changed(active_stroke.layer_id);
         self.clear_active_stroke_state();
     }
@@ -1731,8 +1744,7 @@ impl PaintRenderer {
                     .position(|layer| layer.id == layer_id)
                     .expect("undo layer must exist");
                 let mut encoder =
-                    self.gpu
-                        .device()
+                    self.device
                         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                             label: Some("undo encoder"),
                         });
@@ -1744,7 +1756,7 @@ impl PaintRenderer {
                 );
                 self.history
                     .undo_stroke(&mut encoder, &self.layers[layer_index].texture);
-                self.gpu.queue().submit(std::iter::once(encoder.finish()));
+                self.queue.submit(std::iter::once(encoder.finish()));
                 self.mark_layer_changed(layer_id);
                 true
             }
@@ -1775,8 +1787,7 @@ impl PaintRenderer {
                     .position(|layer| layer.id == layer_id)
                     .expect("redo layer must exist");
                 let mut encoder =
-                    self.gpu
-                        .device()
+                    self.device
                         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                             label: Some("redo encoder"),
                         });
@@ -1788,7 +1799,7 @@ impl PaintRenderer {
                 );
                 self.history
                     .redo_stroke(&mut encoder, &self.layers[layer_index].texture);
-                self.gpu.queue().submit(std::iter::once(encoder.finish()));
+                self.queue.submit(std::iter::once(encoder.finish()));
                 self.mark_layer_changed(layer_id);
                 true
             }
@@ -1827,18 +1838,17 @@ impl PaintRenderer {
         )
     }
 
-    pub fn clear_selected_layer_and_history(&mut self) {
+    fn clear_selected_layer_and_history(&mut self) {
         if !self.document_is_idle() {
             return;
         }
         self.stamp_queue.clear();
         self.history.clear();
-        let mut encoder =
-            self.gpu
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("clear canvas encoder"),
-                });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("clear canvas encoder"),
+            });
         let layer_index = self
             .selected_layer_index()
             .expect("clear requires paint layer");
@@ -1871,16 +1881,8 @@ impl PaintRenderer {
                 height: self.document_size[1],
             },
         );
-        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        self.queue.submit(std::iter::once(encoder.finish()));
         self.mark_layer_changed(self.layers[layer_index].id);
-    }
-
-    pub fn acquire_frame(&self) -> wgpu::CurrentSurfaceTexture {
-        self.gpu.acquire_frame()
-    }
-
-    pub fn reconfigure_surface(&self) {
-        self.gpu.reconfigure_surface();
     }
 
     pub fn render_to_view(
@@ -2171,7 +2173,7 @@ impl PaintRenderer {
                 continue;
             };
             let bind_group = self.resources.create_clipped_layer_bind_group(
-                self.gpu.device(),
+                &self.device,
                 layer,
                 &self.layers[base_index],
             );
@@ -2213,14 +2215,13 @@ impl PaintRenderer {
 
     fn flush_all_stamps(&mut self) {
         while self.stamp_queue.has_pending() {
-            let mut encoder =
-                self.gpu
-                    .device()
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("stroke flush encoder"),
-                    });
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("stroke flush encoder"),
+                });
             self.flush_stamps(&mut encoder);
-            self.gpu.queue().submit(std::iter::once(encoder.finish()));
+            self.queue.submit(std::iter::once(encoder.finish()));
         }
     }
 
@@ -2241,8 +2242,7 @@ impl PaintRenderer {
                 stamp.scale_source_offset(active_stroke.opacity);
             }
         }
-        self.gpu
-            .queue()
+        self.queue
             .write_buffer(&self.resources.stamp_buffer, 0, bytemuck::cast_slice(&raw));
         let layer_index = self
             .layers
@@ -2351,8 +2351,8 @@ impl PaintRenderer {
             return;
         }
         self.resources
-            .resize_document(self.gpu.device(), self.gpu.queue(), size);
-        self.history = PaintHistory::new(self.gpu.device(), size);
+            .resize_document(&self.device, &self.queue, size);
+        self.history = PaintHistory::new(&self.device, size);
         self.document_size = size;
     }
 
@@ -2426,8 +2426,8 @@ impl PaintRenderer {
         self.clipping_bind_groups_dirty = true;
         if let StructureEffect::CanvasResized { size } = effect {
             self.resources
-                .resize_document(self.gpu.device(), self.gpu.queue(), size);
-            self.history.resize_mirror(self.gpu.device(), size);
+                .resize_document(&self.device, &self.queue, size);
+            self.history.resize_mirror(&self.device, size);
             self.document_size = size;
             self.fit_to_screen();
         }
@@ -2461,7 +2461,7 @@ impl PaintRenderer {
             }
         }
         for layer in &self.layers {
-            self.gpu.queue().write_buffer(
+            self.queue.write_buffer(
                 &layer.settings_buffer,
                 0,
                 bytemuck::bytes_of(&LayerSettingsUniform {
@@ -2485,7 +2485,7 @@ impl PaintRenderer {
         if self.last_view_uniform == Some(uniform) {
             return;
         }
-        self.gpu.queue().write_buffer(
+        self.queue.write_buffer(
             &self.resources.view_uniform_buffer,
             0,
             bytemuck::bytes_of(&uniform),
@@ -2497,7 +2497,7 @@ impl PaintRenderer {
         let half_size = self.brush_outline_half_size(cursor.diameter);
         let (axis_x, axis_y) = self.view.snapshot().document_axes_in_window();
         let surface_size = self.surface_size();
-        self.gpu.queue().write_buffer(
+        self.queue.write_buffer(
             &self.resources.cursor_buffer,
             0,
             bytemuck::bytes_of(&CursorRaw {
@@ -2621,7 +2621,28 @@ fn rgb8(color: [f32; 4]) -> [u8; 3] {
     [color[0], color[1], color[2]].map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8)
 }
 
-fn next_layer_number(layers: &[LayerManifest]) -> u64 {
+fn validate_brush_stamp(stamp: &image::RgbaImage, max_dimension: u32) -> Result<(), String> {
+    let (width, height) = stamp.dimensions();
+    if width == 0 || height == 0 {
+        return Err("brush stamp dimensions must be non-zero".to_owned());
+    }
+    if width > max_dimension || height > max_dimension {
+        return Err(format!(
+            "brush stamp width and height cannot exceed {max_dimension} pixels"
+        ));
+    }
+    Ok(())
+}
+
+/// Resolves a clipped layer to the nearest non-clipped layer below it.
+fn clipping_base_index(clipped: &[bool], layer_index: usize) -> Option<usize> {
+    if !clipped.get(layer_index).copied().unwrap_or(false) {
+        return None;
+    }
+    (0..layer_index).rev().find(|index| !clipped[*index])
+}
+
+fn next_layer_number(layers: &[LayerInfo]) -> u64 {
     layers
         .iter()
         .filter_map(|layer| layer.name.strip_prefix("Layer ")?.parse::<u64>().ok())
@@ -2772,24 +2793,42 @@ mod tests {
     #[test]
     fn persisted_layer_names_advance_the_default_number() {
         let layers = vec![
-            LayerManifest {
-                id: 1,
+            LayerInfo {
+                id: LayerId(1),
                 name: "Layer 4".to_owned(),
                 visible: true,
                 opacity: 100,
                 clipped: false,
-                file: "layers/1.png".to_owned(),
             },
-            LayerManifest {
-                id: 2,
+            LayerInfo {
+                id: LayerId(2),
                 name: "Reference".to_owned(),
                 visible: true,
                 opacity: 100,
                 clipped: false,
-                file: "layers/2.png".to_owned(),
             },
         ];
         assert_eq!(next_layer_number(&layers), 5);
+    }
+
+    #[test]
+    fn canvas_document_rejects_invalid_layer_metadata() {
+        let mut document = CanvasDocument {
+            size: [20, 30],
+            background: [255; 3],
+            selected_layer: LayerId(1),
+            layers: vec![LayerInfo {
+                id: LayerId(1),
+                name: "Paint".to_owned(),
+                visible: true,
+                opacity: 100,
+                clipped: false,
+            }],
+        };
+        assert!(document.validate().is_ok());
+
+        document.layers[0].opacity = 101;
+        assert!(document.validate().is_err());
     }
 
     #[test]
@@ -2893,6 +2932,13 @@ mod tests {
         assert!(constraints.validate([8193, 100]).is_err());
         assert!(constraints.validate([8192, 8192]).is_err());
         assert!(constraints.validate([8192, 4096]).is_ok());
+    }
+
+    #[test]
+    fn brush_stamps_must_fit_gpu_limits() {
+        assert!(validate_brush_stamp(&image::RgbaImage::new(1, 1), 8).is_ok());
+        assert!(validate_brush_stamp(&image::RgbaImage::new(0, 1), 8).is_err());
+        assert!(validate_brush_stamp(&image::RgbaImage::new(9, 1), 8).is_err());
     }
 
     #[test]

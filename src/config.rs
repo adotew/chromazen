@@ -517,25 +517,15 @@ mod tests {
         assert_eq!(sketch.preset.pressure.opacity_gamma, 4.0);
         assert_eq!(rounded.preset.spacing.minimum, 0.5);
         assert_eq!(rectangle.preset.spacing.minimum, 0.5);
+        assert_eq!(rounded.stamp_image.dimensions(), (128, 128));
+        assert_eq!(rectangle.stamp_image.dimensions(), (192, 96));
+        assert_eq!(bristle.stamp_image.dimensions(), (982, 561));
+        assert_eq!(rounded.stamp_image.get_pixel(0, 0)[3], 0);
+        assert_eq!(rectangle.stamp_image.get_pixel(0, 0)[3], 255);
         assert_eq!(
-            rounded.stamp_image.as_ref().unwrap().dimensions(),
-            (128, 128)
+            charcoal.stamp_image.dimensions(),
+            sketch.stamp_image.dimensions()
         );
-        assert_eq!(
-            rectangle.stamp_image.as_ref().unwrap().dimensions(),
-            (192, 96)
-        );
-        assert_eq!(
-            bristle.stamp_image.as_ref().unwrap().dimensions(),
-            (982, 561)
-        );
-        assert_eq!(rounded.stamp_image.as_ref().unwrap().get_pixel(0, 0)[3], 0);
-        assert_eq!(
-            rectangle.stamp_image.as_ref().unwrap().get_pixel(0, 0)[3],
-            255
-        );
-        assert!(charcoal.stamp_image.is_none());
-        assert!(sketch.stamp_image.is_none());
         assert_eq!(
             store
                 .discover_brushes()
@@ -598,7 +588,7 @@ mod tests {
         let brush = store.load_brush("pencil").expect("user brush");
 
         assert_eq!(brush.preset.name, "Pencil");
-        assert_eq!(brush.stamp_image.expect("stamp").dimensions(), (2, 3));
+        assert_eq!(brush.stamp_image.dimensions(), (2, 3));
     }
 
     #[test]

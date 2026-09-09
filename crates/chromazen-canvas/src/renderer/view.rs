@@ -3,8 +3,8 @@ const MAX_ZOOM: f32 = 32.0;
 const TAU: f32 = std::f32::consts::TAU;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct PaintViewSnapshot {
-    pub(crate) zoom: f32,
+pub struct PaintViewSnapshot {
+    pub zoom: f32,
     pub(super) center: [f32; 2],
     pub(super) workspace_center: [f32; 2],
     pub(super) viewport_center: [f32; 2],
@@ -13,7 +13,7 @@ pub(crate) struct PaintViewSnapshot {
 }
 
 impl PaintViewSnapshot {
-    pub(crate) fn document_to_window(self, point: [f32; 2]) -> [f32; 2] {
+    pub fn document_to_window(self, point: [f32; 2]) -> [f32; 2] {
         let delta = [
             (point[0] - self.center[0]) * self.zoom,
             (point[1] - self.center[1]) * self.zoom,
@@ -25,7 +25,7 @@ impl PaintViewSnapshot {
         ]
     }
 
-    pub(crate) fn window_to_document(self, point: [f32; 2]) -> [f32; 2] {
+    pub fn window_to_document(self, point: [f32; 2]) -> [f32; 2] {
         let delta = [
             point[0] - self.viewport_center[0],
             point[1] - self.viewport_center[1],
@@ -37,34 +37,34 @@ impl PaintViewSnapshot {
         ]
     }
 
-    pub(crate) fn window_delta_to_document(self, delta: [f32; 2]) -> [f32; 2] {
+    pub fn window_delta_to_document(self, delta: [f32; 2]) -> [f32; 2] {
         let delta = inverse_orient(delta, self.rotation, self.flip);
         [delta[0] / self.zoom, delta[1] / self.zoom]
     }
 
-    pub(crate) fn workspace_to_window(self, point: [f32; 2]) -> [f32; 2] {
+    pub fn workspace_to_window(self, point: [f32; 2]) -> [f32; 2] {
         [
             self.viewport_center[0] + (point[0] - self.workspace_center[0]) * self.zoom,
             self.viewport_center[1] + (point[1] - self.workspace_center[1]) * self.zoom,
         ]
     }
 
-    pub(crate) fn window_to_workspace(self, point: [f32; 2]) -> [f32; 2] {
+    pub fn window_to_workspace(self, point: [f32; 2]) -> [f32; 2] {
         [
             self.workspace_center[0] + (point[0] - self.viewport_center[0]) / self.zoom,
             self.workspace_center[1] + (point[1] - self.viewport_center[1]) / self.zoom,
         ]
     }
 
-    pub(crate) fn window_delta_to_workspace(self, delta: [f32; 2]) -> [f32; 2] {
+    pub fn window_delta_to_workspace(self, delta: [f32; 2]) -> [f32; 2] {
         [delta[0] / self.zoom, delta[1] / self.zoom]
     }
 
-    pub(crate) fn rotation(self) -> f32 {
+    pub fn rotation(self) -> f32 {
         self.rotation
     }
 
-    pub(crate) fn document_axes_in_window(self) -> ([f32; 2], [f32; 2]) {
+    pub fn document_axes_in_window(self) -> ([f32; 2], [f32; 2]) {
         (
             orient([1.0, 0.0], self.rotation, self.flip),
             orient([0.0, 1.0], self.rotation, self.flip),

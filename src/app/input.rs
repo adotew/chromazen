@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use chromazen_canvas::Canvas;
 use winit::{
     dpi::PhysicalPosition,
     event::{DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent},
@@ -9,7 +10,6 @@ use winit::{
 use crate::{
     paint::{BrushSettings, PaintTool, StrokePoint, StrokePositionFilter, StrokeSmoother},
     platform::{PenEvent, PressureStateHandle},
-    renderer::PaintRenderer,
 };
 
 use super::command::{AppCommand, EditorCommand, NavigationCommand, UiCommand};
@@ -272,7 +272,7 @@ impl PaintInputController {
     pub fn handle_event(
         &mut self,
         event: &WindowEvent,
-        paint: &mut PaintRenderer,
+        paint: &mut Canvas,
         brush: &mut BrushSettings,
         brush_size_range: std::ops::RangeInclusive<f32>,
         pressure_state: &PressureStateHandle,
@@ -501,7 +501,7 @@ impl PaintInputController {
 
     pub fn finish_document_interaction(
         &mut self,
-        paint: &mut PaintRenderer,
+        paint: &mut Canvas,
         brush: BrushSettings,
     ) -> bool {
         self.resize_origin = None;
@@ -515,7 +515,7 @@ impl PaintInputController {
 
     fn sample_color_at(
         &mut self,
-        paint: &PaintRenderer,
+        paint: &Canvas,
         brush: &mut BrushSettings,
         window_point: [f32; 2],
         sampled_at: Instant,
@@ -533,7 +533,7 @@ impl PaintInputController {
         changed
     }
 
-    fn finish_color_sampling(&mut self, paint: &PaintRenderer, brush: &mut BrushSettings) -> bool {
+    fn finish_color_sampling(&mut self, paint: &Canvas, brush: &mut BrushSettings) -> bool {
         let last_point = self
             .eyedropper_drag
             .as_ref()
@@ -574,7 +574,7 @@ impl PaintInputController {
 
     fn stroke_point_from_window(
         &self,
-        paint: &PaintRenderer,
+        paint: &Canvas,
         window_point: [f32; 2],
         brush: BrushSettings,
         pressure_state: &PressureStateHandle,
@@ -588,7 +588,7 @@ impl PaintInputController {
 
     fn queue_smoothed_points(
         &mut self,
-        paint: &mut PaintRenderer,
+        paint: &mut Canvas,
         points: Vec<StrokePoint>,
         brush: BrushSettings,
     ) -> usize {
@@ -604,7 +604,7 @@ impl PaintInputController {
         queued
     }
 
-    fn end_stroke(&mut self, paint: &mut PaintRenderer, brush: BrushSettings) -> bool {
+    fn end_stroke(&mut self, paint: &mut Canvas, brush: BrushSettings) -> bool {
         let was_active = self.is_drawing || self.is_panning;
         let queued = if self.is_drawing {
             let smoothed_points = if let Some(point) = self.last_raw_point {

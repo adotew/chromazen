@@ -231,10 +231,7 @@ mod tests {
         assert_eq!(loaded.preset.name, "Soft Ink");
         assert_eq!(loaded.preset.spacing.ratio, 0.12);
         assert_eq!(loaded.preset.size.default, 2.0);
-        assert_eq!(
-            loaded.stamp_image.expect("tip").get_pixel(1, 0).0,
-            [255, 255, 255, 255]
-        );
+        assert_eq!(loaded.stamp_image.get_pixel(1, 0).0, [255, 255, 255, 255]);
     }
 
     #[test]

@@ -5,11 +5,9 @@ use std::{
 };
 
 use atomic_write_file::AtomicWriteFile;
+use chromazen_canvas::Canvas;
 
-use crate::{
-    artwork::{CompositeLayer, encode_png, flatten_premultiplied_layers},
-    renderer::PaintRenderer,
-};
+use crate::artwork::{CompositeLayer, encode_png, flatten_premultiplied_layers};
 
 type WakeCallback = Arc<dyn Fn() + Send + Sync>;
 
@@ -40,11 +38,11 @@ impl ExportController {
         self.exporting
     }
 
-    pub(super) fn start(&mut self, path: PathBuf, paint: &PaintRenderer) -> Result<(), String> {
+    pub(super) fn start(&mut self, path: PathBuf, paint: &Canvas) -> Result<(), String> {
         if self.exporting {
             return Err("an artwork export is already in progress".to_owned());
         }
-        let document = paint.document_manifest();
+        let document = paint.document_snapshot();
         let readback = paint.begin_document_layer_readback()?;
         self.exporting = true;
 
@@ -57,7 +55,7 @@ impl ExportController {
                     || layers
                         .iter()
                         .zip(&document.layers)
-                        .any(|((id, _), metadata)| id.0 != metadata.id)
+                        .any(|((id, _), metadata)| id != &metadata.id)
                 {
                     return Err("exported layers do not match document metadata".to_owned());
                 }
