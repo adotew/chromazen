@@ -99,23 +99,14 @@ impl GuiLayer {
         );
         let toolbar_rect =
             egui::Rect::from_min_size(rect.min, egui::vec2(TOOL_RAIL_THICKNESS, toolbar_height));
-        paint_rounded_panel(
-            ui,
-            toolbar_rect,
-            egui::CornerRadius {
-                nw: 16,
-                ne: 0,
-                sw: 16,
-                se: 0,
-            },
-        );
-        let body = egui::Rect::from_min_max(
-            egui::pos2(toolbar_rect.left(), toolbar_rect.top() + VERTICAL_PADDING),
-            egui::pos2(
-                toolbar_rect.right(),
-                toolbar_rect.bottom() - VERTICAL_PADDING,
-            ),
-        );
+        let corner_radius = egui::CornerRadius {
+            nw: 16,
+            ne: 0,
+            sw: 16,
+            se: 0,
+        };
+        paint_rounded_panel(ui, toolbar_rect, corner_radius);
+        let body = toolbar_rect.shrink2(egui::vec2(0.0, VERTICAL_PADDING));
 
         let mut selected_tool = None;
         for (index, paint_tool) in tools.into_iter().enumerate() {
@@ -173,21 +164,9 @@ impl GuiLayer {
         }
         self.brush_slider_active = false;
         self.brush_slider_focus = None;
-        let controls_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.left(), toolbar_rect.bottom() + controls_gap),
-            rect.right_bottom(),
-        );
+        let controls_rect = rect.with_min_y(toolbar_rect.bottom() + controls_gap);
         if controls_height > 0.0 {
-            paint_rounded_panel(
-                ui,
-                controls_rect,
-                egui::CornerRadius {
-                    nw: 16,
-                    ne: 0,
-                    sw: 16,
-                    se: 0,
-                },
-            );
+            paint_rounded_panel(ui, controls_rect, corner_radius);
             let mut controls_ui = ui.new_child(
                 egui::UiBuilder::new()
                     .id_salt("brush controls")

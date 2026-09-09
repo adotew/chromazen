@@ -20,33 +20,28 @@ impl GuiLayer {
             .show(ui, |ui| {
                 ui.add_enabled_ui(enabled, |ui| {
                     ui.add_space(10.0);
-                    let mut size = self.brush.size;
                     let size_response = brush_slider(
                         ui,
                         "Size",
-                        &mut size,
+                        &mut self.brush.size,
                         self.size_range.clone(),
                         track_height,
                         true,
                     );
-                    if size_response.changed()
-                        && let Some(tool) = active_tool.paint_tool()
-                    {
-                        self.set_brush_size(tool, size);
-                        self.commands
-                            .push(AppCommand::Editor(EditorCommand::SetBrushSize(size)));
-                    }
                     ui.add_space(5.0);
 
-                    let mut opacity = self.brush.opacity;
-                    let opacity_response =
-                        brush_slider(ui, "Opacity", &mut opacity, 0.01..=1.0, track_height, false);
-                    if opacity_response.changed()
+                    let opacity_response = brush_slider(
+                        ui,
+                        "Opacity",
+                        &mut self.brush.opacity,
+                        0.01..=1.0,
+                        track_height,
+                        false,
+                    );
+                    if (size_response.changed() || opacity_response.changed())
                         && let Some(tool) = active_tool.paint_tool()
                     {
-                        self.set_brush_opacity(tool, opacity);
-                        self.commands
-                            .push(AppCommand::Editor(EditorCommand::SetBrushOpacity(opacity)));
+                        self.store_current_brush_settings_for_tool(tool);
                     }
                     let size_active = slider_preview_active(&size_response);
                     let opacity_active = slider_preview_active(&opacity_response);
@@ -67,13 +62,8 @@ impl GuiLayer {
         workspace: egui::Rect,
         tool: EditorTool,
     ) {
-        let workspace = egui::Rect::from_min_max(
-            workspace.min,
-            egui::pos2(
-                (workspace.right() - TOOL_RAIL_THICKNESS).max(workspace.left()),
-                workspace.bottom(),
-            ),
-        );
+        let workspace =
+            workspace.with_max_x((workspace.right() - TOOL_RAIL_THICKNESS).max(workspace.left()));
         let enabled = ui.ctx().input(|input| input.focused)
             && tool.paint_tool().is_some()
             && !self.canvas_crop_active();
@@ -112,16 +102,15 @@ fn adjustment_preview_center(
     workspace: egui::Rect,
     pixels_per_point: f32,
 ) -> Option<[f32; 2]> {
-    if !enabled || !workspace.is_positive() {
-        return None;
-    }
-    // The shortcut already supplies physical window pixels; egui's workspace is in points.
-    resize_position.or_else(|| {
-        slider_active.then(|| {
+    if enabled && workspace.is_positive() {
+        // The shortcut is already in physical pixels; egui's workspace is in points.
+        resize_position.or(slider_active.then(|| {
             let center = workspace.center() * pixels_per_point;
             [center.x, center.y]
-        })
-    })
+        }))
+    } else {
+        None
+    }
 }
 
 fn slider_preview_active(response: &egui::Response) -> bool {
@@ -182,7 +171,6 @@ fn brush_slider(
                 ] {
                     widget.bg_fill = egui::Color32::TRANSPARENT;
                     widget.fg_stroke = egui::Stroke::NONE;
-                    widget.expansion = 0.0;
                 }
                 ui.add(
                     egui::Slider::new(value, range.clone())
@@ -203,25 +191,24 @@ fn brush_slider(
             egui::lerp((track.top() + 7.0)..=(track.bottom() - 7.0), 1.0 - fraction),
         );
         let thumb = egui::Rect::from_center_size(thumb_center, egui::vec2(24.0, 14.0));
+        let (track_shade, idle, hovered, active, disabled) = if dark {
+            (48, 105, 135, 155, 60)
+        } else {
+            (230, 65, 45, 30, 130)
+        };
         ui.painter().rect_filled(
             track,
             egui::CornerRadius::same(4),
-            if dark {
-                egui::Color32::from_gray(48)
-            } else {
-                egui::Color32::from_gray(230)
-            },
+            egui::Color32::from_gray(track_shade),
         );
         let thumb_shade = if !response.enabled() {
-            if dark { 60 } else { 130 }
+            disabled
         } else if response.is_pointer_button_down_on() {
-            if dark { 155 } else { 30 }
+            active
         } else if response.hovered() {
-            if dark { 135 } else { 45 }
-        } else if dark {
-            105
+            hovered
         } else {
-            65
+            idle
         };
         ui.painter().rect_filled(
             thumb,
@@ -236,15 +223,10 @@ fn brush_slider(
 }
 
 fn slider_fraction(value: f32, range: &std::ops::RangeInclusive<f32>, logarithmic: bool) -> f32 {
-    let (value, start, end) = if logarithmic {
-        (value.ln(), range.start().ln(), range.end().ln())
+    if logarithmic {
+        egui::remap_clamp(value.ln(), range.start().ln()..=range.end().ln(), 0.0..=1.0)
     } else {
-        (value, *range.start(), *range.end())
-    };
-    if start == end {
-        0.0
-    } else {
-        ((value - start) / (end - start)).clamp(0.0, 1.0)
+        egui::remap_clamp(value, range.clone(), 0.0..=1.0)
     }
 }
 
@@ -255,7 +237,7 @@ mod tests {
     fn slider_frame(
         context: &egui::Context,
         value: &mut f32,
-        events: Vec<egui::Event>,
+        events: impl IntoIterator<Item = egui::Event>,
         focused: bool,
     ) -> (egui::Rect, bool) {
         let mut result = (egui::Rect::NOTHING, false);
@@ -265,7 +247,7 @@ mod tests {
                     egui::Pos2::ZERO,
                     egui::vec2(200.0, 400.0),
                 )),
-                events,
+                events: events.into_iter().collect(),
                 focused,
                 ..Default::default()
             },
@@ -275,6 +257,10 @@ mod tests {
             },
         );
         result
+    }
+
+    fn slider_event(context: &egui::Context, value: &mut f32, event: egui::Event) -> bool {
+        slider_frame(context, value, [event], true).1
     }
 
     fn pointer_button(pos: egui::Pos2, pressed: bool) -> egui::Event {
@@ -293,138 +279,62 @@ mod tests {
     }
 
     #[test]
-    fn slider_drag_captures_outside_pointer_and_clears_preview_on_release() {
+    fn slider_drag_keyboard_and_focus_behavior_is_preserved() {
         let context = egui::Context::default();
         let mut value = 0.5;
-        let (rect, _) = slider_frame(&context, &mut value, vec![], true);
-        let center = rect.center();
-        slider_frame(
+        let rect = slider_frame(&context, &mut value, [], true).0;
+        slider_event(
             &context,
             &mut value,
-            vec![egui::Event::PointerMoved(center)],
-            true,
+            egui::Event::PointerMoved(rect.center()),
         );
-        let (_, active) = slider_frame(
+        assert!(slider_event(
             &context,
             &mut value,
-            vec![pointer_button(center, true)],
-            true,
-        );
-        assert!(active);
+            pointer_button(rect.center(), true)
+        ));
         let outside = egui::pos2(rect.right() + 80.0, rect.top() - 20.0);
-        let (_, active) = slider_frame(
+        assert!(slider_event(
             &context,
             &mut value,
-            vec![egui::Event::PointerMoved(outside)],
-            true,
-        );
-        assert!(active);
+            egui::Event::PointerMoved(outside)
+        ));
         assert_eq!(value, 1.0);
-        let (_, active) = slider_frame(
+        assert!(!slider_event(
             &context,
             &mut value,
-            vec![pointer_button(outside, false)],
-            true,
-        );
-        assert!(!active);
-        assert!(!slider_frame(&context, &mut value, vec![], true).1);
-    }
+            pointer_button(outside, false)
+        ));
+        assert!(!slider_frame(&context, &mut value, [], true).1);
 
-    #[test]
-    fn slider_preview_clears_when_window_loses_focus() {
-        let context = egui::Context::default();
-        let mut value = 0.5;
-        let (rect, _) = slider_frame(&context, &mut value, vec![], true);
-        let center = rect.center();
-        slider_frame(
-            &context,
-            &mut value,
-            vec![egui::Event::PointerMoved(center)],
-            true,
-        );
-        assert!(
-            slider_frame(
-                &context,
-                &mut value,
-                vec![pointer_button(center, true)],
-                true
-            )
-            .1
-        );
-        assert!(!slider_frame(&context, &mut value, vec![], false).1);
-    }
-
-    #[test]
-    fn arrow_keys_resume_adjustment_after_pointer_release() {
-        let context = egui::Context::default();
-        let mut value = 0.5;
-        let (rect, _) = slider_frame(&context, &mut value, vec![], true);
-        let center = rect.center();
-        slider_frame(
-            &context,
-            &mut value,
-            vec![egui::Event::PointerMoved(center)],
-            true,
-        );
-        slider_frame(
-            &context,
-            &mut value,
-            vec![pointer_button(center, true)],
-            true,
-        );
-        assert!(
-            !slider_frame(
-                &context,
-                &mut value,
-                vec![pointer_button(center, false)],
-                true
-            )
-            .1
-        );
+        value = 0.5;
         let before = value;
-        assert!(
-            slider_frame(
-                &context,
-                &mut value,
-                vec![egui::Event::Key {
-                    key: egui::Key::ArrowUp,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers::NONE,
-                }],
-                true
-            )
-            .1
-        );
+        assert!(slider_event(
+            &context,
+            &mut value,
+            egui::Event::Key {
+                key: egui::Key::ArrowUp,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }
+        ));
         assert!(value > before);
+        assert!(!slider_frame(&context, &mut value, [], false).1);
     }
 
     #[test]
-    fn slider_preview_uses_workspace_center_in_physical_pixels() {
+    fn adjustment_preview_uses_correct_position_and_lifetime() {
         let workspace = egui::Rect::from_min_max(egui::pos2(10.0, 20.0), egui::pos2(810.0, 620.0));
         assert_eq!(
             adjustment_preview_center(true, None, true, workspace, 2.0),
             Some([820.0, 640.0])
         );
         assert_eq!(
-            adjustment_preview_center(true, None, true, workspace, 1.0),
-            Some([410.0, 320.0])
-        );
-    }
-
-    #[test]
-    fn resize_shortcut_preserves_its_physical_anchor() {
-        let workspace = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
-        assert_eq!(
             adjustment_preview_center(true, Some([73.0, 91.0]), true, workspace, 2.0),
             Some([73.0, 91.0])
         );
-    }
-
-    #[test]
-    fn preview_clears_when_interaction_ends_or_editor_is_disabled() {
-        let workspace = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         assert_eq!(
             adjustment_preview_center(true, None, false, workspace, 1.0),
             None

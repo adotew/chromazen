@@ -227,18 +227,6 @@ impl App {
             EditorCommand::SetBrushColor(color) => {
                 self.autosave.set_brush_color(color);
             }
-            EditorCommand::SetBrushSize(size) => {
-                if let (Some(gui), Some(tool)) = (self.gui.as_mut(), self.input.tool().paint_tool())
-                {
-                    gui.set_brush_size(tool, size);
-                }
-            }
-            EditorCommand::SetBrushOpacity(opacity) => {
-                if let (Some(gui), Some(tool)) = (self.gui.as_mut(), self.input.tool().paint_tool())
-                {
-                    gui.set_brush_opacity(tool, opacity);
-                }
-            }
             EditorCommand::SetBackgroundColor(color) => {
                 if let Some(paint) = self.paint.as_mut() {
                     paint.set_background_color(color);

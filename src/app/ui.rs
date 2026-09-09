@@ -517,20 +517,6 @@ impl GuiLayer {
         self.tool_opacities[index] = self.brush.opacity;
     }
 
-    pub(crate) fn set_brush_size(&mut self, tool: PaintTool, size: f32) {
-        if size.is_finite() {
-            self.brush.size = size.clamp(*self.size_range.start(), *self.size_range.end());
-            self.store_current_brush_settings_for_tool(tool);
-        }
-    }
-
-    pub(crate) fn set_brush_opacity(&mut self, tool: PaintTool, opacity: f32) {
-        if opacity.is_finite() {
-            self.brush.opacity = opacity.clamp(0.01, 1.0);
-            self.store_current_brush_settings_for_tool(tool);
-        }
-    }
-
     pub(crate) fn brush_adjustment_preview(&self) -> Option<crate::renderer::BrushCursor> {
         self.brush_adjustment_preview
     }

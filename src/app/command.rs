@@ -75,8 +75,6 @@ pub(super) enum EditorCommand {
     ToggleReferenceLocked(ReferenceId),
     DeleteReference(ReferenceId),
     SetBrushColor([u8; 4]),
-    SetBrushSize(f32),
-    SetBrushOpacity(f32),
     SetBackgroundColor([u8; 3]),
     CommitBackgroundColor {
         before: [u8; 3],
