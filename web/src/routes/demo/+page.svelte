@@ -10,9 +10,12 @@
   let activePointer: number | undefined
   let strokeStartedAt = 0
   let lastPressure = 1
+  type Tool = 'brush' | 'eraser' | 'smudge'
+  const toolIds: Record<Tool, number> = { brush: 0, eraser: 1, smudge: 2 }
+
   let loading = true
   let error = ''
-  let erasing = false
+  let tool: Tool = 'brush'
   let brushSize = 48
   let color = '#151513'
 
@@ -145,9 +148,9 @@
     requestFrame()
   }
 
-  function selectTool(eraser: boolean) {
-    erasing = eraser
-    renderer?.setEraser(eraser)
+  function selectTool(next: Tool) {
+    tool = next
+    renderer?.setTool(toolIds[next])
     requestFrame()
   }
 
@@ -184,12 +187,19 @@
 
     <div class="toolbar" aria-label="Painting tools">
       <div class="tool-group">
-        <button class:active={!erasing} type="button" onclick={() => selectTool(false)}>Brush</button>
-        <button class:active={erasing} type="button" onclick={() => selectTool(true)}>Eraser</button>
+        <button class:active={tool === 'brush'} type="button" onclick={() => selectTool('brush')}>
+          Brush
+        </button>
+        <button class:active={tool === 'eraser'} type="button" onclick={() => selectTool('eraser')}>
+          Eraser
+        </button>
+        <button class:active={tool === 'smudge'} type="button" onclick={() => selectTool('smudge')}>
+          Smudge
+        </button>
       </div>
 
       <label class="color-control" aria-label="Brush color">
-        <input type="color" bind:value={color} oninput={applyColor} disabled={erasing} />
+        <input type="color" bind:value={color} oninput={applyColor} disabled={tool !== 'brush'} />
       </label>
 
       <label class="size-control">

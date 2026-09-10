@@ -135,7 +135,7 @@ impl WebCanvas {
         self.last_point = Some(point);
         self.last_raw_point = Some(point);
         self.drawing = true;
-        self.canvas.queue_stamp(point)
+        self.tool == PaintTool::Smudge || self.canvas.queue_stamp(point)
     }
 
     #[wasm_bindgen(js_name = pushStrokeSamples)]
@@ -179,14 +179,16 @@ impl WebCanvas {
         changed
     }
 
-    #[wasm_bindgen(js_name = setEraser)]
-    pub fn set_eraser(&mut self, enabled: bool) {
+    #[wasm_bindgen(js_name = setTool)]
+    pub fn set_tool(&mut self, tool: u8) -> Result<(), JsValue> {
         self.finish_stroke();
-        self.tool = if enabled {
-            PaintTool::Eraser
-        } else {
-            PaintTool::Brush
+        self.tool = match tool {
+            0 => PaintTool::Brush,
+            1 => PaintTool::Eraser,
+            2 => PaintTool::Smudge,
+            _ => return Err(JsValue::from_str("unknown paint tool")),
         };
+        Ok(())
     }
 
     #[wasm_bindgen(js_name = setBrushSize)]
