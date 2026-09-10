@@ -223,9 +223,9 @@
     renderer?.setBrushSize(brushSize)
   }
 
-  function applyColor() {
+  function applyColor(next = color) {
     if (!renderer) return
-    const value = Number.parseInt(color.slice(1), 16)
+    const value = Number.parseInt(next.slice(1), 16)
     renderer.setColor((value >> 16) & 255, (value >> 8) & 255, value & 255)
   }
 
@@ -287,7 +287,12 @@
       </div>
 
       <label class="color-control" aria-label="Brush color">
-        <input type="color" bind:value={color} oninput={applyColor} disabled={tool !== 'brush'} />
+        <input
+          type="color"
+          bind:value={color}
+          oninput={(event) => applyColor(event.currentTarget.value)}
+          disabled={tool !== 'brush'}
+        />
       </label>
     </div>
 
@@ -511,12 +516,24 @@
   }
 
   input[type='color'] {
-    width: 2.8rem;
-    height: 2.8rem;
+    width: 2rem;
+    height: 2rem;
     padding: 0;
     border: 0;
+    border-radius: 50%;
+    appearance: none;
     background: none;
     cursor: pointer;
+  }
+
+  input[type='color']::-webkit-color-swatch-wrapper {
+    padding: 0;
+  }
+
+  input[type='color']::-webkit-color-swatch,
+  input[type='color']::-moz-color-swatch {
+    border: 0;
+    border-radius: 50%;
   }
 
   .size-control {
