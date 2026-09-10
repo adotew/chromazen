@@ -291,7 +291,6 @@
           type="color"
           bind:value={color}
           oninput={(event) => applyColor(event.currentTarget.value)}
-          disabled={tool === 'smudge'}
         />
       </label>
     </div>
@@ -528,10 +527,6 @@
     border: 1px solid rgb(255 255 255 / 0.18);
     border-radius: 50%;
     place-items: center;
-  }
-
-  .color-control:has(input:disabled) {
-    opacity: 0.35;
   }
 
   input[type='color'] {
