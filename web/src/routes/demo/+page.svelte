@@ -7,7 +7,11 @@
   import { onMount } from 'svelte'
   import type { WebCanvas } from '$lib/wasm/chromazen_web'
 
-  type Renderer = WebCanvas & { setTool(tool: number): void }
+  type Renderer = WebCanvas & {
+    setTool(tool: number): void
+    panBy(deltaX: number, deltaY: number): boolean
+    zoomAt(factor: number, x: number, y: number): boolean
+  }
 
   let canvasElement: HTMLCanvasElement
   let workspace: HTMLElement
@@ -15,6 +19,9 @@
   let resizeObserver: ResizeObserver | undefined
   let frame = 0
   let activePointer: number | undefined
+  let panning = false
+  let spacePressed = false
+  let lastPanPoint = [0, 0]
   let strokeStartedAt = 0
   let lastPressure = 1
   type Tool = 'brush' | 'eraser' | 'smudge'
@@ -118,30 +125,47 @@
   }
 
   function pointerDown(event: PointerEvent) {
-    if (!renderer || activePointer !== undefined || !event.isPrimary || event.button !== 0) return
+    if (!renderer || activePointer !== undefined || !event.isPrimary) return
+    const startsPan = event.button === 1 || event.button === 2 || (event.button === 0 && spacePressed)
+    if (!startsPan && event.button !== 0) return
+
     event.preventDefault()
     activePointer = event.pointerId
-    strokeStartedAt = event.timeStamp
-    lastPressure = event.pointerType === 'mouse' ? 1 : event.pressure || 0.5
+    panning = startsPan
     canvasElement.setPointerCapture(event.pointerId)
-    const sample = point(event)
-    renderer.beginStroke(sample.x, sample.y, sample.pressure, sample.time)
+    if (panning) {
+      lastPanPoint = [event.clientX, event.clientY]
+    } else {
+      strokeStartedAt = event.timeStamp
+      lastPressure = event.pointerType === 'mouse' ? 1 : event.pressure || 0.5
+      const sample = point(event)
+      renderer.beginStroke(sample.x, sample.y, sample.pressure, sample.time)
+    }
     requestFrame()
   }
 
   function pointerMove(event: PointerEvent) {
     if (!renderer || event.pointerId !== activePointer) return
     event.preventDefault()
-    renderer.pushStrokeSamples(samples(event))
-    requestFrame()
+    if (panning) {
+      const next = [event.clientX, event.clientY]
+      if (renderer.panBy(next[0] - lastPanPoint[0], next[1] - lastPanPoint[1])) requestFrame()
+      lastPanPoint = next
+    } else {
+      renderer.pushStrokeSamples(samples(event))
+      requestFrame()
+    }
   }
 
   function pointerUp(event: PointerEvent) {
     if (!renderer || event.pointerId !== activePointer) return
     event.preventDefault()
-    renderer.pushStrokeSamples(samples(event))
-    renderer.endStroke()
+    if (!panning) {
+      renderer.pushStrokeSamples(samples(event))
+      renderer.endStroke()
+    }
     activePointer = undefined
+    panning = false
     if (canvasElement.hasPointerCapture(event.pointerId)) {
       canvasElement.releasePointerCapture(event.pointerId)
     }
@@ -150,8 +174,42 @@
 
   function pointerCancel(event: PointerEvent) {
     if (!renderer || event.pointerId !== activePointer) return
-    renderer.endStroke()
+    if (!panning) renderer.endStroke()
     activePointer = undefined
+    panning = false
+    requestFrame()
+  }
+
+  function wheel(event: WheelEvent) {
+    if (!renderer) return
+    event.preventDefault()
+    const bounds = canvasElement.getBoundingClientRect()
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? bounds.height : 1
+    const exponent = Math.max(-0.7, Math.min(0.7, -event.deltaY * unit * 0.0015))
+    if (renderer.zoomAt(Math.exp(exponent), event.clientX - bounds.left, event.clientY - bounds.top)) {
+      requestFrame()
+    }
+  }
+
+  function keyDown(event: KeyboardEvent) {
+    if (event.code !== 'Space' || activePointer !== undefined) return
+    const target = event.target
+    if (target instanceof Element && target.closest('button, input, a')) return
+    event.preventDefault()
+    spacePressed = true
+  }
+
+  function keyUp(event: KeyboardEvent) {
+    if (event.code === 'Space') spacePressed = false
+  }
+
+  function windowBlur() {
+    spacePressed = false
+    if (activePointer === undefined) return
+    if (!panning) renderer?.endStroke()
+    if (canvasElement.hasPointerCapture(activePointer)) canvasElement.releasePointerCapture(activePointer)
+    activePointer = undefined
+    panning = false
     requestFrame()
   }
 
@@ -176,6 +234,8 @@
     requestFrame()
   }
 </script>
+
+<svelte:window onkeydown={keyDown} onkeyup={keyUp} onblur={windowBlur} />
 
 <svelte:head>
   <title>Web Demo — Chromazen</title>
@@ -270,12 +330,15 @@
   <section class="workspace" bind:this={workspace} aria-label="Painting canvas">
     <canvas
       bind:this={canvasElement}
+      class:pan-ready={spacePressed && !panning}
+      class:panning
       aria-label="Chromazen drawing canvas"
       onpointerdown={pointerDown}
       onpointermove={pointerMove}
       onpointerup={pointerUp}
       onpointercancel={pointerCancel}
       onlostpointercapture={pointerCancel}
+      onwheel={wheel}
       oncontextmenu={(event) => event.preventDefault()}
     ></canvas>
 
@@ -447,6 +510,14 @@
     height: 100%;
     cursor: crosshair;
     touch-action: none;
+  }
+
+  canvas.pan-ready {
+    cursor: grab;
+  }
+
+  canvas.panning {
+    cursor: grabbing;
   }
 
   .status {

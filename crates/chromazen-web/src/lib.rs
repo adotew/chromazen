@@ -127,6 +127,32 @@ impl WebCanvas {
         self.canvas.resize([width, height]);
     }
 
+    #[wasm_bindgen(js_name = panBy)]
+    pub fn pan_by(&mut self, delta_x: f32, delta_y: f32) -> bool {
+        if self.drawing
+            || !delta_x.is_finite()
+            || !delta_y.is_finite()
+            || (delta_x == 0.0 && delta_y == 0.0)
+        {
+            return false;
+        }
+        self.canvas
+            .pan_by_window_delta([delta_x * self.scale, delta_y * self.scale]);
+        true
+    }
+
+    #[wasm_bindgen(js_name = zoomAt)]
+    pub fn zoom_at(&mut self, factor: f32, x: f32, y: f32) -> bool {
+        if self.drawing || !factor.is_finite() || factor <= 0.0 || !x.is_finite() || !y.is_finite()
+        {
+            return false;
+        }
+        let old_zoom = self.canvas.zoom();
+        self.canvas
+            .apply_zoom_at(factor, [x * self.scale, y * self.scale]);
+        (self.canvas.zoom() - old_zoom).abs() > f32::EPSILON
+    }
+
     #[wasm_bindgen(js_name = beginStroke)]
     pub fn begin_stroke(&mut self, x: f32, y: f32, pressure: f32, time_ms: f64) -> bool {
         if self.drawing || !valid_sample(x, y, pressure, time_ms) {
