@@ -1,0 +1,311 @@
+@font-face {
+  font-family: "Elms Sans";
+  src: url("/ElmsSans-Light.woff2") format("woff2");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Elms Sans";
+  src: url("/ElmsSans-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --color-background: #11110f;
+  --color-foreground: #f1efe8;
+  --color-muted: #aaa79e;
+
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  color: var(--color-foreground);
+  background: var(--color-background);
+  color-scheme: dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  color: var(--color-background);
+  background: var(--color-foreground);
+}
+
+html,
+body,
+#app {
+  min-width: 320px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100svh;
+}
+
+button,
+a {
+  font: inherit;
+}
+
+main {
+  display: grid;
+  min-height: 100svh;
+  place-items: center;
+  padding: 2rem;
+}
+
+.intro {
+  position: relative;
+  z-index: 1;
+  max-width: 36rem;
+  text-align: center;
+}
+
+.app-icon {
+  width: 6.5rem;
+  height: 6.5rem;
+  margin-bottom: 1rem;
+  filter: drop-shadow(0 0 1px rgb(23 23 20 / 0.7))
+    drop-shadow(0 3px 8px rgb(23 23 20 / 0.2));
+}
+
+.intro h1 {
+  margin: 0;
+  font-family: "Elms Sans", sans-serif;
+  font-size: clamp(2.5rem, 7vw, 4rem);
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.site-header {
+  position: relative;
+  z-index: 2;
+  box-shadow: inset 0 -1px rgb(128 128 128 / 0.25);
+}
+
+.site-header-content {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 76rem;
+  margin: 0 auto;
+  padding: 1rem 2rem;
+}
+
+.site-header a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: "Elms Sans", sans-serif;
+  font-size: 1.5rem;
+  font-weight: 300;
+  text-decoration: none;
+}
+
+.site-header img {
+  width: 2rem;
+  height: 2rem;
+}
+
+.download-main {
+  min-height: calc(100svh - 4rem);
+  align-items: center;
+  padding: 4rem 2rem;
+}
+
+.download-page {
+  width: 100%;
+  max-width: 68rem;
+  text-align: center;
+  transform: translateY(-8vh);
+}
+
+.download-logo {
+  width: 5rem;
+  height: 5rem;
+  margin-bottom: 1.5rem;
+}
+
+.download-page h1 {
+  margin: 0;
+  font-family: "Elms Sans", sans-serif;
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.download-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 3.5rem;
+  text-align: left;
+}
+
+.download-card {
+  display: flex;
+  flex-direction: column;
+  padding: 2rem;
+  border: 1px solid rgb(128 128 128 / 0.25);
+  border-radius: 0.5rem;
+}
+
+.download-card h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.download-card h2 svg {
+  width: 1rem;
+  height: 1rem;
+  fill: currentColor;
+}
+
+.download-card h2 .apple-icon {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+.download-card h2 .linux-icon {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+
+.download-card > p {
+  max-width: none;
+  margin: 0.5rem 0 1.5rem;
+  font-size: 0.9rem;
+}
+
+.download-info summary {
+  width: fit-content;
+  cursor: pointer;
+  list-style: none;
+}
+
+.download-info summary::-webkit-details-marker {
+  display: none;
+}
+
+.info-icon {
+  display: inline-grid;
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: var(--color-muted);
+  place-items: center;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.download-info p {
+  margin: 0.5rem 0 0;
+  color: var(--color-muted);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.download-info strong {
+  color: var(--color-foreground);
+}
+
+.download-card .download-button {
+  justify-content: center;
+  margin-top: auto;
+}
+
+p {
+  max-width: 30rem;
+  margin: 1.5rem auto;
+  color: var(--color-muted);
+  line-height: 1.6;
+}
+
+a {
+  color: inherit;
+  cursor: pointer;
+  text-underline-offset: 0.25em;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+.download-buttons {
+  display: flex;
+  margin-top: 2.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.download-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.25rem;
+  color: var(--color-background);
+  background: var(--color-foreground);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.github-button {
+  position: fixed;
+  top: 2rem;
+  right: 2rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.github-button:hover {
+  opacity: 0.85;
+}
+
+.github-button svg {
+  width: 1.6rem;
+  height: 1.6rem;
+  fill: currentColor;
+}
+
+a:focus-visible {
+  border-radius: 2px;
+  outline: 2px solid currentColor;
+  outline-offset: 4px;
+}
+
+@media (max-width: 48rem) {
+  .site-header-content {
+    padding-inline: 1.25rem;
+  }
+
+  .download-main {
+    padding: 3rem 1.25rem;
+  }
+
+  .download-page {
+    transform: none;
+  }
+
+  .download-grid {
+    grid-template-columns: 1fr;
+  }
+}

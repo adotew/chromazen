@@ -7,7 +7,7 @@
 <p align="center">
   A fast, native painting app built for a focused drawing experience.
   <br>
-  <a href="#about">About</a> · <a href="#getting-started">Getting started</a> · <a href="#controls">Controls</a>
+  <a href="#about">About</a> · <a href="#getting-started">Getting started</a> · <a href="#website">Website</a> · <a href="#controls">Controls</a>
 </p>
 
 ## About
@@ -32,6 +32,18 @@ cargo run --release
 ```
 
 The app opens to the artwork gallery. Create an artwork or select an existing one to begin. Changes save automatically; use **File → Export PNG…** to export the finished image.
+
+## Website
+
+The landing page lives in `web/`:
+
+```sh
+cd web
+npm install
+npm run dev
+```
+
+Run `npm run check` and `npm run build` before submitting website changes.
 
 ## Controls
 

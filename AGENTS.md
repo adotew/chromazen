@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Chromazen is a Rust workspace (`edition = "2024"`) containing the native application and `crates/chromazen-canvas`. `src/main.rs` initializes logging and starts the winit application in `src/app.rs`. The `src/app/` modules own event handling, commands, menus, editor/gallery UI, autosave, settings, export, brush import, and reference-image loading. Keep UI-only behavior there rather than in the canvas engine.
+Chromazen is a Rust workspace (`edition = "2024"`) containing the native application and `crates/chromazen-canvas`, plus the SvelteKit landing page in `web/`. `src/main.rs` initializes logging and starts the winit application in `src/app.rs`. The `src/app/` modules own event handling, commands, menus, editor/gallery UI, autosave, settings, export, brush import, and reference-image loading. Keep UI-only behavior there rather than in the canvas engine.
 
 Artwork persistence lives under `src/artwork/`: `format.rs` defines and validates versioned manifests, `store.rs` manages revision directories and atomic commits, and `raster.rs` handles CPU compositing and PNG encoding. Configuration and brush preset discovery/import are under `src/config/`; application brush settings remain under `src/paint/`.
 
@@ -21,8 +21,10 @@ Use a current stable Rust toolchain with edition 2024 support.
 - `cargo fmt --all -- --check` verifies formatting; `cargo fmt --all` applies it.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` treats every lint as an error.
 - `./packaging/macos/build-app.sh` builds a release binary, creates and ad-hoc signs `dist/Chromazen.app`, then replaces `/Applications/Chromazen.app`; run it only on macOS when that side effect is intended.
+- `cd web && npm install && npm run dev` installs and serves the landing page locally.
+- `cd web && npm run check && npm run build` validates and builds the static website.
 
-Run formatting, tests, and Clippy before submitting changes.
+Run the relevant Rust or website checks before submitting changes.
 
 ## Coding Style & Architecture Constraints
 
