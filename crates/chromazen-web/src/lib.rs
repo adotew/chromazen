@@ -8,8 +8,10 @@ use chromazen_canvas::{
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
-const DOCUMENT_SIZE: [u32; 2] = [3000, 4000];
-const BRUSH_STAMP_SIZE: u32 = 64;
+const DOCUMENT_SIZE: [u32; 2] = [4000, 3000];
+const CHARCOAL_STAMP_SIZE: u32 = 500;
+const CHARCOAL_STAMP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/charcoal.alpha"));
+const _: () = assert!(CHARCOAL_STAMP.len() == (CHARCOAL_STAMP_SIZE * CHARCOAL_STAMP_SIZE) as usize);
 
 #[wasm_bindgen]
 pub struct WebCanvas {
@@ -81,13 +83,18 @@ impl WebCanvas {
         };
         surface.configure(&device, &config);
 
+        let brush_stamp =
+            image::RgbaImage::from_fn(CHARCOAL_STAMP_SIZE, CHARCOAL_STAMP_SIZE, |x, y| {
+                let alpha = CHARCOAL_STAMP[(y * CHARCOAL_STAMP_SIZE + x) as usize];
+                image::Rgba([255, 255, 255, alpha])
+            });
         let canvas = Canvas::new(
             device.clone(),
             queue.clone(),
             format,
             [width, height],
             DOCUMENT_SIZE,
-            &round_brush_stamp(),
+            &brush_stamp,
         )
         .map_err(js_error)?;
 
@@ -194,7 +201,7 @@ impl WebCanvas {
     #[wasm_bindgen(js_name = setBrushSize)]
     pub fn set_brush_size(&mut self, size: f32) {
         if size.is_finite() {
-            self.brush_size = size.clamp(1.0, 300.0);
+            self.brush_size = size.clamp(1.0, 2000.0);
         }
     }
 
@@ -293,15 +300,6 @@ fn sample_time(milliseconds: f64) -> Duration {
 
 fn valid_sample(x: f32, y: f32, pressure: f32, time_ms: f64) -> bool {
     x.is_finite() && y.is_finite() && pressure.is_finite() && time_ms.is_finite()
-}
-
-fn round_brush_stamp() -> image::RgbaImage {
-    let center = (BRUSH_STAMP_SIZE as f32 - 1.0) * 0.5;
-    image::RgbaImage::from_fn(BRUSH_STAMP_SIZE, BRUSH_STAMP_SIZE, |x, y| {
-        let distance = (x as f32 - center).hypot(y as f32 - center);
-        let alpha = ((center + 0.5 - distance).clamp(0.0, 1.0) * 255.0) as u8;
-        image::Rgba([255, 255, 255, alpha])
-    })
 }
 
 fn js_error(error: impl std::fmt::Display) -> JsValue {

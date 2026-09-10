@@ -2,9 +2,11 @@
   import { onMount } from 'svelte'
   import type { WebCanvas } from '$lib/wasm/chromazen_web'
 
+  type Renderer = WebCanvas & { setTool(tool: number): void }
+
   let canvasElement: HTMLCanvasElement
   let workspace: HTMLElement
-  let renderer: WebCanvas | undefined
+  let renderer: Renderer | undefined
   let resizeObserver: ResizeObserver | undefined
   let frame = 0
   let activePointer: number | undefined
@@ -34,7 +36,7 @@
           created.free()
           return
         }
-        renderer = created
+        renderer = created as Renderer
         renderer.setBrushSize(brushSize)
         applyColor()
         resizeObserver = new ResizeObserver(resize)
@@ -207,7 +209,7 @@
         <input
           type="range"
           min="2"
-          max="180"
+          max="2000"
           step="1"
           bind:value={brushSize}
           oninput={resizeBrush}
