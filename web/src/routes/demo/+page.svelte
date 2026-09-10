@@ -291,7 +291,7 @@
           type="color"
           bind:value={color}
           oninput={(event) => applyColor(event.currentTarget.value)}
-          disabled={tool !== 'brush'}
+          disabled={tool === 'smudge'}
         />
       </label>
     </div>
@@ -386,9 +386,7 @@
     justify-content: space-between;
     gap: 1rem;
     padding: 0.65rem 1rem;
-    border-bottom: 1px solid rgb(255 255 255 / 0.1);
-    background: rgb(18 18 16 / 0.94);
-    backdrop-filter: blur(14px);
+    pointer-events: none;
   }
 
   .brand {
@@ -397,8 +395,13 @@
     gap: 0.55rem;
     flex: none;
     font-family: "Elms Sans", sans-serif;
+    padding: 0.45rem 0.65rem;
+    border-radius: 0.75rem;
+    background: rgb(18 18 16 / 0.72);
+    backdrop-filter: blur(18px) saturate(120%);
     font-size: 1.45rem;
     font-weight: 300;
+    pointer-events: auto;
     text-decoration: none;
   }
 
@@ -417,8 +420,15 @@
 
   .paint-controls {
     position: absolute;
+    top: 0;
     left: 50%;
-    gap: 0.75rem;
+    height: 3rem;
+    gap: 0.6rem;
+    padding: 0.5rem 1rem;
+    border-radius: 0 0 1rem 1rem;
+    background: rgb(18 18 16 / 0.72);
+    backdrop-filter: blur(18px) saturate(120%);
+    pointer-events: auto;
     transform: translateX(-50%);
   }
 
@@ -429,6 +439,7 @@
     background: #f1efe8;
     font-size: 0.85rem;
     font-weight: 700;
+    pointer-events: auto;
     text-decoration: none;
   }
 
@@ -449,13 +460,14 @@
     top: 50%;
     right: 0;
     display: flex;
+    width: 3rem;
     flex-direction: column;
     align-items: center;
     gap: 0.75rem;
     padding: 1rem 0.5rem;
     border-radius: 1.25rem 0 0 1.25rem;
-    background: rgb(18 18 16 / 0.9);
-    backdrop-filter: blur(14px);
+    background: rgb(18 18 16 / 0.72);
+    backdrop-filter: blur(18px) saturate(120%);
     transform: translateY(-50%);
   }
 
@@ -464,10 +476,12 @@
     flex-direction: column;
   }
 
-  .tool-group,
+  .tool-group {
+    gap: 0.6rem;
+  }
+
   .actions {
-    gap: 0.2rem;
-    padding: 0.2rem;
+    gap: 0.6rem;
   }
 
   button {
@@ -489,10 +503,15 @@
   }
 
   button:hover,
-  button:focus-visible,
+  button:focus-visible {
+    color: #fff;
+    background: rgb(255 255 255 / 0.08);
+  }
+
   button.active {
-    color: #11110f;
-    background: #f1efe8;
+    color: #fff;
+    background: rgb(255 255 255 / 0.14);
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
   }
 
   button:focus-visible,
@@ -559,7 +578,7 @@
 
   .workspace {
     position: fixed;
-    inset: 4.25rem 0 0;
+    inset: 0;
   }
 
   canvas {
@@ -609,11 +628,9 @@
     }
 
     .paint-controls {
+      top: auto;
       bottom: 0.6rem;
-    }
-
-    .workspace {
-      inset-block-start: 7.5rem;
+      border-radius: 1rem;
     }
   }
 
