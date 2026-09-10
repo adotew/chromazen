@@ -17,6 +17,7 @@
     <h1>Chromazen</h1>
     <p>A lightweight, distraction-free painting application focused on performance.</p>
     <div class="download-buttons">
+      <a class="download-button secondary" href="/demo">Web Demo</a>
       <a class="download-button" href="/download">Download</a>
     </div>
     <a class="github-button" href={repositoryUrl} target="_blank" rel="noreferrer">

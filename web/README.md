@@ -4,10 +4,14 @@ Minimal landing page for [Chromazen](https://github.com/adotew/chromazen), built
 
 ## Development
 
+Install Rust's `wasm32-unknown-unknown` target and `wasm-pack`, then run:
+
 ```bash
 npm install
 npm run dev
 ```
+
+The dev and production builds compile the browser canvas from `crates/chromazen-web`.
 
 ## Checks
 

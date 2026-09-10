@@ -11,6 +11,7 @@ node_modules
 .svelte-kit
 dist
 dist-ssr
+src/lib/wasm
 *.local
 
 # Editor directories and files

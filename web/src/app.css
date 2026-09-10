@@ -265,6 +265,12 @@ a:hover {
   text-decoration: none;
 }
 
+.download-button.secondary {
+  border: 1px solid rgb(128 128 128 / 0.4);
+  color: var(--color-foreground);
+  background: transparent;
+}
+
 .github-button {
   position: fixed;
   top: 2rem;

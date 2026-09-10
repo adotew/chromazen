@@ -1,0 +1,16 @@
+[package]
+name = "chromazen-web"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+chromazen-canvas = { path = "../chromazen-canvas" }
+image = { version = "0.25", default-features = false }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
+wgpu = "29.0.3"

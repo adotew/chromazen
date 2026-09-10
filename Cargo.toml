@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/chromazen-canvas"]
+members = ["crates/chromazen-canvas", "crates/chromazen-web"]
 default-members = [".", "crates/chromazen-canvas"]
 resolver = "3"
 
