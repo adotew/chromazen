@@ -8,7 +8,7 @@ use chromazen_canvas::{
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
-const DOCUMENT_SIZE: [u32; 2] = [4000, 3000];
+const DOCUMENT_SIZE: [u32; 2] = [2000, 1500];
 const CHARCOAL_STAMP_SIZE: u32 = 500;
 const CHARCOAL_STAMP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/charcoal.alpha"));
 const _: () = assert!(CHARCOAL_STAMP.len() == (CHARCOAL_STAMP_SIZE * CHARCOAL_STAMP_SIZE) as usize);
@@ -105,8 +105,8 @@ impl WebCanvas {
             config,
             canvas,
             tool: PaintTool::Brush,
-            color: [0.08, 0.08, 0.07, 1.0],
-            brush_size: 48.0,
+            color: [29.0 / 255.0, 78.0 / 255.0, 216.0 / 255.0, 1.0],
+            brush_size: 500.0,
             scale: scale.max(1.0),
             drawing: false,
             last_point: None,

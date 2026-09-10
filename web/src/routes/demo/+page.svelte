@@ -30,8 +30,8 @@
   let loading = true
   let error = ''
   let tool: Tool = 'brush'
-  let brushSize = 48
-  let color = '#151513'
+  let brushSize = 500
+  let color = '#1d4ed8'
 
   onMount(() => {
     let disposed = false
