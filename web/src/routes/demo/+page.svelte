@@ -229,7 +229,7 @@
     renderer.setColor((value >> 16) & 255, (value >> 8) & 255, value & 255)
   }
 
-  function command(action: 'undo' | 'redo' | 'clear') {
+  function command(action: 'undo' | 'redo') {
     renderer?.[action]()
     requestFrame()
   }
@@ -252,7 +252,7 @@
       <span>Chromazen</span>
     </a>
 
-    <div class="toolbar" aria-label="Painting tools">
+    <div class="paint-controls" aria-label="Painting tools">
       <div class="tool-group">
         <button
           class="icon-button"
@@ -289,43 +289,46 @@
       <label class="color-control" aria-label="Brush color">
         <input type="color" bind:value={color} oninput={applyColor} disabled={tool !== 'brush'} />
       </label>
-
-      <label class="size-control">
-        <span>Size</span>
-        <input
-          type="range"
-          min="2"
-          max="2000"
-          step="1"
-          bind:value={brushSize}
-          oninput={resizeBrush}
-        />
-        <output>{brushSize}</output>
-      </label>
-
-      <div class="actions">
-        <button
-          class="icon-button"
-          type="button"
-          aria-label="Undo"
-          title="Undo"
-          onclick={() => command('undo')}
-        >
-          <Undo2 size={20} aria-hidden="true" />
-        </button>
-        <button
-          class="icon-button"
-          type="button"
-          aria-label="Redo"
-          title="Redo"
-          onclick={() => command('redo')}
-        >
-          <Redo2 size={20} aria-hidden="true" />
-        </button>
-        <button class="clear" type="button" onclick={() => command('clear')}>Clear</button>
-      </div>
     </div>
+
+    <a class="download-link" href="/download">Download App</a>
   </header>
+
+  <aside class="side-controls" aria-label="Canvas controls">
+    <label class="size-control">
+      <span>Size</span>
+      <input
+        type="range"
+        min="2"
+        max="2000"
+        step="1"
+        bind:value={brushSize}
+        oninput={resizeBrush}
+      />
+      <output>{brushSize}</output>
+    </label>
+
+    <div class="actions">
+      <button
+        class="icon-button"
+        type="button"
+        aria-label="Undo"
+        title="Undo"
+        onclick={() => command('undo')}
+      >
+        <Undo2 size={20} aria-hidden="true" />
+      </button>
+      <button
+        class="icon-button"
+        type="button"
+        aria-label="Redo"
+        title="Redo"
+        onclick={() => command('redo')}
+      >
+        <Redo2 size={20} aria-hidden="true" />
+      </button>
+    </div>
+  </aside>
 
   <section class="workspace" bind:this={workspace} aria-label="Painting canvas">
     <canvas
@@ -389,17 +392,17 @@
     gap: 0.55rem;
     flex: none;
     font-family: "Elms Sans", sans-serif;
-    font-size: 1.15rem;
+    font-size: 1.45rem;
     font-weight: 300;
     text-decoration: none;
   }
 
   .brand img {
-    width: 2rem;
-    height: 2rem;
+    width: 2.5rem;
+    height: 2.5rem;
   }
 
-  .toolbar,
+  .paint-controls,
   .tool-group,
   .actions,
   .size-control {
@@ -407,8 +410,53 @@
     align-items: center;
   }
 
-  .toolbar {
+  .paint-controls {
+    position: absolute;
+    left: 50%;
     gap: 0.75rem;
+    transform: translateX(-50%);
+  }
+
+  .download-link {
+    padding: 0.55rem 0.9rem;
+    border-radius: 0.45rem;
+    color: #11110f;
+    background: #f1efe8;
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-decoration: none;
+  }
+
+  .download-link:hover,
+  .download-link:focus-visible {
+    color: #11110f;
+    background: #fff;
+  }
+
+  .download-link:focus-visible {
+    outline: 2px solid #f1efe8;
+    outline-offset: 2px;
+  }
+
+  .side-controls {
+    position: fixed;
+    z-index: 2;
+    top: 50%;
+    right: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem 0.5rem;
+    border-radius: 1.25rem 0 0 1.25rem;
+    background: rgb(18 18 16 / 0.9);
+    backdrop-filter: blur(14px);
+    transform: translateY(-50%);
+  }
+
+  .side-controls .size-control,
+  .side-controls .actions {
+    flex-direction: column;
   }
 
   .tool-group,
@@ -448,16 +496,6 @@
     outline-offset: 2px;
   }
 
-  .clear {
-    font-size: 0.9rem;
-  }
-
-  .clear:hover,
-  .clear:focus-visible {
-    color: #fff;
-    background: #a33c35;
-  }
-
   .color-control {
     display: grid;
     width: 2rem;
@@ -488,12 +526,15 @@
   }
 
   .size-control input {
-    width: 7rem;
+    width: 1.5rem;
+    height: 8rem;
+    direction: rtl;
     accent-color: #f1efe8;
+    writing-mode: vertical-lr;
   }
 
   .size-control output {
-    width: 2rem;
+    width: auto;
     color: #f1efe8;
     font-variant-numeric: tabular-nums;
     text-align: right;
@@ -550,12 +591,8 @@
       align-items: flex-start;
     }
 
-    .toolbar {
-      position: absolute;
-      right: 0.75rem;
+    .paint-controls {
       bottom: 0.6rem;
-      left: 0.75rem;
-      justify-content: center;
     }
 
     .workspace {
@@ -565,13 +602,12 @@
 
   @media (max-width: 35rem) {
     .size-control span,
-    .size-control output,
-    .actions .clear {
+    .size-control output {
       display: none;
     }
 
     .size-control input {
-      width: 5rem;
+      height: 6rem;
     }
 
     button {
