@@ -1,0 +1,15 @@
+{
+  "name": "chromazen-web",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "chromazen_web_bg.wasm",
+    "chromazen_web.js",
+    "chromazen_web.d.ts"
+  ],
+  "main": "chromazen_web.js",
+  "types": "chromazen_web.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

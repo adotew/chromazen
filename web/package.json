@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "wasm": "wasm-pack build ../crates/chromazen-web --target web --release --out-dir ../../web/src/lib/wasm --out-name chromazen_web",
-    "dev": "npm run wasm && vite",
-    "build": "npm run wasm && vite build",
+    "dev": "vite",
+    "build": "vite build",
     "preview": "vite preview",
-    "check": "npm run wasm && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.10",
