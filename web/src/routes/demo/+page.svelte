@@ -295,7 +295,7 @@
       </label>
     </div>
 
-    <a class="download-link" href="/download">Download App</a>
+    <a class="download-link" href="/download">Download<span class="download-app-label">&nbsp;App</span></a>
   </header>
 
   <aside class="side-controls" aria-label="Canvas controls">
@@ -616,27 +616,61 @@
     font-size: 0.85rem;
   }
 
-  @media (max-width: 52rem) {
-    .topbar {
-      min-height: 7.5rem;
-      align-items: flex-start;
+  @media (max-width: 52rem), (max-height: 32rem) {
+    .side-controls {
+      top: auto;
+      right: 50%;
+      bottom: 0;
+      width: auto;
+      flex-direction: row;
+      gap: 1rem;
+      padding: 0.5rem 0.85rem calc(0.5rem + env(safe-area-inset-bottom));
+      border-radius: 1rem 1rem 0 0;
+      transform: translateX(50%);
     }
 
-    .paint-controls {
-      top: auto;
-      bottom: 0.6rem;
-      border-radius: 1rem;
+    .side-controls .size-control,
+    .side-controls .actions {
+      flex-direction: row;
+    }
+
+    .size-control input {
+      width: 6rem;
+      height: 1.5rem;
+      direction: ltr;
+      writing-mode: horizontal-tb;
     }
   }
 
   @media (max-width: 35rem) {
+    .topbar {
+      min-height: 3rem;
+      padding: 0.5rem;
+    }
+
+    .brand {
+      padding: 0.35rem;
+    }
+
+    .brand img {
+      width: 2rem;
+      height: 2rem;
+    }
+
+    .brand span,
+    .download-app-label,
     .size-control span,
     .size-control output {
       display: none;
     }
 
-    .size-control input {
-      height: 6rem;
+    .paint-controls {
+      gap: 0.4rem;
+      padding-inline: 0.65rem;
+    }
+
+    .download-link {
+      padding: 0.5rem 0.65rem;
     }
 
     button {
