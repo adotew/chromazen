@@ -1,4 +1,9 @@
 <script lang="ts">
+  import Brush from '@lucide/svelte/icons/brush'
+  import Eraser from '@lucide/svelte/icons/eraser'
+  import Redo2 from '@lucide/svelte/icons/redo-2'
+  import Undo2 from '@lucide/svelte/icons/undo-2'
+  import Waves from '@lucide/svelte/icons/waves'
   import { onMount } from 'svelte'
   import type { WebCanvas } from '$lib/wasm/chromazen_web'
 
@@ -189,14 +194,35 @@
 
     <div class="toolbar" aria-label="Painting tools">
       <div class="tool-group">
-        <button class:active={tool === 'brush'} type="button" onclick={() => selectTool('brush')}>
-          Brush
+        <button
+          class="icon-button"
+          class:active={tool === 'brush'}
+          type="button"
+          aria-label="Brush"
+          title="Brush"
+          onclick={() => selectTool('brush')}
+        >
+          <Brush size={20} aria-hidden="true" />
         </button>
-        <button class:active={tool === 'eraser'} type="button" onclick={() => selectTool('eraser')}>
-          Eraser
+        <button
+          class="icon-button"
+          class:active={tool === 'eraser'}
+          type="button"
+          aria-label="Eraser"
+          title="Eraser"
+          onclick={() => selectTool('eraser')}
+        >
+          <Eraser size={20} aria-hidden="true" />
         </button>
-        <button class:active={tool === 'smudge'} type="button" onclick={() => selectTool('smudge')}>
-          Smudge
+        <button
+          class="icon-button"
+          class:active={tool === 'smudge'}
+          type="button"
+          aria-label="Smudge"
+          title="Smudge"
+          onclick={() => selectTool('smudge')}
+        >
+          <Waves size={20} aria-hidden="true" />
         </button>
       </div>
 
@@ -218,8 +244,24 @@
       </label>
 
       <div class="actions">
-        <button type="button" onclick={() => command('undo')}>Undo</button>
-        <button type="button" onclick={() => command('redo')}>Redo</button>
+        <button
+          class="icon-button"
+          type="button"
+          aria-label="Undo"
+          title="Undo"
+          onclick={() => command('undo')}
+        >
+          <Undo2 size={20} aria-hidden="true" />
+        </button>
+        <button
+          class="icon-button"
+          type="button"
+          aria-label="Redo"
+          title="Redo"
+          onclick={() => command('redo')}
+        >
+          <Redo2 size={20} aria-hidden="true" />
+        </button>
         <button class="clear" type="button" onclick={() => command('clear')}>Clear</button>
       </div>
     </div>
@@ -310,9 +352,6 @@
   .actions {
     gap: 0.2rem;
     padding: 0.2rem;
-    border: 1px solid rgb(255 255 255 / 0.1);
-    border-radius: 0.55rem;
-    background: rgb(255 255 255 / 0.04);
   }
 
   button {
@@ -326,6 +365,13 @@
     font-size: 0.8rem;
   }
 
+  .icon-button {
+    display: grid;
+    width: 2rem;
+    padding: 0.35rem;
+    place-items: center;
+  }
+
   button:hover,
   button:focus-visible,
   button.active {
@@ -337,6 +383,10 @@
   input:focus-visible {
     outline: 2px solid #f1efe8;
     outline-offset: 2px;
+  }
+
+  .clear {
+    font-size: 0.9rem;
   }
 
   .clear:hover,
