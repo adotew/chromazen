@@ -247,11 +247,6 @@
 
 <main class="demo">
   <header class="topbar">
-    <a class="brand" href="/" aria-label="Back to Chromazen">
-      <img src="/favicon.png" alt="" width="32" height="32" />
-      <span>Chromazen</span>
-    </a>
-
     <div class="paint-controls" aria-label="Painting tools">
       <div class="tool-group">
         <button
@@ -294,8 +289,6 @@
         />
       </label>
     </div>
-
-    <a class="download-link" href="/download">Download<span class="download-app-label">&nbsp;App</span></a>
   </header>
 
   <aside class="side-controls" aria-label="Canvas controls">
@@ -388,27 +381,6 @@
     pointer-events: none;
   }
 
-  .brand {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.55rem;
-    flex: none;
-    font-family: "Elms Sans", sans-serif;
-    padding: 0.45rem 0.65rem;
-    border-radius: 0.75rem;
-    background: rgb(18 18 16 / 0.72);
-    backdrop-filter: blur(18px) saturate(120%);
-    font-size: 1.45rem;
-    font-weight: 300;
-    pointer-events: auto;
-    text-decoration: none;
-  }
-
-  .brand img {
-    width: 2.5rem;
-    height: 2.5rem;
-  }
-
   .paint-controls,
   .tool-group,
   .actions,
@@ -429,28 +401,6 @@
     backdrop-filter: blur(18px) saturate(120%);
     pointer-events: auto;
     transform: translateX(-50%);
-  }
-
-  .download-link {
-    padding: 0.55rem 0.9rem;
-    border-radius: 0.45rem;
-    color: #11110f;
-    background: #f1efe8;
-    font-size: 0.85rem;
-    font-weight: 700;
-    pointer-events: auto;
-    text-decoration: none;
-  }
-
-  .download-link:hover,
-  .download-link:focus-visible {
-    color: #11110f;
-    background: #fff;
-  }
-
-  .download-link:focus-visible {
-    outline: 2px solid #f1efe8;
-    outline-offset: 2px;
   }
 
   .side-controls {
@@ -648,17 +598,6 @@
       padding: 0.5rem;
     }
 
-    .brand {
-      padding: 0.35rem;
-    }
-
-    .brand img {
-      width: 2rem;
-      height: 2rem;
-    }
-
-    .brand span,
-    .download-app-label,
     .size-control span,
     .size-control output {
       display: none;
@@ -667,10 +606,6 @@
     .paint-controls {
       gap: 0.4rem;
       padding-inline: 0.65rem;
-    }
-
-    .download-link {
-      padding: 0.5rem 0.65rem;
     }
 
     button {
