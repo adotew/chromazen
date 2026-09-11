@@ -238,7 +238,7 @@
 <svelte:window onkeydown={keyDown} onkeyup={keyUp} onblur={windowBlur} />
 
 <svelte:head>
-  <title>Web Demo — Chromazen</title>
+  <title>Web App — Chromazen</title>
   <meta
     name="description"
     content="Try Chromazen's GPU painting canvas directly in your browser."

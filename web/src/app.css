@@ -261,6 +261,8 @@ a:hover {
   border-radius: 0.25rem;
   color: var(--color-background);
   background: var(--color-foreground);
+  cursor: pointer;
+  font: inherit;
   font-weight: 600;
   text-decoration: none;
 }
