@@ -247,30 +247,53 @@ a:hover {
 
 .download-buttons {
   display: flex;
+  flex-direction: column;
+  align-items: center;
   margin-top: 2.5rem;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0.75rem;
+  gap: 1.25rem;
 }
 
 .download-button {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem;
-  border-radius: 0.25rem;
+  gap: 0.55rem;
+  padding: 0.8rem 1.6rem;
+  border-radius: 0.5rem;
   color: var(--color-background);
   background: var(--color-foreground);
   cursor: pointer;
   font: inherit;
   font-weight: 600;
   text-decoration: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-.download-button.secondary {
-  border: 1px solid rgb(128 128 128 / 0.4);
+.download-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.35);
+}
+
+.download-button:active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.web-app-link {
+  padding: 0;
+  border: 0;
   color: var(--color-foreground);
-  background: transparent;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.3em;
+  transition: text-decoration-thickness 0.15s ease;
+}
+
+.web-app-link:hover {
+  text-decoration-thickness: 2px;
 }
 
 .github-button {

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Download from '@lucide/svelte/icons/download'
+
   const repositoryUrl = 'https://github.com/adotew/chromazen'
 
   function newArtwork() {
@@ -21,8 +23,11 @@
     <h1>Chromazen</h1>
     <p>A lightweight, distraction-free painting application focused on performance.</p>
     <div class="download-buttons">
-      <button class="download-button secondary" type="button" onclick={newArtwork}>Web App</button>
-      <a class="download-button" href="/download">Download</a>
+      <a class="download-button" href="/download">
+        <Download size={18} aria-hidden="true" />
+        Download
+      </a>
+      <button class="web-app-link" type="button" onclick={newArtwork}>Web App</button>
     </div>
     <a class="github-button" href={repositoryUrl} target="_blank" rel="noreferrer">
       <svg viewBox="0 0 24 24" aria-hidden="true">
