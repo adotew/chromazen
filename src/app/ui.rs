@@ -1126,8 +1126,13 @@ fn should_clear_reference_selection(
     primary_pressed: bool,
     pointer_over_selected_reference: bool,
     pointer_over_ui: bool,
+    panning: bool,
 ) -> bool {
-    has_selection && primary_pressed && !pointer_over_selected_reference && !pointer_over_ui
+    has_selection
+        && primary_pressed
+        && !pointer_over_selected_reference
+        && !pointer_over_ui
+        && !panning
 }
 
 fn tool_index(tool: PaintTool) -> usize {
@@ -1605,9 +1610,20 @@ mod tests {
 
     #[test]
     fn canvas_press_clears_reference_selection_without_affecting_ui_presses() {
-        assert!(should_clear_reference_selection(true, true, false, false));
-        assert!(!should_clear_reference_selection(true, true, true, false));
-        assert!(!should_clear_reference_selection(true, true, false, true));
-        assert!(!should_clear_reference_selection(false, true, false, false));
+        assert!(should_clear_reference_selection(
+            true, true, false, false, false
+        ));
+        assert!(!should_clear_reference_selection(
+            true, true, true, false, false
+        ));
+        assert!(!should_clear_reference_selection(
+            true, true, false, true, false
+        ));
+        assert!(!should_clear_reference_selection(
+            false, true, false, false, false
+        ));
+        assert!(!should_clear_reference_selection(
+            true, true, false, false, true
+        ));
     }
 }

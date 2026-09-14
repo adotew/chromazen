@@ -181,7 +181,7 @@ impl App {
             window.set_cursor(CursorIcon::NwseResize);
         } else if reference_drag_active || is_panning || is_rotating_canvas {
             window.set_cursor(CursorIcon::Grabbing);
-        } else if is_pan_modifier_active && !pointer_over_ui_or_reference {
+        } else if is_pan_modifier_active && (!pointer_over_ui || pointer_over_reference) {
             window.set_cursor(CursorIcon::Grab);
         }
         let eyedropper_over_canvas = is_eyedropper_active && !pointer_over_ui_or_reference;

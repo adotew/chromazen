@@ -341,6 +341,8 @@ impl ApplicationHandler<AppEvent> for App {
                 let egui_consumed = egui_response.consumed;
                 let point_over_reference = self.screen == AppScreen::Editor
                     && gui.window_point_over_reference(self.input.cursor_position());
+                let pan_over_reference =
+                    point_over_reference && self.input.is_pan_modifier_active();
                 let primary_press_over_reference = point_over_reference
                     && matches!(
                         &event,
@@ -350,8 +352,8 @@ impl ApplicationHandler<AppEvent> for App {
                             ..
                         }
                     );
-                // Reference images consume pointer input in egui, but their scroll events should
-                // still zoom the canvas beneath them.
+                // Reference images consume pointer input in egui, but panning and zooming should
+                // still reach the canvas beneath them.
                 let wheel_over_reference =
                     point_over_reference && matches!(&event, WindowEvent::MouseWheel { .. });
                 if !egui_consumed
@@ -371,6 +373,7 @@ impl ApplicationHandler<AppEvent> for App {
                     && !navigation_pending
                     && !canvas_crop_active
                     && (self.input.has_active_document_drag()
+                        || pan_over_reference
                         || wheel_over_reference
                         || (!egui_consumed && !primary_press_over_reference))
                     && let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_mut())

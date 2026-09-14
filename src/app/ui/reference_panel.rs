@@ -1,5 +1,9 @@
 use super::*;
 
+fn reference_is_draggable(locked: bool, selected: bool, panning: bool) -> bool {
+    !locked && selected && !panning
+}
+
 impl GuiLayer {
     pub(super) fn sync_reference_textures(&mut self, references: &[ReferenceImage]) {
         self.reference_textures.retain(|cached| {
@@ -54,7 +58,9 @@ impl GuiLayer {
         self.pointer_over_selected_reference = false;
         let pointer_position = context.pointer_latest_pos();
         let pixels_per_point = context.pixels_per_point();
+        let panning = context.input(|input| input.key_down(egui::Key::Space));
         for reference in references.iter().filter(|reference| reference.visible) {
+            let selected = self.selected_reference == Some(reference.id);
             let Some(texture_id) = self.reference_texture(reference.id) else {
                 continue;
             };
@@ -75,13 +81,13 @@ impl GuiLayer {
             let pointer_over_image =
                 pointer_over_visible_reference(pointer_position, rect, workspace_rect);
             let pointer_over_resize = !reference.locked
-                && self.selected_reference == Some(reference.id)
+                && selected
                 && pointer_position.is_some_and(|pointer| {
                     workspace_rect.contains(pointer)
                         && reference_resize_handle_geometry(rect).1.contains(pointer)
                 });
             self.pointer_over_reference |= pointer_over_image || pointer_over_resize;
-            if self.selected_reference == Some(reference.id) {
+            if selected {
                 self.pointer_over_selected_reference = pointer_over_image || pointer_over_resize;
             }
             let visible_rect = rect.intersect(workspace_rect);
@@ -89,7 +95,7 @@ impl GuiLayer {
                 continue;
             }
             self.reference_hit_rects.push(visible_rect);
-            if !reference.locked && self.selected_reference == Some(reference.id) {
+            if !reference.locked && selected {
                 let resize_rect = reference_resize_handle_geometry(rect)
                     .1
                     .intersect(workspace_rect);
@@ -108,10 +114,13 @@ impl GuiLayer {
                 .constrain(false)
                 .show(context, |ui| {
                     ui.shrink_clip_rect(workspace_rect);
-                    let sense = if reference.locked {
-                        egui::Sense::click()
-                    } else {
+                    let draggable = reference_is_draggable(reference.locked, selected, panning);
+                    let sense = if panning {
+                        egui::Sense::hover()
+                    } else if draggable {
                         egui::Sense::click_and_drag()
+                    } else {
+                        egui::Sense::click()
                     };
                     let response = ui.allocate_rect(visible_rect, sense);
                     ui.painter().image(
@@ -120,9 +129,7 @@ impl GuiLayer {
                         egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
                         egui::Color32::WHITE,
                     );
-                    let resize = (!reference.locked
-                        && self.selected_reference == Some(reference.id))
-                    .then(|| {
+                    let resize = (!panning && !reference.locked && selected).then(|| {
                         let (_, handle_rect) = reference_resize_handle_geometry(rect);
                         ui.interact(
                             handle_rect.intersect(workspace_rect),
@@ -142,7 +149,7 @@ impl GuiLayer {
             }
             self.show_reference_context_menu(&response, reference);
 
-            if !reference.locked {
+            if reference_is_draggable(reference.locked, selected, panning) {
                 let active = if let Some(resize) = resize.as_ref().filter(|resize| resize.dragged())
                 {
                     resize
@@ -226,6 +233,20 @@ impl GuiLayer {
 
     pub(crate) fn pointer_over_reference(&self) -> bool {
         self.pointer_over_reference
+            && self
+                .context
+                .pointer_latest_pos()
+                .is_some_and(|point| self.reference_layer_at(point))
+    }
+
+    fn reference_layer_at(&self, point: egui::Pos2) -> bool {
+        self.context.layer_id_at(point).is_some_and(|layer| {
+            layer.order == egui::Order::Middle
+                && self
+                    .reference_textures
+                    .iter()
+                    .any(|reference| layer.id == egui::Id::new(("reference", reference.id.0)))
+        })
     }
 
     pub(crate) fn reference_drag_active(&self) -> bool {
@@ -238,20 +259,27 @@ impl GuiLayer {
     }
 
     pub(crate) fn window_point_over_reference(&self, point: [f32; 2]) -> bool {
-        window_point_over_rects(
-            point,
-            self.context.pixels_per_point(),
-            &self.reference_hit_rects,
-        )
+        let pixels_per_point = self.context.pixels_per_point();
+        window_point_over_rects(point, pixels_per_point, &self.reference_hit_rects)
+            && self.reference_layer_at(egui::pos2(
+                point[0] / pixels_per_point,
+                point[1] / pixels_per_point,
+            ))
     }
 
     pub(super) fn clear_reference_selection_on_outside_press(&mut self, context: &egui::Context) {
-        let primary_pressed = context.input(|input| input.pointer.primary_pressed());
+        let (primary_pressed, panning) = context.input(|input| {
+            (
+                input.pointer.primary_pressed(),
+                input.key_down(egui::Key::Space),
+            )
+        });
         if should_clear_reference_selection(
             self.selected_reference.is_some(),
             primary_pressed,
             self.pointer_over_selected_reference,
             context.is_pointer_over_egui(),
+            panning,
         ) {
             self.selected_reference = None;
         }
@@ -289,5 +317,18 @@ impl GuiLayer {
         {
             self.reference_transform_edit = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_selected_unlocked_references_can_be_dragged() {
+        assert!(reference_is_draggable(false, true, false));
+        assert!(!reference_is_draggable(false, false, false));
+        assert!(!reference_is_draggable(true, true, false));
+        assert!(!reference_is_draggable(false, true, true));
     }
 }
