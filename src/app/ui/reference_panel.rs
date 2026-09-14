@@ -105,7 +105,7 @@ impl GuiLayer {
             }
 
             let area = egui::Area::new(egui::Id::new(("reference", reference.id.0)))
-                .order(egui::Order::Middle)
+                .order(egui::Order::Background)
                 .fixed_pos(visible_rect.min)
                 .default_size(visible_rect.size())
                 // Keep the canvas-relative transform authoritative. The area's interactive bounds
@@ -241,7 +241,7 @@ impl GuiLayer {
 
     fn reference_layer_at(&self, point: egui::Pos2) -> bool {
         self.context.layer_id_at(point).is_some_and(|layer| {
-            layer.order == egui::Order::Middle
+            layer.order == egui::Order::Background
                 && self
                     .reference_textures
                     .iter()
