@@ -1000,27 +1000,33 @@ fn add_layer_button(ui: &mut egui::Ui) -> bool {
 fn show_tool_button(
     ui: &mut egui::Ui,
     rect: egui::Rect,
-    tool: PaintTool,
+    tool: EditorTool,
     selected: bool,
 ) -> egui::Response {
     let (icon, label, shortcut, accent) = match tool {
-        PaintTool::Brush => (
+        EditorTool::Paint(PaintTool::Brush) => (
             egui::include_image!("../../assets/icons/paintbrush.svg"),
             "Brush",
             "D / B",
             egui::Color32::from_rgb(169, 186, 200),
         ),
-        PaintTool::Eraser => (
+        EditorTool::Paint(PaintTool::Eraser) => (
             egui::include_image!("../../assets/icons/eraser.svg"),
             "Eraser",
             "E",
             egui::Color32::from_rgb(213, 170, 109),
         ),
-        PaintTool::Smudge => (
+        EditorTool::Paint(PaintTool::Smudge) => (
             egui::include_image!("../../assets/icons/waves.svg"),
             "Smudge",
             "S",
             egui::Color32::from_rgb(177, 159, 204),
+        ),
+        EditorTool::Transform => (
+            egui::include_image!("../../assets/icons/move.svg"),
+            "Transform",
+            "T",
+            egui::Color32::from_rgb(142, 191, 166),
         ),
     };
     let response = ui.interact(rect, ui.id().with(label), egui::Sense::click());

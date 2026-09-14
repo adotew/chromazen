@@ -72,41 +72,36 @@ impl GuiLayer {
         active_tool: EditorTool,
     ) -> Option<EditorTool> {
         const TOOL_SIZE: f32 = 40.0;
-        const TOOL_COUNT: usize = 3;
+        const PAINT_TOOL_COUNT: usize = 3;
         const VERTICAL_PADDING: f32 = 6.0;
-        const CONTROLS_GAP: f32 = 8.0;
 
         let tools = [PaintTool::Brush, PaintTool::Eraser, PaintTool::Smudge];
-        let button_count = TOOL_COUNT + if self.sidebar_visible { 0 } else { 2 };
-        let toolbar_height = TOOL_SIZE * button_count as f32 + 2.0 * VERTICAL_PADDING;
+        let button_count = PAINT_TOOL_COUNT + 3;
+        let buttons_height = TOOL_SIZE * button_count as f32;
         let controls_height = (ui.ctx().content_rect().bottom()
             - ui.cursor().top()
-            - toolbar_height
-            - CONTROLS_GAP
+            - buttons_height
+            - 2.0 * VERTICAL_PADDING
             - 12.0)
             .clamp(0.0, brush_controls::CONTROLS_HEIGHT);
-        let controls_gap = if controls_height > 0.0 {
-            CONTROLS_GAP
-        } else {
-            0.0
-        };
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(
                 TOOL_RAIL_THICKNESS,
-                toolbar_height + controls_gap + controls_height,
+                buttons_height + controls_height + 2.0 * VERTICAL_PADDING,
             ),
             egui::Sense::hover(),
         );
-        let toolbar_rect =
-            egui::Rect::from_min_size(rect.min, egui::vec2(TOOL_RAIL_THICKNESS, toolbar_height));
-        let corner_radius = egui::CornerRadius {
-            nw: 16,
-            ne: 0,
-            sw: 16,
-            se: 0,
-        };
-        paint_rounded_panel(ui, toolbar_rect, corner_radius);
-        let body = toolbar_rect.shrink2(egui::vec2(0.0, VERTICAL_PADDING));
+        paint_rounded_panel(
+            ui,
+            rect,
+            egui::CornerRadius {
+                nw: 16,
+                ne: 0,
+                sw: 16,
+                se: 0,
+            },
+        );
+        let body = rect.shrink2(egui::vec2(0.0, VERTICAL_PADDING));
 
         let mut selected_tool = None;
         for (index, paint_tool) in tools.into_iter().enumerate() {
@@ -115,7 +110,7 @@ impl GuiLayer {
                 egui::pos2(body.left(), body.top() + index as f32 * TOOL_SIZE),
                 egui::vec2(TOOL_RAIL_THICKNESS, TOOL_SIZE),
             );
-            let response = show_tool_button(ui, tool_rect, paint_tool, tool == active_tool);
+            let response = show_tool_button(ui, tool_rect, tool, tool == active_tool);
             if response.clicked() {
                 egui::Popup::close_all(ui.ctx());
                 if tool == active_tool {
@@ -126,47 +121,67 @@ impl GuiLayer {
             }
         }
 
-        if !self.sidebar_visible {
-            let separator_y = body.top() + TOOL_COUNT as f32 * TOOL_SIZE;
-            let layers_rect = egui::Rect::from_min_size(
-                egui::pos2(body.left(), separator_y),
-                egui::vec2(TOOL_RAIL_THICKNESS, TOOL_SIZE),
-            );
-            let layers_response = ui
-                .interact(layers_rect, ui.id().with("Layers"), egui::Sense::click())
-                .on_hover_text("Layers");
-            let layers_color = if self.layers_window_open || layers_response.hovered() {
+        let controls_top = body.top() + (PAINT_TOOL_COUNT + 2) as f32 * TOOL_SIZE;
+        let layers_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                body.left(),
+                body.top() + PAINT_TOOL_COUNT as f32 * TOOL_SIZE,
+            ),
+            egui::vec2(TOOL_RAIL_THICKNESS, TOOL_SIZE),
+        );
+        let layers_response = ui
+            .interact(layers_rect, ui.id().with("Layers"), egui::Sense::click())
+            .on_hover_text("Layers");
+        let layers_color =
+            if self.sidebar_visible || self.layers_window_open || layers_response.hovered() {
                 ui.visuals().text_color()
             } else {
                 ui.visuals().weak_text_color()
             };
-            egui::Image::new(egui::include_image!("../../../assets/icons/layers.svg"))
-                .fit_to_exact_size(egui::Vec2::splat(20.0))
-                .tint(layers_color)
-                .alt_text("Layers")
-                .paint_at(
-                    ui,
-                    egui::Rect::from_center_size(layers_rect.center(), egui::Vec2::splat(20.0)),
-                );
-            if layers_response.clicked() {
+        egui::Image::new(egui::include_image!("../../../assets/icons/layers.svg"))
+            .fit_to_exact_size(egui::Vec2::splat(20.0))
+            .tint(layers_color)
+            .alt_text("Layers")
+            .paint_at(
+                ui,
+                egui::Rect::from_center_size(layers_rect.center(), egui::Vec2::splat(20.0)),
+            );
+        if layers_response.clicked() {
+            if self.sidebar_visible {
+                self.toggle_sidebar();
+            } else {
                 self.layers_window_open = !self.layers_window_open;
             }
+        }
 
-            let color_rect = layers_rect.translate(egui::vec2(0.0, TOOL_SIZE));
-            let color_response = ui
-                .interact(color_rect, ui.id().with("Color"), egui::Sense::click())
-                .on_hover_text("Color");
-            ui.painter()
-                .circle_filled(color_rect.center(), 9.0, self.brush.color);
-            if color_response.clicked() {
+        let color_rect = layers_rect.translate(egui::vec2(0.0, TOOL_SIZE));
+        let color_response = ui
+            .interact(color_rect, ui.id().with("Color"), egui::Sense::click())
+            .on_hover_text("Color");
+        ui.painter()
+            .circle_filled(color_rect.center(), 9.0, self.brush.color);
+        if self.sidebar_visible || self.color_window_open {
+            ui.painter().circle_stroke(
+                color_rect.center(),
+                11.0,
+                egui::Stroke::new(2.0, ui.visuals().text_color()),
+            );
+        }
+        if color_response.clicked() {
+            if self.sidebar_visible {
+                self.toggle_sidebar();
+            } else {
                 self.color_window_open = !self.color_window_open;
             }
         }
+
         self.brush_slider_active = false;
         self.brush_slider_focus = None;
-        let controls_rect = rect.with_min_y(toolbar_rect.bottom() + controls_gap);
+        let controls_rect = egui::Rect::from_min_size(
+            egui::pos2(body.left(), controls_top),
+            egui::vec2(TOOL_RAIL_THICKNESS, controls_height),
+        );
         if controls_height > 0.0 {
-            paint_rounded_panel(ui, controls_rect, corner_radius);
             let mut controls_ui = ui.new_child(
                 egui::UiBuilder::new()
                     .id_salt("brush controls")
@@ -174,6 +189,21 @@ impl GuiLayer {
             );
             controls_ui.set_clip_rect(controls_rect.intersect(ui.clip_rect()));
             self.show_brush_controls(&mut controls_ui, active_tool, controls_height);
+        }
+
+        let transform_rect = egui::Rect::from_min_size(
+            controls_rect.left_bottom(),
+            egui::vec2(TOOL_RAIL_THICKNESS, TOOL_SIZE),
+        );
+        let transform_response = show_tool_button(
+            ui,
+            transform_rect,
+            EditorTool::Transform,
+            active_tool == EditorTool::Transform,
+        );
+        if transform_response.clicked() && active_tool != EditorTool::Transform {
+            egui::Popup::close_all(ui.ctx());
+            selected_tool = Some(EditorTool::Transform);
         }
         selected_tool
     }
