@@ -43,7 +43,7 @@ impl GalleryUi {
         active: Option<(&ArtworkId, &str, [u32; 2])>,
         warning: Option<&str>,
         commands: &mut Vec<AppCommand>,
-    ) {
+    ) -> f32 {
         self.sync_thumbnails(artworks);
         let rail_progress = ui.ctx().animate_bool_with_time_and_easing(
             egui::Id::new("artwork sidebar animation"),
@@ -56,6 +56,7 @@ impl GalleryUi {
         }
         self.show_rename_dialog(ui.ctx(), commands);
         self.show_delete_dialog(ui.ctx(), commands);
+        rail_progress
     }
 
     pub(super) fn toggle_visible(&mut self) {
