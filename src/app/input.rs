@@ -74,6 +74,7 @@ struct EyedropperDrag {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum KeyboardShortcut {
     ToggleSidebar,
+    ToggleArtworkRail,
     CycleTool,
     FlipCanvasHorizontal,
     FlipCanvasVertical,
@@ -666,6 +667,13 @@ fn keyboard_shortcut_for_key(
     match (key, modifiers) {
         (KeyCode::Tab, modifiers) if modifiers.is_empty() => Some(KeyboardShortcut::ToggleSidebar),
         (KeyCode::Tab, ModifiersState::SHIFT) => Some(KeyboardShortcut::CycleTool),
+        (KeyCode::KeyG, modifiers)
+            if (modifiers.control_key() || modifiers.super_key())
+                && !modifiers.alt_key()
+                && !modifiers.shift_key() =>
+        {
+            Some(KeyboardShortcut::ToggleArtworkRail)
+        }
         (KeyCode::KeyF, modifiers) if modifiers.is_empty() => {
             Some(KeyboardShortcut::FlipCanvasHorizontal)
         }
@@ -769,7 +777,6 @@ fn document_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<A
     match (key, modifiers.shift_key()) {
         (KeyCode::KeyS, false) => Some(AppCommand::Editor(EditorCommand::SaveArtwork)),
         (KeyCode::KeyE, true) => Some(AppCommand::Editor(EditorCommand::ExportPng)),
-        (KeyCode::KeyG, false) => Some(AppCommand::Navigation(NavigationCommand::ShowGallery)),
         _ => None,
     }
 }
@@ -838,6 +845,27 @@ mod tests {
             ),
             Some(KeyboardShortcut::CycleTool)
         );
+    }
+
+    #[test]
+    fn maps_artwork_rail_toggle_shortcut() {
+        for modifiers in [ModifiersState::CONTROL, ModifiersState::SUPER] {
+            assert_eq!(
+                keyboard_shortcut_for_key(KeyCode::KeyG, ElementState::Pressed, false, modifiers),
+                Some(KeyboardShortcut::ToggleArtworkRail)
+            );
+        }
+        for modifiers in [
+            ModifiersState::empty(),
+            ModifiersState::SHIFT,
+            ModifiersState::CONTROL | ModifiersState::SHIFT,
+            ModifiersState::CONTROL | ModifiersState::ALT,
+        ] {
+            assert_eq!(
+                keyboard_shortcut_for_key(KeyCode::KeyG, ElementState::Pressed, false, modifiers),
+                None
+            );
+        }
     }
 
     #[test]
@@ -1192,7 +1220,7 @@ mod tests {
         );
         assert_eq!(
             document_command_for_key(KeyCode::KeyG, ModifiersState::CONTROL),
-            Some(AppCommand::Navigation(NavigationCommand::ShowGallery))
+            None
         );
         assert_eq!(
             document_command_for_key(

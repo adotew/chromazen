@@ -1,8 +1,8 @@
 #[cfg(target_os = "macos")]
 mod imp {
     use muda::{
+        accelerator::{Accelerator, Code, Modifiers, CMD_OR_CTRL},
         Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
-        accelerator::{Accelerator, CMD_OR_CTRL, Code, Modifiers},
     };
     use winit::window::Window;
 
@@ -17,7 +17,6 @@ mod imp {
     const EXPORT_PNG_ID: &str = "chromazen.file.export-png";
     const ADD_REFERENCE_ID: &str = "chromazen.file.add-reference";
     const IMPORT_BRUSHES_ID: &str = "chromazen.file.import-brushes";
-    const SHOW_GALLERY_ID: &str = "chromazen.file.show-gallery";
     const QUIT_ID: &str = "chromazen.application.quit";
     const UNDO_ID: &str = "chromazen.edit.undo";
     const REDO_ID: &str = "chromazen.edit.redo";
@@ -41,7 +40,6 @@ mod imp {
         export_png: MenuItem,
         add_reference: MenuItem,
         import_brushes: MenuItem,
-        show_gallery: MenuItem,
         canvas_actions: [MenuItem; 6],
         installed: bool,
     }
@@ -53,8 +51,7 @@ mod imp {
             menu.append(&application_menu()?)
                 .map_err(|error| format!("failed to add application menu: {error}"))?;
 
-            let (file_menu, save_artwork, export_png, add_reference, import_brushes, show_gallery) =
-                file_menu()?;
+            let (file_menu, save_artwork, export_png, add_reference, import_brushes) = file_menu()?;
             menu.append(&file_menu)
                 .map_err(|error| format!("failed to add file menu: {error}"))?;
             let (edit_menu, undo, redo) = edit_menu()?;
@@ -76,7 +73,6 @@ mod imp {
                 export_png,
                 add_reference,
                 import_brushes,
-                show_gallery,
                 canvas_actions,
                 installed: false,
             })
@@ -102,7 +98,6 @@ mod imp {
             self.save_artwork.set_enabled(in_editor);
             self.add_reference.set_enabled(in_editor);
             self.import_brushes.set_enabled(in_editor);
-            self.show_gallery.set_enabled(in_editor);
         }
 
         pub(crate) fn set_canvas_enabled(&self, enabled: bool) {
@@ -126,7 +121,7 @@ mod imp {
         }
     }
 
-    fn file_menu() -> Result<(Submenu, MenuItem, MenuItem, MenuItem, MenuItem, MenuItem), String> {
+    fn file_menu() -> Result<(Submenu, MenuItem, MenuItem, MenuItem, MenuItem), String> {
         let new_artwork = MenuItem::with_id(
             NEW_ARTWORK_ID,
             "New Artwork",
@@ -151,12 +146,6 @@ mod imp {
         let add_reference = MenuItem::with_id(ADD_REFERENCE_ID, "Add Reference…", false, None);
         let import_brushes =
             MenuItem::with_id(IMPORT_BRUSHES_ID, "Import Photoshop Brushes…", false, None);
-        let show_gallery = MenuItem::with_id(
-            SHOW_GALLERY_ID,
-            "Return to Gallery",
-            false,
-            Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyG)),
-        );
         let menu = Submenu::with_items(
             "File",
             true,
@@ -166,7 +155,6 @@ mod imp {
                 &export_png,
                 &add_reference,
                 &import_brushes,
-                &show_gallery,
             ],
         )
         .map_err(|error| format!("failed to build file menu: {error}"))?;
@@ -176,7 +164,6 @@ mod imp {
             export_png,
             add_reference,
             import_brushes,
-            show_gallery,
         ))
     }
 
@@ -339,7 +326,6 @@ mod imp {
             EXPORT_PNG_ID => Some(AppCommand::Editor(EditorCommand::ExportPng)),
             ADD_REFERENCE_ID => Some(AppCommand::Editor(EditorCommand::AddReferences)),
             IMPORT_BRUSHES_ID => Some(AppCommand::Settings(SettingsCommand::ImportBrushes)),
-            SHOW_GALLERY_ID => Some(AppCommand::Navigation(NavigationCommand::ShowGallery)),
             QUIT_ID => Some(AppCommand::Navigation(NavigationCommand::Quit)),
             UNDO_ID => Some(AppCommand::Editor(EditorCommand::Undo)),
             REDO_ID => Some(AppCommand::Editor(EditorCommand::Redo)),
@@ -393,10 +379,6 @@ mod imp {
             assert_eq!(
                 command_for_id(&MenuId::new(IMPORT_BRUSHES_ID)),
                 Some(AppCommand::Settings(SettingsCommand::ImportBrushes))
-            );
-            assert_eq!(
-                command_for_id(&MenuId::new(SHOW_GALLERY_ID)),
-                Some(AppCommand::Navigation(NavigationCommand::ShowGallery))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(QUIT_ID)),

@@ -75,14 +75,6 @@ impl GuiLayer {
                             AppCommand::Settings(SettingsCommand::ImportBrushes),
                             &mut self.commands,
                         );
-                        menu_item(
-                            ui,
-                            "Return to Gallery",
-                            Some(GALLERY_SHORTCUT),
-                            state.document_enabled,
-                            AppCommand::Navigation(NavigationCommand::ShowGallery),
-                            &mut self.commands,
-                        );
                         ui.separator();
                         menu_item(
                             ui,

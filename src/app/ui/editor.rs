@@ -4,6 +4,12 @@ impl GuiLayer {
     pub fn run_editor(&mut self, window: &Window, state: EditorUiState<'_>) -> egui::FullOutput {
         let EditorUiState {
             menu,
+            artworks,
+            active_artwork_id,
+            active_artwork_title,
+            active_artwork_dimensions,
+            artwork_warning,
+            artwork_load_dialog_delay,
             layers,
             tool,
             layer_transform,
@@ -31,6 +37,17 @@ impl GuiLayer {
 
         context.run_ui(raw_input, |ui| {
             self.show_application_menu(ui.ctx(), menu);
+            self.gallery.show(
+                ui,
+                artworks,
+                Some((
+                    active_artwork_id,
+                    active_artwork_title,
+                    active_artwork_dimensions,
+                )),
+                artwork_warning,
+                &mut self.commands,
+            );
             if !ui.ctx().egui_wants_keyboard_input()
                 && ui
                     .ctx()
@@ -234,6 +251,13 @@ impl GuiLayer {
             }
             if let Some(action) = pending_navigation {
                 show_save_blocker(ui.ctx(), action, &save_status, &mut self.commands);
+            }
+            if let Some(delay) = artwork_load_dialog_delay {
+                if delay.is_zero() {
+                    show_loading_dialog(ui.ctx(), "artwork load dialog", "Opening artwork…");
+                } else {
+                    ui.ctx().request_repaint_after(delay);
+                }
             }
             if let Some(delay) = brush_import_dialog_delay {
                 if delay.is_zero() {

@@ -144,6 +144,7 @@ impl GuiLayer {
                                     ("Transform", "T"),
                                     ("Cycle paint tools", "Shift-Tab"),
                                     ("Show or hide sidebar", "Tab"),
+                                    ("Show or hide artwork tabs", RAIL_SHORTCUT),
                                     ("Resize brush", "Shift-drag"),
                                     ("Eyedropper", "Alt/Option"),
                                 ],
@@ -171,7 +172,6 @@ impl GuiLayer {
                                 &[
                                     ("Save", SAVE_SHORTCUT),
                                     ("Export PNG", EXPORT_SHORTCUT),
-                                    ("Return to gallery", GALLERY_SHORTCUT),
                                     ("Undo", UNDO_SHORTCUT),
                                     ("Redo", REDO_SHORTCUT),
                                     ("Apply transform or crop", "Enter"),

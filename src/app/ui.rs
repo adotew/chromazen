@@ -60,9 +60,9 @@ const EXPORT_SHORTCUT: &str = "⌘-Shift-E";
 #[cfg(not(target_os = "macos"))]
 const EXPORT_SHORTCUT: &str = "Ctrl-Shift-E";
 #[cfg(target_os = "macos")]
-const GALLERY_SHORTCUT: &str = "⌘-G";
+const RAIL_SHORTCUT: &str = "⌘-G";
 #[cfg(not(target_os = "macos"))]
-const GALLERY_SHORTCUT: &str = "Ctrl-G";
+const RAIL_SHORTCUT: &str = "Ctrl-G";
 #[cfg(target_os = "macos")]
 const UNDO_SHORTCUT: &str = "⌘-Z";
 #[cfg(not(target_os = "macos"))]
@@ -116,6 +116,12 @@ pub(crate) struct EyedropperIndicator {
 
 pub(crate) struct EditorUiState<'a> {
     pub(crate) menu: ApplicationMenuState,
+    pub(crate) artworks: &'a [ArtworkSummary],
+    pub(crate) active_artwork_id: &'a crate::artwork::ArtworkId,
+    pub(crate) active_artwork_title: &'a str,
+    pub(crate) active_artwork_dimensions: [u32; 2],
+    pub(crate) artwork_warning: Option<&'a str>,
+    pub(crate) artwork_load_dialog_delay: Option<Duration>,
     pub(crate) layers: &'a LayerSnapshot,
     pub(crate) tool: EditorTool,
     pub(crate) layer_transform: Option<LayerTransform>,
@@ -446,7 +452,7 @@ impl GuiLayer {
         self.gallery.apply_thumbnail(&self.context, completion);
     }
 
-    pub fn run_gallery(
+    pub fn run_empty(
         &mut self,
         window: &Window,
         artworks: &[ArtworkSummary],
@@ -459,6 +465,10 @@ impl GuiLayer {
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
         context.run_ui(raw_input, |ui| {
+            self.show_application_menu(
+                ui.ctx(),
+                ApplicationMenuState::new(false, false, false, false, false),
+            );
             if !ui.ctx().egui_wants_keyboard_input()
                 && ui
                     .ctx()
@@ -467,7 +477,15 @@ impl GuiLayer {
                 self.shortcuts_dialog_open = true;
             }
             self.gallery
-                .show(ui, artworks, discovery_warning, &mut self.commands);
+                .show(ui, artworks, None, discovery_warning, &mut self.commands);
+            egui::CentralPanel::default().show_inside(ui, |ui| {
+                ui.centered_and_justified(|ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.heading("No artwork selected");
+                        ui.label("Choose an artwork or use + to create one.");
+                    });
+                });
+            });
             if let Some(delay) = load_dialog_delay {
                 if delay.is_zero() {
                     show_loading_dialog(ui.ctx(), "artwork load dialog", "Opening artwork…");
@@ -483,6 +501,10 @@ impl GuiLayer {
 
     pub(crate) fn toggle_sidebar(&mut self) {
         self.sidebar_visible = !self.sidebar_visible;
+    }
+
+    pub(crate) fn toggle_artwork_rail(&mut self) {
+        self.gallery.toggle_visible();
     }
 
     pub(crate) fn close_popups(&self) -> bool {
@@ -1319,7 +1341,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn application_menu_disables_document_actions_in_gallery() {
+    fn application_menu_disables_document_actions_without_artwork() {
         let state = ApplicationMenuState::new(false, false, true, true, false);
 
         assert!(!state.document_enabled);

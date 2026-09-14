@@ -295,9 +295,7 @@ impl App {
     fn handle_navigation_command(&mut self, command: NavigationCommand) {
         if matches!(
             command,
-            NavigationCommand::CreateArtwork { .. }
-                | NavigationCommand::OpenArtwork(_)
-                | NavigationCommand::ShowGallery
+            NavigationCommand::CreateArtwork { .. } | NavigationCommand::OpenArtwork(_)
         ) {
             self.finish_editor_interaction();
         }
@@ -315,20 +313,8 @@ impl App {
                 }
             }
             NavigationCommand::OpenArtwork(id) => self.open_artwork(&id),
-            NavigationCommand::ShowGallery => {
-                if self.screen == AppScreen::Editor {
-                    if let Some(gui) = self.gui.as_mut() {
-                        gui.close_new_artwork_dialog();
-                        gui.close_canvas_crop();
-                    }
-                    self.pending_gallery = true;
-                    self.pending_new_artwork = None;
-                    self.autosave.request_save();
-                }
-            }
             NavigationCommand::CancelPending => {
-                self.pending_gallery = false;
-                self.pending_new_artwork = None;
+                self.pending_artwork = None;
                 self.pending_exit = false;
             }
             NavigationCommand::Quit => self.request_exit(),
@@ -336,23 +322,49 @@ impl App {
     }
 
     fn handle_gallery_command(&mut self, command: GalleryCommand) {
+        if self.has_pending_navigation() {
+            return;
+        }
         match command {
             GalleryCommand::Rename { id, title } => {
-                if let Err(error) = self.gallery.rename(&id, &title)
+                let title = title.trim().to_owned();
+                if self.autosave.artwork_id() == Some(&id) {
+                    self.autosave.rename_artwork(title.clone());
+                    if let Some(window) = self.window.as_ref() {
+                        window.set_title(&format!("{title} • Chromazen"));
+                    }
+                } else if let Err(error) = self.gallery.rename(&id, &title)
                     && let Some(gui) = self.gui.as_mut()
                 {
                     gui.open_error_dialog("Chromazen couldn’t rename the artwork.", error);
                 }
             }
             GalleryCommand::Duplicate(id) => {
-                if let Err(error) = self.gallery.start_duplicate(id)
+                if self.autosave.artwork_id() == Some(&id) {
+                    self.finish_editor_interaction();
+                    self.pending_artwork = Some(PendingArtwork::Duplicate(id));
+                    self.autosave.request_save();
+                } else if let Err(error) = self.gallery.start_duplicate(id)
                     && let Some(gui) = self.gui.as_mut()
                 {
                     gui.open_error_dialog("Chromazen couldn’t duplicate the artwork.", error);
                 }
             }
             GalleryCommand::Delete(id) => {
-                if let Err(error) = self.gallery.delete(&id)
+                if self.autosave.artwork_id() == Some(&id) {
+                    self.finish_editor_interaction();
+                    let saving = self.paint.as_ref().is_some_and(|paint| {
+                        matches!(
+                            self.autosave.status(paint, &self.references),
+                            autosave::SaveStatus::Saving
+                        )
+                    });
+                    if saving {
+                        self.pending_artwork = Some(PendingArtwork::Delete(id));
+                    } else {
+                        self.delete_active_artwork(id);
+                    }
+                } else if let Err(error) = self.gallery.delete(&id)
                     && let Some(gui) = self.gui.as_mut()
                 {
                     gui.open_error_dialog("Chromazen couldn’t delete the artwork.", error);
