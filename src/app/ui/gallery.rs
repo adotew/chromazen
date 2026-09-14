@@ -10,8 +10,9 @@ use super::super::{
 };
 use super::*;
 
-const ARTWORK_RAIL_WIDTH: f32 = 220.0;
+pub(super) const ARTWORK_RAIL_WIDTH: f32 = 220.0;
 const ARTWORK_ROW_HEIGHT: f32 = 60.0;
+const ARTWORK_TEXT_GAP: f32 = 4.0;
 const THUMBNAIL_SIZE: f32 = 44.0;
 
 #[derive(Default)]
@@ -51,6 +52,17 @@ impl GalleryUi {
         self.collapsed = !self.collapsed;
     }
 
+    /// Width the rail takes from the left of the window, so floating canvas widgets
+    /// can clear it.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    pub(super) fn rail_offset(&self) -> f32 {
+        if self.collapsed {
+            0.0
+        } else {
+            ARTWORK_RAIL_WIDTH
+        }
+    }
+
     fn show_rail(
         &mut self,
         ui: &mut egui::Ui,
@@ -59,14 +71,19 @@ impl GalleryUi {
         warning: Option<&str>,
         commands: &mut Vec<AppCommand>,
     ) {
+        let rail_fill = ui.visuals().window_fill();
+        let rail_frame = egui::Frame::side_top_panel(ui.style())
+            .fill(rail_fill)
+            .stroke(egui::Stroke::NONE);
         egui::Panel::left("artwork tabs")
+            .frame(rail_frame)
             .exact_size(ARTWORK_RAIL_WIDTH)
             .resizable(false)
             .show_separator_line(false)
             .show_inside(ui, |ui| {
+                ui.style_mut().visuals.panel_fill = rail_fill;
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    ui.add_space(40.0);
                     ui.label(egui::RichText::new("Chromazen").font(egui::FontId::new(
                         20.0,
                         egui::FontFamily::Name("elms_sans_light".into()),
@@ -166,7 +183,6 @@ impl GalleryUi {
         response.widget_info(|| {
             egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, title)
         });
-        let response = response.on_hover_text(format_dimensions(dimensions));
 
         let thumbnail_rect = egui::Rect::from_center_size(
             egui::pos2(rect.left() + 8.0 + THUMBNAIL_SIZE / 2.0, rect.center().y),
@@ -178,21 +194,36 @@ impl GalleryUi {
             egui::pos2(rect.right() - 20.0, rect.center().y),
             egui::Vec2::splat(32.0),
         );
+        let text_height = ui.text_style_height(&egui::TextStyle::Body)
+            + ARTWORK_TEXT_GAP
+            + ui.text_style_height(&egui::TextStyle::Small);
         let title_rect = egui::Rect::from_min_max(
-            egui::pos2(thumbnail_rect.right() + 10.0, rect.top()),
-            egui::pos2(menu_rect.left() - 4.0, rect.bottom()),
+            egui::pos2(
+                thumbnail_rect.right() + 10.0,
+                rect.center().y - text_height / 2.0,
+            ),
+            egui::pos2(menu_rect.left() - 4.0, rect.center().y + text_height / 2.0),
         );
         let mut title_ui = ui.new_child(
             egui::UiBuilder::new()
                 .id_salt(("artwork title", id.as_str()))
                 .max_rect(title_rect)
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                .layout(egui::Layout::top_down(egui::Align::LEFT)),
         );
-        title_ui.add_sized(
-            title_rect.size(),
+        title_ui.spacing_mut().item_spacing.y = ARTWORK_TEXT_GAP;
+        title_ui.add(
             egui::Label::new(egui::RichText::new(title).strong())
                 .truncate()
                 .selectable(false),
+        );
+        title_ui.add(
+            egui::Label::new(
+                egui::RichText::new(format_dimensions(dimensions))
+                    .weak()
+                    .small(),
+            )
+            .truncate()
+            .selectable(false),
         );
 
         let mut menu_ui = ui.new_child(
@@ -435,12 +466,15 @@ mod tests {
     fn the_rail_starts_visible_and_toggles_off() {
         let mut gallery = GalleryUi::default();
         assert!(!gallery.is_collapsed());
+        assert_eq!(gallery.rail_offset(), ARTWORK_RAIL_WIDTH);
 
         gallery.toggle_visible();
         assert!(gallery.is_collapsed());
+        assert_eq!(gallery.rail_offset(), 0.0);
 
         gallery.toggle_visible();
         assert!(!gallery.is_collapsed());
+        assert_eq!(gallery.rail_offset(), ARTWORK_RAIL_WIDTH);
     }
 
     #[test]

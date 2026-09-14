@@ -10,8 +10,10 @@ impl GuiLayer {
         context: &egui::Context,
         state: ApplicationMenuState,
     ) {
+        // The rail owns the left edge of the window; keep the menu over the canvas.
+        let rail_offset = self.gallery.rail_offset();
         egui::Area::new(egui::Id::new("application menu"))
-            .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 12.0))
+            .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0 + rail_offset, 12.0))
             .order(egui::Order::Foreground)
             .show(context, |ui| {
                 let response = ui.allocate_response(egui::Vec2::splat(36.0), egui::Sense::click());
