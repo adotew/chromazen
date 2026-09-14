@@ -74,15 +74,15 @@ impl GuiLayer {
         const TOOL_SIZE: f32 = 40.0;
         const PAINT_TOOL_COUNT: usize = 3;
         const VERTICAL_PADDING: f32 = 6.0;
+        const EDGE_MARGIN: f32 = 12.0;
 
         let tools = [PaintTool::Brush, PaintTool::Eraser, PaintTool::Smudge];
         let button_count = PAINT_TOOL_COUNT + 3;
         let buttons_height = TOOL_SIZE * button_count as f32;
-        let controls_height = (ui.ctx().content_rect().bottom()
-            - ui.cursor().top()
+        let controls_height = (ui.ctx().content_rect().height()
             - buttons_height
             - 2.0 * VERTICAL_PADDING
-            - 12.0)
+            - 2.0 * EDGE_MARGIN)
             .clamp(0.0, brush_controls::CONTROLS_HEIGHT);
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(

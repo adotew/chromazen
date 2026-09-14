@@ -225,8 +225,8 @@ impl GuiLayer {
 
             let selected_tool = egui::Area::new(egui::Id::new("tool rail"))
                 .anchor(
-                    egui::Align2::RIGHT_TOP,
-                    egui::vec2(-SIDEBAR_WIDTH * sidebar_progress, 12.0),
+                    egui::Align2::RIGHT_CENTER,
+                    egui::vec2(-SIDEBAR_WIDTH * sidebar_progress, 0.0),
                 )
                 .order(egui::Order::Foreground)
                 .show(ui.ctx(), |ui| self.show_toolbar(ui, tool))
