@@ -81,6 +81,15 @@ impl GalleryUi {
             .resizable(false)
             .show_separator_line(false)
             .show_inside(ui, |ui| {
+                let layer_id =
+                    egui::LayerId::new(egui::Order::Foreground, egui::Id::new("artwork sidebar"));
+                ui.ctx().move_to_top(layer_id);
+                let mut ui = ui.new_child(
+                    egui::UiBuilder::new()
+                        .id_salt("foreground")
+                        .layer_id(layer_id),
+                );
+                ui.painter().rect_filled(ui.clip_rect(), 0, rail_fill);
                 ui.style_mut().visuals.panel_fill = rail_fill;
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
@@ -117,7 +126,7 @@ impl GalleryUi {
 
                 egui::Panel::bottom("artwork rail footer")
                     .show_separator_line(false)
-                    .show_inside(ui, |ui| {
+                    .show_inside(&mut ui, |ui| {
                         ui.add_space(4.0);
                         let icon = egui::Image::new(egui::include_image!(
                             "../../../assets/icons/panel-left.svg"
@@ -140,7 +149,7 @@ impl GalleryUi {
                         ui.add_space(4.0);
                     });
 
-                egui::ScrollArea::vertical().show(ui, |ui| {
+                egui::ScrollArea::vertical().show(&mut ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 4.0;
                     if let Some((id, title, dimensions)) = active
                         && artworks.iter().all(|artwork| artwork.id != *id)

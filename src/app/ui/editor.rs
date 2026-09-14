@@ -82,11 +82,21 @@ impl GuiLayer {
                     .exact_size(SIDEBAR_WIDTH * sidebar_progress)
                     .resizable(false)
                     .show_inside(ui, |panel_ui| {
+                        let layer_id = egui::LayerId::new(
+                            egui::Order::Foreground,
+                            egui::Id::new("tools sidebar"),
+                        );
+                        panel_ui.ctx().move_to_top(layer_id);
+                        let mut panel_ui = panel_ui.new_child(
+                            egui::UiBuilder::new()
+                                .id_salt("foreground")
+                                .layer_id(layer_id),
+                        );
                         let component_rect = egui::Frame::side_top_panel(panel_ui.style())
                             .fill(egui::Color32::TRANSPARENT)
                             .stroke(egui::Stroke::NONE)
                             .widget_rect(panel_ui.max_rect());
-                        paint_rounded_panel(panel_ui, component_rect, egui::CornerRadius::ZERO);
+                        paint_rounded_panel(&panel_ui, component_rect, egui::CornerRadius::ZERO);
                         let inner_width = SIDEBAR_WIDTH
                             - egui::Frame::side_top_panel(panel_ui.style())
                                 .inner_margin
