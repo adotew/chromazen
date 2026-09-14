@@ -63,17 +63,6 @@ impl GalleryUi {
         self.collapsed = !self.collapsed;
     }
 
-    /// Width the rail takes from the left of the window, so floating canvas widgets
-    /// can clear it.
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
-    pub(super) fn rail_offset(&self) -> f32 {
-        if self.collapsed {
-            0.0
-        } else {
-            ARTWORK_RAIL_WIDTH
-        }
-    }
-
     fn show_rail(
         &mut self,
         ui: &mut egui::Ui,
@@ -85,7 +74,7 @@ impl GalleryUi {
     ) {
         let rail_fill = ui.visuals().window_fill();
         let rail_frame = egui::Frame::side_top_panel(ui.style())
-            .fill(rail_fill)
+            .fill(egui::Color32::TRANSPARENT)
             .stroke(egui::Stroke::NONE);
         egui::Panel::left("artwork tabs")
             .frame(rail_frame)
@@ -96,6 +85,16 @@ impl GalleryUi {
                 let layer_id =
                     egui::LayerId::new(egui::Order::Foreground, egui::Id::new("artwork sidebar"));
                 panel_ui.ctx().move_to_top(layer_id);
+                let mut panel_ui = panel_ui.new_child(
+                    egui::UiBuilder::new()
+                        .id_salt("foreground")
+                        .layer_id(layer_id),
+                );
+                let component_rect = egui::Frame::side_top_panel(panel_ui.style())
+                    .fill(egui::Color32::TRANSPARENT)
+                    .stroke(egui::Stroke::NONE)
+                    .widget_rect(panel_ui.max_rect());
+                paint_rounded_panel(&panel_ui, component_rect, egui::CornerRadius::ZERO);
                 let inner_width = ARTWORK_RAIL_WIDTH
                     - egui::Frame::side_top_panel(panel_ui.style())
                         .inner_margin
@@ -110,12 +109,10 @@ impl GalleryUi {
                 );
                 let mut ui = panel_ui.new_child(
                     egui::UiBuilder::new()
-                        .id_salt("foreground")
-                        .layer_id(layer_id)
+                        .id_salt("sidebar contents")
                         .max_rect(content_rect),
                 );
                 ui.set_clip_rect(panel_ui.clip_rect());
-                ui.painter().rect_filled(ui.clip_rect(), 0, rail_fill);
                 ui.style_mut().visuals.panel_fill = rail_fill;
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
@@ -175,32 +172,42 @@ impl GalleryUi {
                         ui.add_space(5.0);
                     });
 
-                egui::ScrollArea::vertical().show(&mut ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 5.0;
-                    if let Some((id, title, dimensions)) = active
-                        && artworks.iter().all(|artwork| artwork.id != *id)
-                    {
-                        self.show_artwork_row(ui, id, title, dimensions, true, commands);
-                    }
-                    for artwork in artworks {
-                        let selected = active.is_some_and(|(id, _, _)| id == &artwork.id);
-                        let (title, dimensions) = if selected {
-                            active
-                                .map(|(_, title, dimensions)| (title, dimensions))
-                                .unwrap_or((&artwork.title, artwork.dimensions))
-                        } else {
-                            (artwork.title.as_str(), artwork.dimensions)
-                        };
-                        self.show_artwork_row(
-                            ui,
-                            &artwork.id,
-                            title,
-                            dimensions,
-                            selected,
-                            commands,
-                        );
-                    }
-                });
+                ui.spacing_mut().item_spacing.y = 5.0;
+                let pending_active =
+                    active.filter(|(id, _, _)| artworks.iter().all(|artwork| artwork.id != **id));
+                let pending_count = usize::from(pending_active.is_some());
+                egui::ScrollArea::vertical().show_rows(
+                    &mut ui,
+                    ARTWORK_ROW_HEIGHT,
+                    artworks.len() + pending_count,
+                    |ui, rows| {
+                        for row in rows {
+                            if row == 0
+                                && let Some((id, title, dimensions)) = pending_active
+                            {
+                                self.show_artwork_row(ui, id, title, dimensions, true, commands);
+                                continue;
+                            }
+                            let artwork = &artworks[row - pending_count];
+                            let selected = active.is_some_and(|(id, _, _)| id == &artwork.id);
+                            let (title, dimensions) = if selected {
+                                active
+                                    .map(|(_, title, dimensions)| (title, dimensions))
+                                    .unwrap_or((&artwork.title, artwork.dimensions))
+                            } else {
+                                (artwork.title.as_str(), artwork.dimensions)
+                            };
+                            self.show_artwork_row(
+                                ui,
+                                &artwork.id,
+                                title,
+                                dimensions,
+                                selected,
+                                commands,
+                            );
+                        }
+                    },
+                );
             });
     }
 
@@ -499,15 +506,12 @@ mod tests {
     fn the_rail_starts_visible_and_toggles_off() {
         let mut gallery = GalleryUi::default();
         assert!(!gallery.is_collapsed());
-        assert_eq!(gallery.rail_offset(), ARTWORK_RAIL_WIDTH);
 
         gallery.toggle_visible();
         assert!(gallery.is_collapsed());
-        assert_eq!(gallery.rail_offset(), 0.0);
 
         gallery.toggle_visible();
         assert!(!gallery.is_collapsed());
-        assert_eq!(gallery.rail_offset(), ARTWORK_RAIL_WIDTH);
     }
 
     #[test]

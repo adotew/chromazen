@@ -39,7 +39,6 @@ impl GuiLayer {
         let context = self.context.clone();
 
         context.run_ui(raw_input, |ui| {
-            self.show_application_menu(ui.ctx(), menu);
             let gallery_progress = self.gallery.show(
                 ui,
                 artworks,
@@ -51,6 +50,7 @@ impl GuiLayer {
                 artwork_warning,
                 &mut self.commands,
             );
+            self.show_application_menu(ui.ctx(), menu, gallery_progress);
             if !ui.ctx().egui_wants_keyboard_input()
                 && ui
                     .ctx()

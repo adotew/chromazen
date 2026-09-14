@@ -9,9 +9,10 @@ impl GuiLayer {
         &mut self,
         context: &egui::Context,
         state: ApplicationMenuState,
+        gallery_progress: f32,
     ) {
         // The rail owns the left edge of the window; keep the menu over the canvas.
-        let rail_offset = self.gallery.rail_offset();
+        let rail_offset = ARTWORK_RAIL_WIDTH * gallery_progress;
         egui::Area::new(egui::Id::new("application menu"))
             .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0 + rail_offset, 12.0))
             .order(egui::Order::Foreground)
@@ -242,6 +243,7 @@ impl GuiLayer {
         &mut self,
         _context: &egui::Context,
         _state: ApplicationMenuState,
+        _gallery_progress: f32,
     ) {
     }
 }

@@ -465,10 +465,6 @@ impl GuiLayer {
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
         context.run_ui(raw_input, |ui| {
-            self.show_application_menu(
-                ui.ctx(),
-                ApplicationMenuState::new(false, false, false, false, false),
-            );
             if !ui.ctx().egui_wants_keyboard_input()
                 && ui
                     .ctx()
@@ -476,8 +472,14 @@ impl GuiLayer {
             {
                 self.shortcuts_dialog_open = true;
             }
-            self.gallery
-                .show(ui, artworks, None, discovery_warning, &mut self.commands);
+            let gallery_progress =
+                self.gallery
+                    .show(ui, artworks, None, discovery_warning, &mut self.commands);
+            self.show_application_menu(
+                ui.ctx(),
+                ApplicationMenuState::new(false, false, false, false, false),
+                gallery_progress,
+            );
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 ui.centered_and_justified(|ui| {
                     ui.vertical_centered(|ui| {
