@@ -83,7 +83,7 @@ impl GalleryUi {
             .show_separator_line(false)
             .show_inside(ui, |panel_ui| {
                 let layer_id =
-                    egui::LayerId::new(egui::Order::Foreground, egui::Id::new("artwork sidebar"));
+                    egui::LayerId::new(egui::Order::Middle, egui::Id::new("artwork sidebar"));
                 panel_ui.ctx().move_to_top(layer_id);
                 let mut panel_ui = panel_ui.new_child(
                     egui::UiBuilder::new()

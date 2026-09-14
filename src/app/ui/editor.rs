@@ -85,10 +85,8 @@ impl GuiLayer {
                     .exact_size(SIDEBAR_WIDTH * sidebar_progress)
                     .resizable(false)
                     .show_inside(ui, |panel_ui| {
-                        let layer_id = egui::LayerId::new(
-                            egui::Order::Foreground,
-                            egui::Id::new("tools sidebar"),
-                        );
+                        let layer_id =
+                            egui::LayerId::new(egui::Order::Middle, egui::Id::new("tools sidebar"));
                         panel_ui.ctx().move_to_top(layer_id);
                         let mut panel_ui = panel_ui.new_child(
                             egui::UiBuilder::new()
