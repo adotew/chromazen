@@ -201,9 +201,14 @@ impl GuiLayer {
             EditorTool::Transform,
             active_tool == EditorTool::Transform,
         );
-        if transform_response.clicked() && active_tool != EditorTool::Transform {
+        if transform_response.clicked() {
             egui::Popup::close_all(ui.ctx());
-            selected_tool = Some(EditorTool::Transform);
+            if active_tool == EditorTool::Transform {
+                self.commands
+                    .push(AppCommand::Editor(EditorCommand::ApplyLayerTransform));
+            } else {
+                selected_tool = Some(EditorTool::Transform);
+            }
         }
         selected_tool
     }
