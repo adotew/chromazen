@@ -87,7 +87,13 @@ fn adaptive_contrast_color(rgb: vec3f) -> vec3f {
   let minimum = min(min(rgb.r, rgb.g), rgb.b);
   let saturation = (value - minimum) / value;
   let strength = mix(0.22, 0.34, saturation);
-  let targetValue = value + strength * (1.0 - 2.0 * value);
+  let originalShift = strength * (1.0 - 2.0 * value);
+  // Blend the polarity across the midtones instead of flipping it at one value. The asymmetric
+  // interval keeps the 50% gray workspace on the dark side while turning the unavoidable
+  // low-contrast point into a gradual fade on nearby lower midtones.
+  let direction = mix(-1.0, 1.0, smoothstep(-0.02, 0.08, originalShift));
+  let visibleShift = direction * max(abs(originalShift), 0.10);
+  let targetValue = clamp(value + visibleShift, 0.0, 1.0);
   return rgb * (targetValue / value);
 }
 
