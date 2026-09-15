@@ -1,8 +1,7 @@
-<p align="center">
+<h1 align="center">
   <img src="assets/chromazen-logo.png" alt="Chromazen icon" width="128">
-</p>
-
-<h1 align="center">Chromazen</h1>
+  <br>Chromazen
+</h1>
 
 <p align="center">
   A fast, native painting app built for a focused drawing experience.
