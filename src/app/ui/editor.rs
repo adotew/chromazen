@@ -111,13 +111,32 @@ impl GuiLayer {
                         );
                         content_ui.set_clip_rect(panel_ui.clip_rect());
 
+                        content_ui.vertical_centered(|ui| {
+                            ui.heading("Color");
+                        });
+                        content_ui.add_space(8.0);
                         self.show_brush_color_picker(&mut content_ui);
                         content_ui.add_space(8.0);
                         content_ui.separator();
-                        if add_layer_button(&mut content_ui) {
-                            self.commands
-                                .push(AppCommand::Editor(EditorCommand::AddLayer));
-                        }
+                        content_ui.add_space(8.0);
+                        let header_width = content_ui.available_width();
+                        content_ui.allocate_ui(egui::vec2(header_width, 28.0), |ui| {
+                            ui.columns(3, |columns| {
+                                columns[1].vertical_centered(|ui| {
+                                    ui.heading("Layers");
+                                });
+                                columns[0].with_layout(
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        if add_layer_button(ui) {
+                                            self.commands
+                                                .push(AppCommand::Editor(EditorCommand::AddLayer));
+                                        }
+                                    },
+                                );
+                            });
+                        });
+                        content_ui.add_space(8.0);
                         self.show_layers_panel(&mut content_ui, layers, background);
                     });
             }
