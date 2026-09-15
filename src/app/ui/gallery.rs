@@ -116,10 +116,8 @@ impl GalleryUi {
                 ui.style_mut().visuals.panel_fill = rail_fill;
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Chromazen").font(egui::FontId::new(
-                        24.0,
-                        egui::FontFamily::Name("elms_sans_light".into()),
-                    )));
+                    ui.set_height(RAIL_BUTTON_SIZE);
+                    ui.heading("Gallery");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let add_icon = egui::Image::new(egui::include_image!(
                             "../../../assets/icons/plus.svg"
