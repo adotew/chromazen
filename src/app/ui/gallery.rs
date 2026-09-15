@@ -146,31 +146,6 @@ impl GalleryUi {
                     ui.add_space(10.0);
                 }
 
-                egui::Panel::bottom("artwork rail footer")
-                    .show_separator_line(false)
-                    .show_inside(&mut ui, |ui| {
-                        ui.add_space(5.0);
-                        let icon = egui::Image::new(egui::include_image!(
-                            "../../../assets/icons/panel-left.svg"
-                        ))
-                        .fit_to_exact_size(egui::Vec2::splat(RAIL_ICON_SIZE))
-                        .alt_text("Hide artwork tabs");
-                        if ui
-                            .add(
-                                egui::Button::image(icon)
-                                    .frame_when_inactive(false)
-                                    .image_tint_follows_text_color(true)
-                                    .corner_radius(10)
-                                    .min_size(egui::Vec2::splat(RAIL_BUTTON_SIZE)),
-                            )
-                            .on_hover_text(format!("Hide artwork tabs ({RAIL_SHORTCUT})"))
-                            .clicked()
-                        {
-                            self.collapsed = true;
-                        }
-                        ui.add_space(5.0);
-                    });
-
                 ui.spacing_mut().item_spacing.y = 5.0;
                 let pending_active =
                     active.filter(|(id, _, _)| artworks.iter().all(|artwork| artwork.id != **id));
