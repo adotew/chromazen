@@ -21,22 +21,25 @@ pub(super) fn show(ui: &mut Ui, color: &mut Color32) -> bool {
 
     let width = ui.available_width();
     ui.scope(|ui| {
-        ui.spacing_mut().slider_width = width;
+        let hue_width = ui.spacing().interact_size.y;
+        ui.spacing_mut().slider_width = width - hue_width - ui.spacing().item_spacing.x;
 
-        let opaque = HsvaGamma { a: 1.0, ..hsvag };
-        color_slider_2d(ui, &mut hsvag.s, &mut hsvag.v, |s, v| {
-            HsvaGamma { s, v, ..opaque }.into()
+        ui.horizontal(|ui| {
+            let opaque = HsvaGamma { a: 1.0, ..hsvag };
+            color_slider_2d(ui, &mut hsvag.s, &mut hsvag.v, |s, v| {
+                HsvaGamma { s, v, ..opaque }.into()
+            });
+            color_slider_vertical(ui, &mut hsvag.h, |h| {
+                HsvaGamma {
+                    h,
+                    s: 1.0,
+                    v: 1.0,
+                    a: 1.0,
+                }
+                .into()
+            })
+            .on_hover_text("Hue");
         });
-        color_slider_1d(ui, &mut hsvag.h, |h| {
-            HsvaGamma {
-                h,
-                s: 1.0,
-                v: 1.0,
-                a: 1.0,
-            }
-            .into()
-        })
-        .on_hover_text("Hue");
     });
 
     hsva = Hsva::from(hsvag);
@@ -53,46 +56,50 @@ pub(super) fn show(ui: &mut Ui, color: &mut Color32) -> bool {
     hsva != before
 }
 
-fn color_slider_1d(ui: &mut Ui, value: &mut f32, color_at: impl Fn(f32) -> Color32) -> Response {
-    let desired_size = egui::vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
+fn color_slider_vertical(
+    ui: &mut Ui,
+    value: &mut f32,
+    color_at: impl Fn(f32) -> Color32,
+) -> Response {
+    let desired_size = egui::vec2(ui.spacing().interact_size.y, ui.spacing().slider_width);
     let (rect, response) = ui.allocate_at_least(desired_size, Sense::click_and_drag());
-    let thumb_radius = rect.height() * 0.32;
+    let thumb_radius = rect.width() * 0.32;
     let track_rect = egui::Rect::from_center_size(
         rect.center(),
         egui::vec2(
-            (rect.width() - 2.0 * thumb_radius).max(0.0),
-            6.0_f32.min(rect.height()),
+            6.0_f32.min(rect.width()),
+            (rect.height() - 2.0 * thumb_radius).max(0.0),
         ),
     );
 
     if let Some(pointer) = response.interact_pointer_pos() {
-        *value = egui::remap_clamp(pointer.x, track_rect.x_range(), 0.0..=1.0);
+        *value = egui::remap_clamp(pointer.y, track_rect.y_range(), 0.0..=1.0);
     }
 
     if ui.is_rect_visible(rect) {
         let mut mesh = Mesh::default();
         for index in 0..=GRADIENT_STEPS {
             let t = index as f32 / GRADIENT_STEPS as f32;
-            let x = egui::lerp(track_rect.x_range(), t);
+            let y = egui::lerp(track_rect.y_range(), t);
             let color = color_at(t);
-            mesh.colored_vertex(egui::pos2(x, track_rect.top()), color);
-            mesh.colored_vertex(egui::pos2(x, track_rect.bottom()), color);
+            mesh.colored_vertex(egui::pos2(track_rect.left(), y), color);
+            mesh.colored_vertex(egui::pos2(track_rect.right(), y), color);
             if index < GRADIENT_STEPS {
                 mesh.add_triangle(2 * index, 2 * index + 1, 2 * index + 2);
                 mesh.add_triangle(2 * index + 1, 2 * index + 2, 2 * index + 3);
             }
         }
         ui.painter().add(egui::Shape::mesh(mesh));
-        let track_radius = track_rect.height() / 2.0;
+        let track_radius = track_rect.width() / 2.0;
         ui.painter()
-            .circle_filled(track_rect.left_center(), track_radius, color_at(0.0));
+            .circle_filled(track_rect.center_top(), track_radius, color_at(0.0));
         ui.painter()
-            .circle_filled(track_rect.right_center(), track_radius, color_at(1.0));
+            .circle_filled(track_rect.center_bottom(), track_radius, color_at(1.0));
 
-        let x = egui::lerp(track_rect.x_range(), *value);
+        let y = egui::lerp(track_rect.y_range(), *value);
         let picked = color_at(*value);
         ui.painter()
-            .circle_filled(egui::pos2(x, track_rect.center().y), thumb_radius, picked);
+            .circle_filled(egui::pos2(track_rect.center().x, y), thumb_radius, picked);
     }
 
     response
@@ -142,7 +149,7 @@ fn color_slider_2d(
         let picked = color_at(*x_value, *y_value);
         ui.painter().circle(
             center,
-            rect.width() / 12.0,
+            ui.spacing().interact_size.y * 0.32,
             picked,
             egui::Stroke::new(visuals.fg_stroke.width, contrast_color(picked)),
         );
