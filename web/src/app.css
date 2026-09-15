@@ -69,8 +69,8 @@ main {
 }
 
 .app-icon {
-  width: 6.5rem;
-  height: 6.5rem;
+  width: 10rem;
+  height: 10rem;
   margin-bottom: 1rem;
   filter: drop-shadow(0 0 1px rgb(23 23 20 / 0.7))
     drop-shadow(0 3px 8px rgb(23 23 20 / 0.2));
@@ -265,7 +265,9 @@ a:hover {
   font: inherit;
   font-weight: 600;
   text-decoration: none;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .download-button:hover {
