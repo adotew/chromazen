@@ -1,8 +1,5 @@
 use super::*;
 
-const WORKSPACE_INSET: f32 = 6.0;
-const WORKSPACE_CORNER_RADIUS: u8 = 16;
-
 impl GuiLayer {
     pub fn run_editor(&mut self, window: &Window, state: EditorUiState<'_>) -> egui::FullOutput {
         let EditorUiState {
@@ -220,15 +217,7 @@ impl GuiLayer {
                 }
             }
 
-            let workspace_bounds = ui.available_rect_before_wrap();
-            let workspace_rect =
-                workspace_rect(workspace_bounds, gallery_progress, sidebar_progress);
-            paint_workspace_mask(
-                ui,
-                workspace_bounds,
-                workspace_rect,
-                workspace_corner_radius(gallery_progress, sidebar_progress),
-            );
+            let workspace_rect = ui.available_rect_before_wrap();
             self.show_workspace_references(ui.ctx(), references, workspace_view, workspace_rect);
             if tool == EditorTool::Transform {
                 self.show_layer_transform_overlay(
@@ -318,90 +307,5 @@ impl GuiLayer {
             self.show_message_dialog(ui.ctx());
             self.show_shortcuts_dialog(ui.ctx());
         })
-    }
-}
-
-fn workspace_rect(bounds: egui::Rect, left: f32, right: f32) -> egui::Rect {
-    let vertical = WORKSPACE_INSET * left.max(right);
-    egui::Rect::from_min_max(
-        bounds.min + egui::vec2(WORKSPACE_INSET * left, vertical),
-        bounds.max - egui::vec2(WORKSPACE_INSET * right, vertical),
-    )
-}
-
-fn workspace_corner_radius(left: f32, right: f32) -> egui::CornerRadius {
-    let left = (f32::from(WORKSPACE_CORNER_RADIUS) * left).round() as u8;
-    let right = (f32::from(WORKSPACE_CORNER_RADIUS) * right).round() as u8;
-    egui::CornerRadius {
-        nw: left,
-        ne: right,
-        sw: left,
-        se: right,
-    }
-}
-
-fn paint_workspace_mask(
-    ui: &egui::Ui,
-    bounds: egui::Rect,
-    workspace: egui::Rect,
-    corner_radius: egui::CornerRadius,
-) {
-    let layer_id = egui::LayerId::new(egui::Order::Middle, egui::Id::new("rounded workspace mask"));
-    ui.ctx().move_to_top(layer_id);
-    ui.ctx()
-        .layer_painter(layer_id)
-        .with_clip_rect(bounds)
-        .rect_stroke(
-            workspace,
-            corner_radius,
-            egui::Stroke::new(
-                WORKSPACE_INSET + f32::from(WORKSPACE_CORNER_RADIUS),
-                ui.visuals().window_fill(),
-            ),
-            egui::StrokeKind::Outside,
-        );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn workspace_frame_follows_its_sidebars() {
-        assert_eq!(workspace_corner_radius(0.0, 0.0), egui::CornerRadius::ZERO);
-        let bounds = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(100.0, 100.0));
-        assert_eq!(workspace_rect(bounds, 0.0, 0.0), bounds);
-        assert_eq!(
-            workspace_rect(bounds, 1.0, 0.0),
-            egui::Rect::from_min_max(
-                egui::pos2(WORKSPACE_INSET, WORKSPACE_INSET),
-                egui::pos2(100.0, 100.0 - WORKSPACE_INSET),
-            )
-        );
-        assert_eq!(
-            workspace_rect(bounds, 0.0, 1.0),
-            egui::Rect::from_min_max(
-                egui::pos2(0.0, WORKSPACE_INSET),
-                egui::pos2(100.0 - WORKSPACE_INSET, 100.0 - WORKSPACE_INSET),
-            )
-        );
-        assert_eq!(
-            workspace_corner_radius(1.0, 0.0),
-            egui::CornerRadius {
-                nw: WORKSPACE_CORNER_RADIUS,
-                ne: 0,
-                sw: WORKSPACE_CORNER_RADIUS,
-                se: 0,
-            }
-        );
-        assert_eq!(
-            workspace_corner_radius(0.0, 1.0),
-            egui::CornerRadius {
-                nw: 0,
-                ne: WORKSPACE_CORNER_RADIUS,
-                sw: 0,
-                se: WORKSPACE_CORNER_RADIUS,
-            }
-        );
     }
 }
