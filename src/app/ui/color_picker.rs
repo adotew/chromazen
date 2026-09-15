@@ -37,27 +37,6 @@ pub(super) fn show(ui: &mut Ui, color: &mut Color32) -> bool {
             .into()
         })
         .on_hover_text("Hue");
-
-        let saturation_base = HsvaGamma { a: 1.0, ..hsvag };
-        color_slider_1d(ui, &mut hsvag.s, |s| {
-            HsvaGamma {
-                s,
-                ..saturation_base
-            }
-            .into()
-        })
-        .on_hover_text("Saturation");
-
-        color_slider_1d(ui, &mut hsvag.v, |brightness| {
-            HsvaGamma {
-                h: 0.0,
-                s: 0.0,
-                v: brightness,
-                a: 1.0,
-            }
-            .into()
-        })
-        .on_hover_text("Brightness");
     });
 
     hsva = Hsva::from(hsvag);
