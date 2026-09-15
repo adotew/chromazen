@@ -14,8 +14,8 @@ pub(super) const ARTWORK_RAIL_WIDTH: f32 = 264.0;
 const ARTWORK_ROW_HEIGHT: f32 = 72.0;
 const ARTWORK_TEXT_GAP: f32 = 5.0;
 const THUMBNAIL_SIZE: f32 = 53.0;
-const ARTWORK_TITLE_SIZE: f32 = 17.0;
-const ARTWORK_DIMENSIONS_SIZE: f32 = 13.0;
+const ARTWORK_TITLE_SIZE: f32 = 16.0;
+const ARTWORK_DIMENSIONS_SIZE: f32 = 12.0;
 const RAIL_ICON_SIZE: f32 = 22.0;
 const RAIL_BUTTON_SIZE: f32 = 38.0;
 
@@ -117,6 +117,7 @@ impl GalleryUi {
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     ui.set_height(RAIL_BUTTON_SIZE);
+                    ui.add_space(10.0);
                     ui.heading("Gallery");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let add_icon = egui::Image::new(egui::include_image!(
@@ -250,9 +251,13 @@ impl GalleryUi {
         );
         title_ui.spacing_mut().item_spacing.y = ARTWORK_TEXT_GAP;
         title_ui.add(
-            egui::Label::new(egui::RichText::new(title).strong().size(ARTWORK_TITLE_SIZE))
-                .truncate()
-                .selectable(false),
+            egui::Label::new(
+                egui::RichText::new(title)
+                    .color(ui.visuals().text_color().gamma_multiply(0.85))
+                    .size(ARTWORK_TITLE_SIZE),
+            )
+            .truncate()
+            .selectable(false),
         );
         title_ui.add(
             egui::Label::new(
@@ -273,10 +278,11 @@ impl GalleryUi {
             "../../../assets/icons/ellipsis-vertical.svg"
         ))
         .fit_to_exact_size(egui::Vec2::splat(RAIL_ICON_SIZE))
+        .tint(ui.visuals().weak_text_color())
         .alt_text("Artwork menu");
         let (menu_response, _) = MenuButton::from_button(
             egui::Button::image(icon)
-                .frame_when_inactive(false)
+                .frame(false)
                 .corner_radius(10)
                 .min_size(egui::Vec2::splat(RAIL_BUTTON_SIZE)),
         )
