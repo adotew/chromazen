@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/app-icon-source.png" alt="Chromazen icon" width="128">
+  <img src="assets/chromazen-logo.png" alt="Chromazen icon" width="128">
 </p>
 
 <h1 align="center">Chromazen</h1>
