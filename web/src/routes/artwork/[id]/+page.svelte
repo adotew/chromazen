@@ -239,6 +239,7 @@
 
 <svelte:head>
   <title>Web App — Chromazen</title>
+  <meta name="robots" content="noindex" />
   <meta
     name="description"
     content="Try Chromazen's GPU painting canvas directly in your browser."

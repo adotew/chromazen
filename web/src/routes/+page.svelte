@@ -2,6 +2,10 @@
   import Download from '@lucide/svelte/icons/download'
 
   const repositoryUrl = 'https://github.com/adotew/chromazen'
+  const pageTitle = 'Chromazen — Fast, Lightweight Painting App'
+  const pageDescription =
+    'Chromazen is a fast, distraction-free painting app for macOS, Windows, and Linux, with pressure-sensitive brushes, layers, autosave, and PNG export.'
+  const canonicalUrl = 'https://www.chromazen.app/'
 
   function newArtwork() {
     window.location.href = `/artwork/${crypto.randomUUID()}`
@@ -9,12 +13,18 @@
 </script>
 
 <svelte:head>
-  <title>Chromazen — Minimal Native Painting App</title>
+  <title>{pageTitle}</title>
   <link rel="icon" href="/favicon.png" />
-  <meta
-    name="description"
-    content="Chromazen is a minimal native painting application focused on brush performance."
-  />
+  <link rel="canonical" href={canonicalUrl} />
+  <meta name="description" content={pageDescription} />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Chromazen" />
+  <meta property="og:title" content={pageTitle} />
+  <meta property="og:description" content={pageDescription} />
+  <meta property="og:url" content={canonicalUrl} />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content={pageTitle} />
+  <meta name="twitter:description" content={pageDescription} />
 </svelte:head>
 
 <main>

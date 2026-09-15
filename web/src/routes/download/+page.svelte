@@ -1,12 +1,42 @@
 <script lang="ts">
   const repositoryUrl = 'https://github.com/adotew/chromazen'
   const latestDownloadUrl = `${repositoryUrl}/releases/latest/download`
+  const pageTitle = 'Download Chromazen for macOS, Windows & Linux'
+  const pageDescription =
+    'Download the free Chromazen beta for macOS, Windows, or Linux. Get the latest native painting app release, plus release notes and checksums.'
+  const canonicalUrl = 'https://www.chromazen.app/download'
+  const structuredData = JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'Chromazen',
+    description: pageDescription,
+    url: 'https://www.chromazen.app/',
+    downloadUrl: canonicalUrl,
+    applicationCategory: 'DesignApplication',
+    operatingSystem: 'macOS, Windows, Linux',
+    isAccessibleForFree: true,
+    offers: {
+      '@type': 'Offer',
+      price: 0,
+      priceCurrency: 'USD',
+    },
+  })
 </script>
 
 <svelte:head>
-  <title>Download Chromazen</title>
+  <title>{pageTitle}</title>
   <link rel="icon" href="/favicon.png" />
-  <meta name="description" content="Download Chromazen for macOS, Windows, or Linux." />
+  <link rel="canonical" href={canonicalUrl} />
+  <meta name="description" content={pageDescription} />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Chromazen" />
+  <meta property="og:title" content={pageTitle} />
+  <meta property="og:description" content={pageDescription} />
+  <meta property="og:url" content={canonicalUrl} />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content={pageTitle} />
+  <meta name="twitter:description" content={pageDescription} />
+  {@html `<script type="application/ld+json">${structuredData}</script>`}
 </svelte:head>
 
 <header class="site-header">
@@ -22,7 +52,7 @@
   <div class="download-page">
     <img class="download-logo" src="/favicon.png" alt="" width="512" height="512" />
     <h1>Download Chromazen</h1>
-    <p>Latest release · <a href={`${repositoryUrl}/releases/latest`}>Release notes and checksums</a></p>
+    <p>Latest free beta release · <a href={`${repositoryUrl}/releases/latest`}>Release notes and checksums</a></p>
     <div class="download-grid">
       <section class="download-card">
         <h2>
