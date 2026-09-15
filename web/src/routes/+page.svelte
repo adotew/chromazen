@@ -14,7 +14,6 @@
 
 <svelte:head>
   <title>{pageTitle}</title>
-  <link rel="icon" href="/favicon.png" />
   <link rel="canonical" href={canonicalUrl} />
   <meta name="description" content={pageDescription} />
   <meta property="og:type" content="website" />
@@ -29,7 +28,7 @@
 
 <main>
   <div class="intro">
-    <img class="app-icon" src="/favicon.png" alt="" width="512" height="512" />
+    <img class="app-icon" src="/logo.png" alt="" width="512" height="512" />
     <h1>Chromazen</h1>
     <p>A lightweight, distraction-free painting application focused on performance.</p>
     <div class="download-buttons">

@@ -25,7 +25,6 @@
 
 <svelte:head>
   <title>{pageTitle}</title>
-  <link rel="icon" href="/favicon.png" />
   <link rel="canonical" href={canonicalUrl} />
   <meta name="description" content={pageDescription} />
   <meta property="og:type" content="website" />
@@ -36,13 +35,13 @@
   <meta name="twitter:card" content="summary" />
   <meta name="twitter:title" content={pageTitle} />
   <meta name="twitter:description" content={pageDescription} />
-  {@html `<script type="application/ld+json">${structuredData}</script>`}
+  {@html `<${'script'} type="application/ld+json">${structuredData}</${'script'}>`}
 </svelte:head>
 
 <header class="site-header">
   <div class="site-header-content">
     <a href="/" aria-label="Chromazen home">
-      <img src="/favicon.png" alt="" width="512" height="512" />
+      <img src="/logo.png" alt="" width="512" height="512" />
       <span>Chromazen</span>
     </a>
   </div>
@@ -50,7 +49,7 @@
 
 <main class="download-main">
   <div class="download-page">
-    <img class="download-logo" src="/favicon.png" alt="" width="512" height="512" />
+    <img class="download-logo" src="/logo.png" alt="" width="512" height="512" />
     <h1>Download Chromazen</h1>
     <p>Latest free beta release · <a href={`${repositoryUrl}/releases/latest`}>Release notes and checksums</a></p>
     <div class="download-grid">
