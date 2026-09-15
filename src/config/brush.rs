@@ -215,10 +215,10 @@ impl LoadedBrushPreset {
 
 fn load_bundled_stamp(id: &str) -> Result<RgbaImage, ConfigError> {
     let bytes: &[u8] = match id {
-        ROUNDED_ID => include_bytes!("../../assets/rounded.png"),
-        RECTANGLE_ID => include_bytes!("../../assets/rectangle.png"),
-        BRISTLE_ID => include_bytes!("../../assets/bristle.png"),
-        _ => include_bytes!("../../assets/charcoal.png"),
+        ROUNDED_ID => include_bytes!("../../assets/stamps/rounded.png"),
+        RECTANGLE_ID => include_bytes!("../../assets/stamps/rectangle.png"),
+        BRISTLE_ID => include_bytes!("../../assets/stamps/bristle.png"),
+        _ => include_bytes!("../../assets/stamps/charcoal.png"),
     };
     image::load_from_memory(bytes)
         .map(image::DynamicImage::into_rgba8)

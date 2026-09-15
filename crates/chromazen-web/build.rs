@@ -1,7 +1,7 @@
 use std::{env, fs, path::PathBuf};
 
 fn main() {
-    let source = "../../assets/charcoal.png";
+    let source = "../../assets/stamps/charcoal.png";
     println!("cargo:rerun-if-changed={source}");
 
     let stamp = image::open(source)
