@@ -84,6 +84,12 @@ impl GuiLayer {
                     .show_inside(ui, |panel_ui| {
                         let layer_id =
                             egui::LayerId::new(egui::Order::Middle, egui::Id::new("tools sidebar"));
+                        let panel_rect = panel_ui.max_rect();
+                        egui::Area::new(layer_id.id)
+                            .order(layer_id.order)
+                            .fixed_pos(panel_rect.min)
+                            .default_size(panel_rect.size())
+                            .show(panel_ui.ctx(), |ui| ui.set_min_size(panel_rect.size()));
                         panel_ui.ctx().move_to_top(layer_id);
                         let mut panel_ui = panel_ui.new_child(
                             egui::UiBuilder::new()
@@ -111,13 +117,18 @@ impl GuiLayer {
                         );
                         content_ui.set_clip_rect(panel_ui.clip_rect());
 
+                        content_ui.add_space(8.0);
                         content_ui.vertical_centered(|ui| {
                             ui.heading("Color");
                         });
                         content_ui.add_space(8.0);
                         self.show_brush_color_picker(&mut content_ui);
                         content_ui.add_space(8.0);
-                        content_ui.separator();
+                        let stroke = content_ui.visuals().widgets.noninteractive.bg_stroke;
+                        content_ui.visuals_mut().widgets.noninteractive.bg_stroke.color =
+                            stroke.color.gamma_multiply(0.5);
+                        content_ui.add(egui::Separator::default().grow(8.0));
+                        content_ui.visuals_mut().widgets.noninteractive.bg_stroke = stroke;
                         content_ui.add_space(8.0);
                         let header_width = content_ui.available_width();
                         content_ui.allocate_ui(egui::vec2(header_width, 28.0), |ui| {

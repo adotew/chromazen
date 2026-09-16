@@ -94,6 +94,12 @@ impl GalleryUi {
             .show_inside(ui, |panel_ui| {
                 let layer_id =
                     egui::LayerId::new(egui::Order::Middle, egui::Id::new("artwork sidebar"));
+                let panel_rect = panel_ui.max_rect();
+                egui::Area::new(layer_id.id)
+                    .order(layer_id.order)
+                    .fixed_pos(panel_rect.min)
+                    .default_size(panel_rect.size())
+                    .show(panel_ui.ctx(), |ui| ui.set_min_size(panel_rect.size()));
                 panel_ui.ctx().move_to_top(layer_id);
                 let mut panel_ui = panel_ui.new_child(
                     egui::UiBuilder::new()

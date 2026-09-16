@@ -10,8 +10,6 @@ impl GuiLayer {
         ui.add_space(4.0);
         egui::ScrollArea::vertical()
             .id_salt("layer list")
-            .max_height(LAYER_LIST_MAX_HEIGHT)
-            .auto_shrink([false, true])
             .show(ui, |ui| {
                 for layer in layers.layers.iter().rev() {
                     let selected = layers.selection == layer.id;
