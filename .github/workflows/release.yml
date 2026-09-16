@@ -40,12 +40,13 @@ jobs:
           $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
           $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
           iscc "packaging/windows/Chromazen.iss" "/DAppVersion=$version"
+          Move-Item dist/ChromazenSetup-*.exe .
       - uses: actions/upload-artifact@v4
         with:
           name: Chromazen-windows
           path: |
             Chromazen-windows-x64.zip
-            dist/ChromazenSetup-*.exe
+            ChromazenSetup-*.exe
 
   linux:
     runs-on: ubuntu-22.04
