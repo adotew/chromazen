@@ -397,7 +397,7 @@ impl GuiLayer {
             pointer_over_selected_reference: false,
             brush_previews: Vec::new(),
             failed_brush_previews: Vec::new(),
-            sidebar_visible: true,
+            sidebar_visible: false,
             brush_window_open: false,
             color_window_open: false,
             layers_window_open: false,
