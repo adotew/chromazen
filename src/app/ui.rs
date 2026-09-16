@@ -1073,8 +1073,8 @@ fn show_tool_button(
     response.on_hover_text(format!("{label} ({shortcut})"))
 }
 
-const REFERENCE_RESIZE_HANDLE_SIZE: f32 = 14.0;
-const REFERENCE_RESIZE_HANDLE_INSET: f32 = 2.0;
+const REFERENCE_RESIZE_HANDLE_SIZE: f32 = 8.0;
+const REFERENCE_RESIZE_HANDLE_INSET: f32 = 0.0;
 const REFERENCE_RESIZE_HIT_SIZE: f32 = 28.0;
 
 fn reference_transform_from_drag_origin(
@@ -1108,26 +1108,24 @@ fn paint_reference_selection(
     reference_rect: egui::Rect,
     show_resize_handle: bool,
 ) {
-    let shadow = egui::Color32::from_black_alpha(160);
-    let accent = egui::Color32::from_gray(210);
+    let selection = egui::Color32::from_rgb(13, 153, 255);
     painter.rect_stroke(
         reference_rect,
         0.0,
-        egui::Stroke::new(2.0_f32, shadow),
-        egui::StrokeKind::Inside,
-    );
-    painter.rect_stroke(
-        reference_rect,
-        0.0,
-        egui::Stroke::new(1.0_f32, accent),
+        egui::Stroke::new(2.0_f32, selection),
         egui::StrokeKind::Inside,
     );
     if show_resize_handle {
         let (center, _) = reference_resize_handle_geometry(reference_rect);
         let handle_rect =
             egui::Rect::from_center_size(center, egui::Vec2::splat(REFERENCE_RESIZE_HANDLE_SIZE));
-        painter.rect_filled(handle_rect, 2.0, shadow);
-        painter.rect_filled(handle_rect.shrink(1.0), 1.0, accent);
+        painter.rect_filled(handle_rect, 0.0, egui::Color32::WHITE);
+        painter.rect_stroke(
+            handle_rect,
+            0.0,
+            egui::Stroke::new(1.0_f32, selection),
+            egui::StrokeKind::Inside,
+        );
     }
 }
 
@@ -1599,9 +1597,9 @@ mod tests {
         let reference = egui::Rect::from_min_max(egui::pos2(20.0, 30.0), egui::pos2(120.0, 130.0));
         let (center, hit_rect) = reference_resize_handle_geometry(reference);
 
-        assert_eq!(center, egui::pos2(118.0, 128.0));
-        assert_eq!(hit_rect.min, egui::pos2(104.0, 114.0));
-        assert_eq!(hit_rect.max, egui::pos2(132.0, 142.0));
+        assert_eq!(center, reference.right_bottom());
+        assert_eq!(hit_rect.min, egui::pos2(106.0, 116.0));
+        assert_eq!(hit_rect.max, egui::pos2(134.0, 144.0));
     }
 
     #[test]
