@@ -19,12 +19,22 @@ const ARTWORK_DIMENSIONS_SIZE: f32 = 12.0;
 const RAIL_ICON_SIZE: f32 = 22.0;
 const RAIL_BUTTON_SIZE: f32 = 38.0;
 
-#[derive(Default)]
 pub(super) struct GalleryUi {
     thumbnails: Vec<Thumbnail>,
     rename: Option<(ArtworkId, String)>,
     delete: Option<(ArtworkId, String)>,
     collapsed: bool,
+}
+
+impl Default for GalleryUi {
+    fn default() -> Self {
+        Self {
+            thumbnails: Vec::new(),
+            rename: None,
+            delete: None,
+            collapsed: true,
+        }
+    }
 }
 
 struct Thumbnail {
@@ -482,15 +492,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_rail_starts_visible_and_toggles_off() {
+    fn the_rail_starts_collapsed_and_toggles_on() {
         let mut gallery = GalleryUi::default();
-        assert!(!gallery.is_collapsed());
-
-        gallery.toggle_visible();
         assert!(gallery.is_collapsed());
 
         gallery.toggle_visible();
         assert!(!gallery.is_collapsed());
+
+        gallery.toggle_visible();
+        assert!(gallery.is_collapsed());
     }
 
     #[test]
