@@ -20,11 +20,13 @@ impl MacosPressureMonitor {
 
 #[cfg(target_os = "macos")]
 mod macos_impl {
-    use std::{ptr::NonNull, sync::Arc, time::Duration};
+    use std::{cell::Cell, ptr::NonNull, sync::Arc, time::Duration};
 
     use block2::{DynBlock, RcBlock};
     use objc2::{MainThreadMarker, rc::Retained, runtime::AnyObject};
-    use objc2_app_kit::{NSEvent, NSEventMask, NSEventType, NSPointingDeviceType, NSView};
+    use objc2_app_kit::{
+        NSEvent, NSEventMask, NSEventSubtype, NSEventType, NSPointingDeviceType, NSView,
+    };
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use winit::window::Window;
 
@@ -54,6 +56,8 @@ mod macos_impl {
                 .window()
                 .ok_or("NSView is not installed in an NSWindow")?;
 
+            // AppKit only allows pointingDeviceType on tablet-proximity events.
+            let pen_in_proximity = Cell::new(false);
             let handler = RcBlock::new(move |event_ptr: NonNull<NSEvent>| -> *mut NSEvent {
                 let Some(mtm) = MainThreadMarker::new() else {
                     return event_ptr.as_ptr();
@@ -68,41 +72,48 @@ mod macos_impl {
                 } else if !matches!(event_type, NSEventType::TabletProximity) {
                     return event_ptr.as_ptr();
                 }
-                let is_pen_device = matches!(
-                    event.pointingDeviceType(),
-                    NSPointingDeviceType::Pen | NSPointingDeviceType::Eraser
-                );
-                let pressure = event.pressure();
-                let sample_time = Duration::from_secs_f64(event.timestamp().max(0.0));
-                let has_meaningful_pressure = pressure > 0.0;
-                let should_use_pressure = is_pen_device || has_meaningful_pressure;
 
                 let changed = match event_type {
                     NSEventType::LeftMouseDown | NSEventType::LeftMouseDragged => {
-                        if should_use_pressure {
+                        if event.subtype() == NSEventSubtype::TabletPoint {
                             pressure_state.note_pen_pressure_at(
-                                pressure,
+                                event.pressure(),
                                 true,
-                                is_pen_device,
-                                Some(sample_time),
+                                true,
+                                Some(Duration::from_secs_f64(event.timestamp().max(0.0))),
                             )
                         } else {
                             pressure_state.reset_pen_state()
                         }
                     }
-                    NSEventType::LeftMouseUp | NSEventType::MouseCancelled => {
-                        pressure_state.end_pen_contact(is_pen_device)
+                    NSEventType::LeftMouseUp => {
+                        let is_pen_event = event.subtype() == NSEventSubtype::TabletPoint;
+                        if is_pen_event {
+                            pressure_state.end_pen_contact(true)
+                        } else {
+                            pressure_state.set_pen_proximity(pen_in_proximity.get())
+                        }
                     }
-                    NSEventType::TabletPoint | NSEventType::Pressure if should_use_pressure => {
+                    NSEventType::MouseCancelled => {
+                        pressure_state.set_pen_proximity(pen_in_proximity.get())
+                    }
+                    NSEventType::TabletPoint => {
+                        let pressure = event.pressure();
                         pressure_state.note_pen_pressure_at(
                             pressure,
-                            has_meaningful_pressure,
-                            is_pen_device,
-                            Some(sample_time),
+                            pressure > 0.0,
+                            true,
+                            Some(Duration::from_secs_f64(event.timestamp().max(0.0))),
                         )
                     }
                     NSEventType::TabletProximity => {
-                        pressure_state.set_pen_proximity(event.isEnteringProximity())
+                        let is_pen_device = matches!(
+                            event.pointingDeviceType(),
+                            NSPointingDeviceType::Pen | NSPointingDeviceType::Eraser
+                        );
+                        let in_proximity = event.isEnteringProximity() && is_pen_device;
+                        pen_in_proximity.set(in_proximity);
+                        pressure_state.set_pen_proximity(in_proximity)
                     }
                     _ => false,
                 };
@@ -118,7 +129,6 @@ mod macos_impl {
             let mask = NSEventMask::LeftMouseDown
                 | NSEventMask::LeftMouseDragged
                 | NSEventMask::LeftMouseUp
-                | NSEventMask::Pressure
                 | NSEventMask::TabletPoint
                 | NSEventMask::TabletProximity
                 | NSEventMask::MouseCancelled;
