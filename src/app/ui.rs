@@ -1029,7 +1029,7 @@ fn show_tool_button(
 ) -> egui::Response {
     let (icon, label, shortcut, accent) = match tool {
         EditorTool::Paint(PaintTool::Brush) => (
-            egui::include_image!("../../assets/icons/paintbrush.svg"),
+            egui::include_image!("../../assets/icons/brush.svg"),
             "Brush",
             "D / B",
             egui::Color32::from_rgb(169, 186, 200),
@@ -1041,7 +1041,7 @@ fn show_tool_button(
             egui::Color32::from_rgb(213, 170, 109),
         ),
         EditorTool::Paint(PaintTool::Smudge) => (
-            egui::include_image!("../../assets/icons/waves.svg"),
+            egui::include_image!("../../assets/icons/waves-horizontal.svg"),
             "Smudge",
             "S",
             egui::Color32::from_rgb(177, 159, 204),

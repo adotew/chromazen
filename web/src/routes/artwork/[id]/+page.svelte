@@ -3,7 +3,7 @@
   import Eraser from '@lucide/svelte/icons/eraser'
   import Redo2 from '@lucide/svelte/icons/redo-2'
   import Undo2 from '@lucide/svelte/icons/undo-2'
-  import Waves from '@lucide/svelte/icons/waves'
+  import WavesHorizontal from '@lucide/svelte/icons/waves-horizontal'
   import { onMount } from 'svelte'
   import type { WebCanvas } from '$lib/wasm/chromazen_web'
 
@@ -278,7 +278,7 @@
           title="Smudge"
           onclick={() => selectTool('smudge')}
         >
-          <Waves size={20} aria-hidden="true" />
+          <WavesHorizontal size={20} aria-hidden="true" />
         </button>
       </div>
 
