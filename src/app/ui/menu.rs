@@ -1,6 +1,8 @@
 use super::*;
 
 #[cfg(not(target_os = "macos"))]
+use super::gallery::ARTWORK_RAIL_WIDTH;
+#[cfg(not(target_os = "macos"))]
 use egui::containers::menu::SubMenuButton;
 
 #[cfg(not(target_os = "macos"))]
