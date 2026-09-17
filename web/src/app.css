@@ -247,8 +247,9 @@ a:hover {
 
 .download-buttons {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
+  justify-content: center;
   margin-top: 2.5rem;
   gap: 1.25rem;
 }
@@ -258,7 +259,7 @@ a:hover {
   align-items: center;
   gap: 0.55rem;
   padding: 0.8rem 1.6rem;
-  border-radius: 0.5rem;
+  border-radius: 9999px;
   color: var(--color-background);
   background: var(--color-foreground);
   cursor: pointer;

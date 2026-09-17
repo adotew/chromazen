@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Download from '@lucide/svelte/icons/download'
+  import ArrowDownCircle from '@lucide/svelte/icons/arrow-down-circle'
 
   const repositoryUrl = 'https://github.com/adotew/chromazen'
   const pageTitle = 'Chromazen — Fast, Lightweight Painting App'
@@ -33,7 +33,7 @@
     <p>A lightweight, distraction-free painting application focused on performance.</p>
     <div class="download-buttons">
       <a class="download-button" href="/download">
-        <Download size={18} aria-hidden="true" />
+        <ArrowDownCircle size={18} aria-hidden="true" />
         Download
       </a>
       <button class="web-app-link" type="button" onclick={newArtwork}>Web App</button>
