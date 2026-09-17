@@ -3,7 +3,7 @@
   const latestDownloadUrl = `${repositoryUrl}/releases/latest/download`
   const pageTitle = 'Download Chromazen for macOS, Windows & Linux'
   const pageDescription =
-    'Download the free Chromazen beta for macOS, Windows, or Linux. Get the latest native painting app release, plus release notes and checksums.'
+    'Download the Chromazen beta for macOS, Windows, or Linux. Get the latest native painting app release, plus release notes and checksums.'
   const canonicalUrl = 'https://www.chromazen.app/download'
   const structuredData = JSON.stringify({
     '@context': 'https://schema.org',
@@ -51,7 +51,7 @@
   <div class="download-page">
     <img class="download-logo" src="/logo.png" alt="" width="512" height="512" />
     <h1>Download Chromazen</h1>
-    <p>Latest free beta release · <a href={`${repositoryUrl}/releases/latest`}>Release notes and checksums</a></p>
+    <p>Free during beta · <a href={`${repositoryUrl}/releases/latest`}>Release notes and checksums</a></p>
     <div class="download-grid">
       <section class="download-card">
         <h2>
