@@ -6,6 +6,7 @@
 @group(0) @binding(5) var<uniform> layerSettings: LayerSettings;
 @group(0) @binding(6) var clippingBaseTexture: texture_2d<f32>;
 @group(0) @binding(7) var<uniform> clippingBaseSettings: LayerSettings;
+@group(0) @binding(8) var previewMask: texture_2d<f32>;
 
 struct LayerSettings {
   opacity: f32,
@@ -43,6 +44,12 @@ fn is_outside_canvas(uv: vec2f) -> bool {
   return uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0;
 }
 
+fn combined_preview_coverage(uv: vec2f) -> f32 {
+  let committed = textureSampleLevel(strokeMask, paintSampler, uv, 0.0).r;
+  let preview = textureSampleLevel(previewMask, paintSampler, uv, 0.0).r;
+  return max(committed, preview);
+}
+
 @fragment
 fn fs_preview_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let uv = paint_uv(pos);
@@ -51,7 +58,7 @@ fn fs_preview_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   }
 
   let layer = textureSampleLevel(layerTexture, paintSampler, uv, 0.0);
-  let coverage = textureSampleLevel(strokeMask, paintSampler, uv, 0.0).r;
+  let coverage = combined_preview_coverage(uv);
   let source = stroke.color * coverage;
   // The composed layer is premultiplied, so opacity scales every channel.
   return (source + layer * (1.0 - source.a)) * layerSettings.opacity;
@@ -65,7 +72,7 @@ fn fs_preview_eraser(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   }
 
   let layer = textureSampleLevel(layerTexture, paintSampler, uv, 0.0);
-  let coverage = textureSampleLevel(strokeMask, paintSampler, uv, 0.0).r;
+  let coverage = combined_preview_coverage(uv);
   return layer * (1.0 - coverage) * layerSettings.opacity;
 }
 
@@ -82,14 +89,14 @@ fn group_uv(pos: vec4f) -> vec2f {
 
 fn preview_brush(uv: vec2f) -> vec4f {
   let layer = textureSampleLevel(layerTexture, paintSampler, uv, 0.0);
-  let coverage = textureSampleLevel(strokeMask, paintSampler, uv, 0.0).r;
+  let coverage = combined_preview_coverage(uv);
   let source = stroke.color * coverage;
   return (source + layer * (1.0 - source.a)) * layerSettings.opacity;
 }
 
 fn preview_eraser(uv: vec2f) -> vec4f {
   let layer = textureSampleLevel(layerTexture, paintSampler, uv, 0.0);
-  let coverage = textureSampleLevel(strokeMask, paintSampler, uv, 0.0).r;
+  let coverage = combined_preview_coverage(uv);
   return layer * (1.0 - coverage) * layerSettings.opacity;
 }
 

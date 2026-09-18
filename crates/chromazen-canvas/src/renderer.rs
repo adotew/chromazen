@@ -326,6 +326,8 @@ pub struct Canvas {
     next_layer_number: u64,
     next_layer_resource_id: u64,
     stamp_queue: StampQueue,
+    pending_preview_stamps: Option<Vec<StampRaw>>,
+    rendered_preview_rect: Option<TextureRect>,
     active_stroke: Option<ActiveStroke>,
     active_transform: Option<ActiveLayerTransform>,
     content_bounds_cache: Option<(LayerId, LayerResourceId, Option<LayerContentBounds>)>,
@@ -389,6 +391,8 @@ impl Canvas {
             next_layer_number: 2,
             next_layer_resource_id: 2,
             stamp_queue: StampQueue::new(stamp_aspect),
+            pending_preview_stamps: None,
+            rendered_preview_rect: None,
             active_stroke: None,
             active_transform: None,
             content_bounds_cache: None,
@@ -1838,6 +1842,35 @@ impl Canvas {
         )
     }
 
+    pub fn update_stroke_preview(
+        &mut self,
+        committed_tip: StrokePoint,
+        preview_points: &[StrokePoint],
+        spacing: BrushSpacing,
+    ) -> bool {
+        let Some(active_stroke) = self
+            .active_stroke
+            .filter(|stroke| stroke.render_path() == StrokeRenderPath::Mask)
+        else {
+            return false;
+        };
+        let committed_tip = active_stroke.stamp_point(committed_tip);
+        self.pending_preview_stamps = Some(
+            self.stamp_queue.preview_stamps(
+                committed_tip,
+                preview_points
+                    .iter()
+                    .copied()
+                    .map(|point| active_stroke.stamp_point(point)),
+                active_stroke.color,
+                effective_spacing(active_stroke.tool, spacing),
+                self.document_size[0],
+                self.document_size[1],
+            ),
+        );
+        true
+    }
+
     fn clear_selected_layer_and_history(&mut self) {
         if !self.document_is_idle() {
             return;
@@ -1892,6 +1925,7 @@ impl Canvas {
         brush_cursor: Option<BrushCursor>,
     ) {
         self.flush_stamps(encoder);
+        self.flush_stroke_preview(encoder);
         // Keep the active layer's thumbnail dirty until the stroke is committed. Updating it for
         // every dab adds a render pass to the latency-sensitive painting path.
         self.render_layer_previews(encoder);
@@ -2255,6 +2289,10 @@ impl Canvas {
             return;
         }
 
+        debug_assert!(matches!(
+            active_stroke.tool,
+            PaintTool::Brush | PaintTool::Eraser
+        ));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("stroke mask stamp pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2271,13 +2309,60 @@ impl Canvas {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        debug_assert!(matches!(
-            active_stroke.tool,
-            PaintTool::Brush | PaintTool::Eraser
-        ));
         pass.set_pipeline(&self.resources.mask_pipeline);
         pass.set_bind_group(0, &self.resources.stamp_bind_group, &[]);
         pass.draw(0..6, 0..count as u32);
+    }
+
+    fn flush_stroke_preview(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        let Some(stamps) = self.pending_preview_stamps.take() else {
+            return;
+        };
+        let previous_rect = self.rendered_preview_rect.take();
+        let next_rect = stamps
+            .iter()
+            .copied()
+            .map(StampRaw::target_rect)
+            .reduce(TextureRect::union);
+        if next_rect.is_some() {
+            self.queue.write_buffer(
+                &self.resources.preview_stamp_buffer,
+                0,
+                bytemuck::cast_slice(&stamps),
+            );
+        }
+        if previous_rect.is_none() && next_rect.is_none() {
+            return;
+        }
+        self.rendered_preview_rect = next_rect;
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("stroke preview pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.resources.preview_mask_view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        if let Some(rect) = previous_rect {
+            pass.set_pipeline(&self.resources.mask_clear_pipeline);
+            pass.set_scissor_rect(rect.x, rect.y, rect.width, rect.height);
+            pass.draw(0..3, 0..1);
+        }
+        if let Some(rect) = next_rect {
+            pass.set_pipeline(&self.resources.mask_pipeline);
+            pass.set_bind_group(0, &self.resources.preview_stamp_bind_group, &[]);
+            pass.set_scissor_rect(rect.x, rect.y, rect.width, rect.height);
+            pass.draw(0..6, 0..stamps.len() as u32);
+        }
     }
 
     fn flush_smudge_stamps(
@@ -2343,6 +2428,7 @@ impl Canvas {
 
     fn clear_active_stroke_state(&mut self) {
         self.active_stroke = None;
+        self.pending_preview_stamps = self.rendered_preview_rect.is_some().then(Vec::new);
         self.resources.clear_stroke_preview();
     }
 
@@ -2353,6 +2439,8 @@ impl Canvas {
         self.resources
             .resize_document(&self.device, &self.queue, size);
         self.history = PaintHistory::new(&self.device, size);
+        self.pending_preview_stamps = None;
+        self.rendered_preview_rect = None;
         self.document_size = size;
     }
 

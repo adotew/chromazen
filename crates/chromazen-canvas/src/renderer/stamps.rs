@@ -46,6 +46,7 @@ struct Stamp {
     source_center: [f32; 2],
 }
 
+#[derive(Clone)]
 pub(crate) struct StampQueue {
     pending: VecDeque<Stamp>,
     distance_since_last_stamp: f32,
@@ -213,6 +214,37 @@ impl StampQueue {
         }
 
         queued
+    }
+
+    pub(crate) fn preview_stamps(
+        &self,
+        committed_tip: StrokePoint,
+        preview_points: impl IntoIterator<Item = StrokePoint>,
+        rgba: [f32; 4],
+        spacing: BrushSpacing,
+        width: u32,
+        height: u32,
+    ) -> Vec<StampRaw> {
+        let mut preview_queue = self.clone();
+        preview_queue.pending.clear();
+        preview_queue.dirty_rect = None;
+        let mut previous = committed_tip;
+        let mut endpoint = None;
+        for point in preview_points {
+            preview_queue.stamp_line(previous, point, rgba, spacing, width, height);
+            previous = point;
+            endpoint = Some(point);
+        }
+        if let Some(point) = endpoint {
+            preview_queue.queue_point(point, rgba, width, height);
+        }
+        let mut raw = preview_queue.drain_raw(width, height, usize::MAX);
+        if raw.len() > MAX_STAMPS_PER_FRAME {
+            let endpoint = raw[raw.len() - 1];
+            raw.truncate(MAX_STAMPS_PER_FRAME - 1);
+            raw.push(endpoint);
+        }
+        raw
     }
 
     pub(crate) fn drain_raw(&mut self, width: u32, height: u32, max_count: usize) -> Vec<StampRaw> {
@@ -494,6 +526,32 @@ mod tests {
 
         queue.begin_stroke(point(50.0, 50.0));
         assert_eq!(queue.end_stroke(), None);
+    }
+
+    #[test]
+    fn preview_stamps_do_not_advance_committed_spacing() {
+        let mut queue = StampQueue::default();
+        let start = point(10.0, 10.0);
+        let committed = point(20.0, 10.0);
+        let preview_end = point(35.0, 15.0);
+        let spacing = BrushSpacing {
+            ratio: 0.5,
+            minimum: 1.0,
+        };
+        queue.begin_stroke(start);
+        queue.stamp_line(start, committed, [0.0; 4], spacing, 100, 100);
+        let pending = queue.pending.len();
+        let distance = queue.distance_since_last_stamp;
+        let center = queue.last_generated_center;
+        let dirty = queue.dirty_rect;
+
+        let preview = queue.preview_stamps(committed, [preview_end], [0.0; 4], spacing, 100, 100);
+
+        assert_eq!(preview.last().map(|stamp| stamp.center), Some([35.0, 15.0]));
+        assert_eq!(queue.pending.len(), pending);
+        assert_eq!(queue.distance_since_last_stamp, distance);
+        assert_eq!(queue.last_generated_center, center);
+        assert_eq!(queue.dirty_rect, dirty);
     }
 
     #[test]

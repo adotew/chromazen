@@ -94,7 +94,7 @@ struct CurveInterval {
     error: f32,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct StrokeSmoother {
     points: VecDeque<StrokePoint>,
     first_segment_emitted: bool,
@@ -116,6 +116,11 @@ impl StrokeSmoother {
 
         self.points.push_back(point);
         self.emit_available_segment()
+    }
+
+    pub fn preview_through(&self, raw_point: StrokePoint) -> Vec<StrokePoint> {
+        let mut preview_smoother = self.clone();
+        preview_smoother.finish_at(raw_point)
     }
 
     pub fn finish_at(&mut self, point: StrokePoint) -> Vec<StrokePoint> {
@@ -554,6 +559,28 @@ mod tests {
 
         assert_eq!(output.len(), 1);
         assert_eq!(output[0].x, 12.0);
+    }
+
+    #[test]
+    fn preview_through_does_not_advance_the_smoother() {
+        let mut smoother = StrokeSmoother::default();
+        smoother.begin(point(0.0, 0.0));
+        smoother.push(point(8.0, 2.0));
+        smoother.push(point(16.0, 8.0));
+        let mut control = smoother.clone();
+
+        let preview = smoother.preview_through(point(24.0, 10.0));
+        let actual = smoother.push(point(24.0, 10.0));
+        let expected = control.push(point(24.0, 10.0));
+
+        assert_eq!(preview.last().map(|point| point.x), Some(24.0));
+        assert_eq!(actual.len(), expected.len());
+        assert!(actual.iter().zip(expected).all(|(actual, expected)| {
+            close(actual.x, expected.x)
+                && close(actual.y, expected.y)
+                && close(actual.radius, expected.radius)
+                && close(actual.opacity, expected.opacity)
+        }));
     }
 
     #[test]

@@ -338,7 +338,11 @@ impl PaintInputController {
                     };
                     let smoothed_points = self.smoother.push(point);
                     let queued = self.queue_smoothed_points(paint, smoothed_points, *brush);
-                    return queued > 0;
+                    let preview_points = self.smoother.preview_through(raw_point);
+                    let preview_changed = self.last_point.is_some_and(|from| {
+                        Canvas::update_stroke_preview(paint, from, &preview_points, brush.spacing)
+                    });
+                    return queued > 0 || preview_changed;
                 }
 
                 true

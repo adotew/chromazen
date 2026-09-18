@@ -1,6 +1,6 @@
 use std::sync::mpsc;
 
-use chromazen_canvas::{BrushCursor, Canvas, PaintTool, StrokePoint};
+use chromazen_canvas::{BrushCursor, BrushSpacing, Canvas, PaintTool, StrokePoint};
 
 const RENDER_SIZE: [u32; 2] = [64, 64];
 
@@ -80,6 +80,7 @@ async fn run() {
     assert!(canvas.redo());
     assert!(center_alpha(&canvas) > 0);
 
+    preview_is_visible_but_not_committed(&device, &queue);
     run_brush_cursor_contrast(&device, &queue);
 }
 
@@ -91,6 +92,45 @@ fn center_alpha(canvas: &Canvas) -> u8 {
         .expect("pixels")[0]
         .1
         .get_pixel(16, 16)[3]
+}
+
+fn preview_is_visible_but_not_committed(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let brush = image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4]));
+    let mut canvas = Canvas::new(
+        device.clone(),
+        queue.clone(),
+        wgpu::TextureFormat::Rgba8Unorm,
+        RENDER_SIZE,
+        RENDER_SIZE,
+        &brush,
+    )
+    .expect("preview canvas");
+    let start = StrokePoint {
+        x: 8.0,
+        y: 32.0,
+        radius: 3.0,
+        opacity: 1.0,
+    };
+    let preview_end = StrokePoint { x: 48.0, ..start };
+    assert!(canvas.begin_stroke(PaintTool::Brush, start, [0.0, 0.0, 0.0, 1.0], 1.0));
+    assert!(canvas.queue_stamp(start));
+    assert!(canvas.update_stroke_preview(start, &[preview_end], BrushSpacing::default()));
+
+    let pixels = render_pixels(device, queue, &mut canvas, None);
+    let offset = ((32 * RENDER_SIZE[0] + 48) * 4) as usize;
+    assert!(
+        pixels[offset..offset + 3]
+            .iter()
+            .all(|&channel| channel < 64)
+    );
+
+    canvas.end_stroke();
+    let layers = canvas
+        .begin_document_layer_readback()
+        .expect("preview readback")
+        .finish()
+        .expect("preview pixels");
+    assert_eq!(layers[0].1.get_pixel(48, 32)[3], 0);
 }
 
 fn run_brush_cursor_contrast(device: &wgpu::Device, queue: &wgpu::Queue) {
@@ -111,10 +151,10 @@ fn run_brush_cursor_contrast(device: &wgpu::Device, queue: &wgpu::Queue) {
         device,
         queue,
         &mut workspace_canvas,
-        BrushCursor {
+        Some(BrushCursor {
             center: [8.0, 32.0],
             diameter: 4.0,
-        },
+        }),
     );
     assert_visible_outline(&pixels, [0, 16, 16, 48], [128, 128, 128]);
     assert_single_dark_ring(&pixels, [0, 16, 16, 48], [128, 128, 128]);
@@ -144,10 +184,10 @@ fn run_brush_cursor_contrast(device: &wgpu::Device, queue: &wgpu::Queue) {
             device,
             queue,
             &mut canvas,
-            BrushCursor {
+            Some(BrushCursor {
                 center: [32.0, 32.0],
                 diameter: 8.0,
-            },
+            }),
         );
         assert_visible_outline(&pixels, [20, 20, 44, 44], background);
         if background[0] == background[1] && background[1] == background[2] {
@@ -172,7 +212,7 @@ fn render_pixels(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     canvas: &mut Canvas,
-    cursor: BrushCursor,
+    cursor: Option<BrushCursor>,
 ) -> Vec<u8> {
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("cursor contrast render target"),
@@ -200,7 +240,7 @@ fn render_pixels(
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("cursor contrast render encoder"),
     });
-    canvas.render_to_view(&mut encoder, &view, Some(cursor));
+    canvas.render_to_view(&mut encoder, &view, cursor);
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
             texture: &target,
