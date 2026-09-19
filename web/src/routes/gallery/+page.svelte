@@ -61,8 +61,16 @@
 </svelte:head>
 
 <main class="mx-auto block w-full max-w-6xl px-8 py-12 max-[35rem]:px-4 max-[35rem]:py-8">
-  <header class="flex items-center justify-between gap-4">
-    <h1 class="m-0 font-elms text-[clamp(2rem,5vw,3rem)] font-light">Chromazen Web</h1>
+  <header class="flex items-center justify-between gap-60">
+    <h1
+      class="m-0 flex items-center gap-2 font-elms text-[clamp(1.5rem,4vw,2rem)] leading-none font-light"
+    >
+      Chromazen
+      <span
+        class="inline-flex translate-y-0.5 items-center rounded-lg bg-foreground px-1.5 py-1 text-[0.5em] leading-none font-bold tracking-[0.01em] text-background"
+        >Web</span
+      >
+    </h1>
     <button
       class="cursor-pointer rounded-full border-0 bg-foreground px-[1.2rem] py-3 font-semibold text-background"
       type="button"
