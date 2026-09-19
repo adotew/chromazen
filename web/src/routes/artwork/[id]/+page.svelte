@@ -33,6 +33,7 @@
 
   let loading = $state(true)
   let error = $state('')
+  let isLinux = $state(false)
   let persistenceError = $state('')
   let saveState = $state<'idle' | 'saving' | 'saved' | 'failed'>('idle')
   let tool = $state<Tool>('brush')
@@ -50,6 +51,7 @@
   onMount(() => {
     let disposed = false
     mounted = true
+    isLinux = /Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent)
 
     async function start() {
       try {
@@ -500,6 +502,14 @@
       >
         <strong class="text-foreground">WebGPU could not start</strong>
         <span class="max-w-[30rem] text-[0.85rem]">{error}</span>
+        {#if isLinux}
+          <p class="mt-3 mb-0 max-w-[30rem] text-sm leading-relaxed">
+            On Linux with Chrome or Chromium, open
+            <code class="select-all rounded bg-black/25 px-1.5 py-0.5 text-foreground"
+              >chrome://flags/#enable-vulkan</code
+            >, enable Vulkan, and relaunch the browser.
+          </p>
+        {/if}
       </div>
     {/if}
   </section>
