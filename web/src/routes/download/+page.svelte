@@ -53,7 +53,7 @@
 
 <main class="grid min-h-[calc(100svh-4rem)] place-items-center px-8 py-16 max-[48rem]:px-5 max-[48rem]:py-12">
   <div class="w-full max-w-[68rem] -translate-y-[8vh] text-center max-[48rem]:translate-y-0">
-    <img class="mb-6 size-20" src="/logo.png" alt="" width="512" height="512" />
+    <img class="mx-auto mb-6 size-20" src="/logo.png" alt="" width="512" height="512" />
     <h1 class="m-0 font-elms text-[clamp(2rem,5vw,3rem)] leading-none font-light tracking-[-0.02em]">
       Download Chromazen
     </h1>
