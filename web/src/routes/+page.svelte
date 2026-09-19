@@ -25,7 +25,7 @@
 <main class="grid min-h-svh place-items-center p-8">
   <div class="relative z-1 max-w-xl text-center">
     <img
-      class="mb-4 size-40 [filter:drop-shadow(0_0_1px_rgb(23_23_20/0.7))_drop-shadow(0_3px_8px_rgb(23_23_20/0.2))]"
+      class="mx-auto mb-4 size-40 [filter:drop-shadow(0_0_1px_rgb(23_23_20/0.7))_drop-shadow(0_3px_8px_rgb(23_23_20/0.2))]"
       src="/logo.png"
       alt=""
       width="512"
