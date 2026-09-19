@@ -1,4 +1,12 @@
 <script lang="ts">
+  let {
+    onSave,
+    onReturnToGallery,
+  }: {
+    onSave: () => void
+    onReturnToGallery: () => void
+  } = $props()
+
   let open = $state(false)
   let root: HTMLElement
   let trigger: HTMLButtonElement
@@ -12,6 +20,11 @@
     event.preventDefault()
     open = false
     trigger.focus()
+  }
+
+  function select(action: () => void) {
+    open = false
+    action()
   }
 </script>
 
@@ -48,12 +61,18 @@
       role="menu"
       aria-label="Application menu"
     >
-      <a
-        class="block rounded-lg px-3 py-2 text-sm text-foreground no-underline hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none"
-        href="/gallery"
+      <button
+        class="block w-full cursor-pointer rounded-lg border-0 bg-transparent px-3 py-2 text-left text-sm text-foreground hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none"
+        type="button"
         role="menuitem"
-        data-sveltekit-reload
-      >Return to Gallery</a>
+        onclick={() => select(onSave)}
+      >Save</button>
+      <button
+        class="block w-full cursor-pointer rounded-lg border-0 bg-transparent px-3 py-2 text-left text-sm text-foreground hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none"
+        type="button"
+        role="menuitem"
+        onclick={() => select(onReturnToGallery)}
+      >Return to Gallery</button>
     </div>
   {/if}
 </div>
