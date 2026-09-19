@@ -129,10 +129,10 @@ pub(crate) struct PressureConfig {
 impl Default for PressureConfig {
     fn default() -> Self {
         Self {
-            min_size: 0.45,
-            min_opacity: 0.08,
-            full_opacity_pressure: 0.8,
-            opacity_gamma: 1.35,
+            min_size: 0.3,
+            min_opacity: 0.01,
+            full_opacity_pressure: 0.9,
+            opacity_gamma: 2.0,
         }
     }
 }
