@@ -318,15 +318,14 @@
   >
     <Menu onSave={saver.manualSave} onReturnToGallery={saver.returnToGallery} />
     <div
-      class="pointer-events-auto absolute top-0 left-1/2 flex h-12 -translate-x-1/2 items-center gap-[0.6rem] rounded-b-2xl bg-[rgb(18_18_16/0.72)] px-4 py-2 backdrop-blur-[18px] backdrop-saturate-120 max-[35rem]:gap-[0.4rem] max-[35rem]:px-[0.65rem]"
+      class="pointer-events-auto absolute top-0 left-1/2 flex h-12 -translate-x-1/2 items-center gap-[0.6rem] rounded-b-[1.5rem] bg-[rgb(18_18_16/0.72)] px-4 py-2 backdrop-blur-[18px] backdrop-saturate-120 max-[35rem]:gap-[0.4rem] max-[35rem]:px-[0.65rem]"
       aria-label="Painting tools"
     >
-      <div class="flex items-center gap-[0.6rem]">
+      <div class="flex -translate-y-0.5 items-center gap-[0.6rem]">
         <button
           class={[
-            'grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs text-[#c7c4bc] hover:bg-white/[0.08] hover:text-white focus-visible:bg-white/[0.08] focus-visible:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground max-[35rem]:px-2',
-            tool === 'brush' &&
-              'bg-white/[0.14] text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.12)]',
+            'grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs focus:outline-none max-[35rem]:px-2',
+            tool === 'brush' ? 'text-[#0a84ff]' : 'text-[#c7c4bc]',
           ]}
           type="button"
           aria-label="Brush"
@@ -337,9 +336,8 @@
         </button>
         <button
           class={[
-            'grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs text-[#c7c4bc] hover:bg-white/[0.08] hover:text-white focus-visible:bg-white/[0.08] focus-visible:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground max-[35rem]:px-2',
-            tool === 'eraser' &&
-              'bg-white/[0.14] text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.12)]',
+            'grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs focus:outline-none max-[35rem]:px-2',
+            tool === 'eraser' ? 'text-[#0a84ff]' : 'text-[#c7c4bc]',
           ]}
           type="button"
           aria-label="Eraser"
@@ -350,9 +348,8 @@
         </button>
         <button
           class={[
-            'grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs text-[#c7c4bc] hover:bg-white/[0.08] hover:text-white focus-visible:bg-white/[0.08] focus-visible:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground max-[35rem]:px-2',
-            tool === 'smudge' &&
-              'bg-white/[0.14] text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.12)]',
+            'grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs focus:outline-none max-[35rem]:px-2',
+            tool === 'smudge' ? 'text-[#0a84ff]' : 'text-[#c7c4bc]',
           ]}
           type="button"
           aria-label="Smudge"
@@ -364,7 +361,7 @@
       </div>
 
       <label
-        class="grid size-8 place-items-center overflow-hidden rounded-full border border-white/[0.18]"
+        class="grid size-8 -translate-y-0.5 place-items-center overflow-hidden rounded-full border border-white/[0.18]"
         aria-label="Brush color"
       >
         <input
@@ -378,7 +375,7 @@
   </header>
 
   <aside
-    class="side-controls fixed top-1/2 right-0 z-2 flex w-12 -translate-y-1/2 flex-col items-center gap-3 rounded-l-[1.25rem] bg-[rgb(18_18_16/0.72)] px-2 py-4 backdrop-blur-[18px] backdrop-saturate-120"
+    class="side-controls fixed top-1/2 right-0 z-2 flex w-12 -translate-y-1/2 flex-col items-center gap-3 rounded-l-[1.5rem] bg-[rgb(18_18_16/0.72)] px-2 pt-4 pb-2 backdrop-blur-[18px] backdrop-saturate-120"
     aria-label="Canvas controls"
   >
     <label class="size-control flex items-center gap-2 text-xs text-muted">
@@ -399,7 +396,7 @@
 
     <div class="actions flex items-center gap-[0.6rem]">
       <button
-        class="grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs text-[#c7c4bc] hover:bg-white/[0.08] hover:text-white focus-visible:bg-white/[0.08] focus-visible:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground max-[35rem]:px-2"
+        class="grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs text-[#c7c4bc] hover:text-white focus-visible:bg-white/[0.08] focus-visible:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground max-[35rem]:px-2"
         type="button"
         aria-label="Undo"
         title="Undo"
@@ -408,7 +405,7 @@
         <Undo2 size={20} aria-hidden="true" />
       </button>
       <button
-        class="grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs text-[#c7c4bc] hover:bg-white/[0.08] hover:text-white focus-visible:bg-white/[0.08] focus-visible:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground max-[35rem]:px-2"
+        class="grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs text-[#c7c4bc] hover:text-white focus-visible:bg-white/[0.08] focus-visible:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground max-[35rem]:px-2"
         type="button"
         aria-label="Redo"
         title="Redo"
