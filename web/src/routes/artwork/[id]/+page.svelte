@@ -6,7 +6,8 @@
   import WavesHorizontal from '@lucide/svelte/icons/waves-horizontal'
   import { onMount } from 'svelte'
   import Menu from '$lib/components/Menu.svelte'
-  import { getArtwork, putArtwork, type StoredDocument } from '$lib/artworks'
+  import { getArtwork, type StoredDocument } from '$lib/artworks'
+  import { ArtworkSaver, type SaveState } from '$lib/artwork-saving'
   import type { WebCanvas } from '$lib/wasm/chromazen_web'
 
   type Renderer = WebCanvas & {
@@ -36,18 +37,23 @@
   let error = $state('')
   let isLinux = $state(false)
   let persistenceError = $state('')
-  let saveState = $state<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+  let saveState = $state<SaveState>('idle')
+  let manualSaved = $state(false)
   let tool = $state<Tool>('brush')
   let brushSize = $state(500)
   let color = $state('#1d4ed8')
   let createdAt = Date.now()
-  let changeVersion = 0
-  let savedVersion = 0
-  let saveTimer: ReturnType<typeof setTimeout> | undefined
-  let saveInFlight = false
-  let persistenceReady = false
   let mounted = false
-  let persistRequested = false
+  const saver = new ArtworkSaver({
+    getId: () => data.id,
+    getRenderer: () => renderer,
+    getCreatedAt: () => createdAt,
+    isInteractionActive: () => activePointer !== undefined,
+    isMounted: () => mounted,
+    onStateChange: (state) => (saveState = state),
+    onError: (message) => (persistenceError = message),
+    onManualSavedChange: (saved) => (manualSaved = saved),
+  })
 
   onMount(() => {
     let disposed = false
@@ -80,7 +86,7 @@
             applyColor()
             isNew = true
           }
-          persistenceReady = true
+          saver.setReady(!isNew)
         } catch (cause) {
           persistenceError = errorMessage(cause)
           applyColor()
@@ -89,7 +95,7 @@
         resizeObserver.observe(workspace)
         loading = false
         requestFrame()
-        if (isNew) void saveArtwork()
+        if (isNew) void saver.saveInitial()
       } catch (cause) {
         error = cause instanceof Error ? cause.message : String(cause)
         loading = false
@@ -100,64 +106,12 @@
     return () => {
       disposed = true
       mounted = false
-      if (saveTimer) clearTimeout(saveTimer)
+      saver.dispose()
       resizeObserver?.disconnect()
       if (frame) cancelAnimationFrame(frame)
       renderer?.free()
     }
   })
-
-  function markDirty() {
-    changeVersion += 1
-    saveState = persistenceReady ? 'idle' : 'failed'
-    if (!persistenceReady) return
-    if (saveTimer) clearTimeout(saveTimer)
-    saveTimer = setTimeout(() => void saveArtwork(), 2000)
-  }
-
-  async function saveArtwork() {
-    if (!renderer || !persistenceReady || saveInFlight) return
-    if (saveTimer) clearTimeout(saveTimer)
-    saveTimer = undefined
-    saveInFlight = true
-    saveState = 'saving'
-    const version = changeVersion
-    try {
-      const document = await renderer.saveDocument()
-      if (!mounted) return
-      const now = Date.now()
-      await putArtwork({
-        schemaVersion: 1,
-        id: data.id,
-        title: 'Untitled',
-        createdAt,
-        updatedAt: now,
-        document,
-      })
-      savedVersion = version
-      saveState = changeVersion === version ? 'saved' : 'idle'
-      if (!persistRequested) {
-        persistRequested = true
-        void navigator.storage?.persist?.()
-      }
-    } catch (cause) {
-      if (!mounted) return
-      persistenceError = errorMessage(cause)
-      saveState = 'failed'
-    } finally {
-      saveInFlight = false
-      if (mounted && changeVersion > version) {
-        if (saveTimer) clearTimeout(saveTimer)
-        saveTimer = setTimeout(() => void saveArtwork(), 2000)
-      }
-    }
-  }
-
-  function beforeUnload(event: BeforeUnloadEvent) {
-    if (!saveInFlight && savedVersion === changeVersion) return
-    event.preventDefault()
-    event.returnValue = ''
-  }
 
   function rgbToHex([red, green, blue]: [number, number, number, number]) {
     return `#${[red, green, blue].map((value) => value.toString(16).padStart(2, '0')).join('')}`
@@ -260,10 +214,11 @@
     if (!panning) {
       const samplesChanged = renderer.pushStrokeSamples(samples(event))
       const strokeChanged = renderer.endStroke()
-      if (samplesChanged || strokeChanged) markDirty()
+      if (samplesChanged || strokeChanged) saver.markDirty()
     }
     activePointer = undefined
     panning = false
+    saver.interactionEnded()
     if (canvasElement.hasPointerCapture(event.pointerId)) {
       canvasElement.releasePointerCapture(event.pointerId)
     }
@@ -272,9 +227,10 @@
 
   function pointerCancel(event: PointerEvent) {
     if (!renderer || event.pointerId !== activePointer) return
-    if (!panning && renderer.endStroke()) markDirty()
+    if (!panning && renderer.endStroke()) saver.markDirty()
     activePointer = undefined
     panning = false
+    saver.interactionEnded()
     requestFrame()
   }
 
@@ -290,6 +246,11 @@
   }
 
   function keyDown(event: KeyboardEvent) {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
+      event.preventDefault()
+      void saver.manualSave()
+      return
+    }
     if (event.code !== 'Space' || activePointer !== undefined) return
     const target = event.target
     if (target instanceof Element && target.closest('button, input, a')) return
@@ -304,10 +265,11 @@
   function windowBlur() {
     spacePressed = false
     if (activePointer === undefined) return
-    if (!panning && renderer?.endStroke()) markDirty()
+    if (!panning && renderer?.endStroke()) saver.markDirty()
     if (canvasElement.hasPointerCapture(activePointer)) canvasElement.releasePointerCapture(activePointer)
     activePointer = undefined
     panning = false
+    saver.interactionEnded()
     requestFrame()
   }
 
@@ -325,11 +287,11 @@
     if (!renderer) return
     const value = Number.parseInt(next.slice(1), 16)
     renderer.setColor((value >> 16) & 255, (value >> 8) & 255, value & 255)
-    if (persist) markDirty()
+    if (persist) saver.markDirty()
   }
 
   function command(action: 'undo' | 'redo') {
-    if (renderer?.[action]()) markDirty()
+    if (renderer?.[action]()) saver.markDirty()
     requestFrame()
   }
 </script>
@@ -338,7 +300,7 @@
   onkeydown={keyDown}
   onkeyup={keyUp}
   onblur={windowBlur}
-  onbeforeunload={beforeUnload}
+  onbeforeunload={saver.beforeUnload}
 />
 
 <svelte:head>
@@ -354,7 +316,7 @@
   <header
     class="pointer-events-none fixed top-0 left-0 z-2 flex min-h-17 w-full items-center justify-between gap-4 px-4 py-[0.65rem] max-[35rem]:min-h-12 max-[35rem]:p-2"
   >
-    <Menu />
+    <Menu onSave={saver.manualSave} onReturnToGallery={saver.returnToGallery} />
     <div
       class="pointer-events-auto absolute top-0 left-1/2 flex h-12 -translate-x-1/2 items-center gap-[0.6rem] rounded-b-2xl bg-[rgb(18_18_16/0.72)] px-4 py-2 backdrop-blur-[18px] backdrop-saturate-120 max-[35rem]:gap-[0.4rem] max-[35rem]:px-[0.65rem]"
       aria-label="Painting tools"
@@ -467,10 +429,10 @@
       class="fixed right-3 bottom-3 z-3 rounded-[0.4rem] bg-[rgb(18_18_16/0.72)] px-[0.6rem] py-[0.35rem] text-xs text-muted backdrop-blur-[18px]"
       >Saving…</div
     >
-  {:else if saveState === 'saved'}
+  {:else if manualSaved}
     <div
       class="fixed right-3 bottom-3 z-3 rounded-[0.4rem] bg-[rgb(18_18_16/0.72)] px-[0.6rem] py-[0.35rem] text-xs text-muted backdrop-blur-[18px]"
-      >Saved locally</div
+      >Saved</div
     >
   {/if}
 
