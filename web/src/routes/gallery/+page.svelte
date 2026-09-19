@@ -60,36 +60,56 @@
   />
 </svelte:head>
 
-<main class="gallery-main">
-  <header>
-      <h1>Chromazen Web</h1>
-    <button type="button" onclick={newArtwork}>New artwork</button>
+<main class="mx-auto block w-full max-w-6xl px-8 py-12 max-[35rem]:px-4 max-[35rem]:py-8">
+  <header class="flex items-center justify-between gap-4">
+    <h1 class="m-0 font-elms text-[clamp(2rem,5vw,3rem)] font-light">Chromazen Web</h1>
+    <button
+      class="cursor-pointer rounded-full border-0 bg-foreground px-[1.2rem] py-3 font-semibold text-background"
+      type="button"
+      onclick={newArtwork}>New artwork</button
+    >
   </header>
 
   {#if error}
-    <p class="message error-message">{error}</p>
+    <p class="mt-20 text-center text-[#ffb4ab]">{error}</p>
   {:else if loading}
-    <p class="message">Loading artwork…</p>
+    <p class="mt-20 text-center">Loading artwork…</p>
   {:else if artworks.length === 0}
-    <section class="empty">
-      <h2>Start painting</h2>
-      <p>Your artwork will appear here and save automatically.</p>
-      <button type="button" onclick={newArtwork}>New artwork</button>
+    <section class="mt-20 text-center">
+      <h2 class="m-0 font-elms font-light">Start painting</h2>
+      <p class="mt-2 mb-0 text-muted">Your artwork will appear here and save automatically.</p>
+      <button
+        class="mt-6 cursor-pointer rounded-full border-0 bg-foreground px-[1.2rem] py-3 font-semibold text-background"
+        type="button"
+        onclick={newArtwork}>New artwork</button
+      >
     </section>
   {:else}
-    <section class="artwork-grid" aria-label="Your artwork">
+    <section
+      class="mt-12 grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-6"
+      aria-label="Your artwork"
+    >
       {#each artworks as artwork (artwork.id)}
-        <article>
-          <a class="preview" href={`/artwork/${artwork.id}`} aria-label={`Open ${artwork.title}`}>
-            <img src={artwork.previewUrl} alt="" />
+        <article class="overflow-hidden rounded-xl border border-[rgb(128_128_128/0.25)]">
+          <a
+            class="grid aspect-4/3 place-items-center overflow-hidden bg-white"
+            href={`/artwork/${artwork.id}`}
+            aria-label={`Open ${artwork.title}`}
+          >
+            <img class="size-full object-contain" src={artwork.previewUrl} alt="" />
           </a>
-          <div class="artwork-details">
-            <div>
-              <a href={`/artwork/${artwork.id}`}>{artwork.title}</a>
-              <small>{new Date(artwork.updatedAt).toLocaleString()}</small>
+          <div class="flex items-center justify-between gap-4 p-4">
+            <div class="min-w-0">
+              <a
+                class="block overflow-hidden font-semibold text-ellipsis whitespace-nowrap no-underline"
+                href={`/artwork/${artwork.id}`}>{artwork.title}</a
+              >
+              <small class="mt-1 block text-muted"
+                >{new Date(artwork.updatedAt).toLocaleString()}</small
+              >
             </div>
             <button
-              class="delete-button"
+              class="cursor-pointer border-0 bg-transparent p-0 text-xs font-normal text-muted underline"
               type="button"
               aria-label={`Delete ${artwork.title}`}
               onclick={() => removeArtwork(artwork)}>Delete</button
@@ -100,122 +120,3 @@
     </section>
   {/if}
 </main>
-
-<style>
-  .gallery-main {
-    display: block;
-    width: min(72rem, 100%);
-    margin: 0 auto;
-    padding: 3rem 2rem;
-  }
-
-  header,
-  .artwork-details {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-
-  h1,
-  h2 {
-    margin: 0;
-    font-family: 'Elms Sans', sans-serif;
-    font-weight: 300;
-  }
-
-  h1 {
-    font-size: clamp(2rem, 5vw, 3rem);
-  }
-
-  header p,
-  .empty p {
-    margin: 0.5rem 0 0;
-  }
-
-  button {
-    padding: 0.75rem 1.2rem;
-    border: 0;
-    border-radius: 9999px;
-    color: var(--color-background);
-    background: var(--color-foreground);
-    cursor: pointer;
-    font: inherit;
-    font-weight: 600;
-  }
-
-  .artwork-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
-    gap: 1.5rem;
-    margin-top: 3rem;
-  }
-
-  article {
-    overflow: hidden;
-    border: 1px solid rgb(128 128 128 / 0.25);
-    border-radius: 0.75rem;
-  }
-
-  .preview {
-    display: grid;
-    aspect-ratio: 4 / 3;
-    overflow: hidden;
-    background: #fff;
-    place-items: center;
-  }
-
-  .preview img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-  }
-
-  .artwork-details {
-    padding: 1rem;
-  }
-
-  .artwork-details > div {
-    min-width: 0;
-  }
-
-  .artwork-details a {
-    display: block;
-    overflow: hidden;
-    font-weight: 600;
-    text-decoration: none;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  small {
-    display: block;
-    margin-top: 0.25rem;
-    color: var(--color-muted);
-  }
-
-  .delete-button {
-    padding: 0;
-    color: var(--color-muted);
-    background: none;
-    font-size: 0.8rem;
-    font-weight: 400;
-    text-decoration: underline;
-  }
-
-  .message,
-  .empty {
-    margin-top: 5rem;
-    text-align: center;
-  }
-
-  .error-message {
-    color: #ffb4ab;
-  }
-
-  @media (max-width: 35rem) {
-    .gallery-main {
-      padding: 2rem 1rem;
-    }
-  }
-</style>

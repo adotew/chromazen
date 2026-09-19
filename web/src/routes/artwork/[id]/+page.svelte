@@ -347,14 +347,24 @@
   />
 </svelte:head>
 
-<main class="demo">
-  <header class="topbar">
-    <a class="gallery-link" href="/gallery" data-sveltekit-reload>Gallery</a>
-    <div class="paint-controls" aria-label="Painting tools">
-      <div class="tool-group">
+<main class="flex min-h-svh bg-[#292926] p-0">
+  <header
+    class="pointer-events-none fixed top-0 left-0 z-2 flex min-h-17 w-full items-center justify-between gap-4 px-4 py-[0.65rem] max-[35rem]:min-h-12 max-[35rem]:p-2"
+  >
+    <a class="pointer-events-auto text-[#c7c4bc] no-underline" href="/gallery" data-sveltekit-reload
+      >Gallery</a
+    >
+    <div
+      class="pointer-events-auto absolute top-0 left-1/2 flex h-12 -translate-x-1/2 items-center gap-[0.6rem] rounded-b-2xl bg-[rgb(18_18_16/0.72)] px-4 py-2 backdrop-blur-[18px] backdrop-saturate-120 max-[35rem]:gap-[0.4rem] max-[35rem]:px-[0.65rem]"
+      aria-label="Painting tools"
+    >
+      <div class="flex items-center gap-[0.6rem]">
         <button
-          class="icon-button"
-          class:active={tool === 'brush'}
+          class={[
+            'grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs text-[#c7c4bc] hover:bg-white/[0.08] hover:text-white focus-visible:bg-white/[0.08] focus-visible:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground max-[35rem]:px-2',
+            tool === 'brush' &&
+              'bg-white/[0.14] text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.12)]',
+          ]}
           type="button"
           aria-label="Brush"
           title="Brush"
@@ -363,8 +373,11 @@
           <Brush size={20} aria-hidden="true" />
         </button>
         <button
-          class="icon-button"
-          class:active={tool === 'eraser'}
+          class={[
+            'grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs text-[#c7c4bc] hover:bg-white/[0.08] hover:text-white focus-visible:bg-white/[0.08] focus-visible:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground max-[35rem]:px-2',
+            tool === 'eraser' &&
+              'bg-white/[0.14] text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.12)]',
+          ]}
           type="button"
           aria-label="Eraser"
           title="Eraser"
@@ -373,8 +386,11 @@
           <Eraser size={20} aria-hidden="true" />
         </button>
         <button
-          class="icon-button"
-          class:active={tool === 'smudge'}
+          class={[
+            'grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs text-[#c7c4bc] hover:bg-white/[0.08] hover:text-white focus-visible:bg-white/[0.08] focus-visible:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground max-[35rem]:px-2',
+            tool === 'smudge' &&
+              'bg-white/[0.14] text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.12)]',
+          ]}
           type="button"
           aria-label="Smudge"
           title="Smudge"
@@ -384,8 +400,12 @@
         </button>
       </div>
 
-      <label class="color-control" aria-label="Brush color">
+      <label
+        class="grid size-8 place-items-center overflow-hidden rounded-full border border-white/[0.18]"
+        aria-label="Brush color"
+      >
         <input
+          class="color-input size-8 cursor-pointer appearance-none rounded-full border-0 bg-transparent p-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
           type="color"
           bind:value={color}
           oninput={(event) => applyColor(event.currentTarget.value, true)}
@@ -394,10 +414,14 @@
     </div>
   </header>
 
-  <aside class="side-controls" aria-label="Canvas controls">
-    <label class="size-control">
-      <span>Size</span>
+  <aside
+    class="side-controls fixed top-1/2 right-0 z-2 flex w-12 -translate-y-1/2 flex-col items-center gap-3 rounded-l-[1.25rem] bg-[rgb(18_18_16/0.72)] px-2 py-4 backdrop-blur-[18px] backdrop-saturate-120"
+    aria-label="Canvas controls"
+  >
+    <label class="size-control flex items-center gap-2 text-xs text-muted">
+      <span class="max-[35rem]:hidden">Size</span>
       <input
+        class="h-32 w-6 accent-foreground [direction:rtl] [writing-mode:vertical-lr]"
         type="range"
         min="2"
         max="2000"
@@ -405,12 +429,14 @@
         bind:value={brushSize}
         oninput={resizeBrush}
       />
-      <output>{brushSize}</output>
+      <output class="w-auto text-right text-foreground tabular-nums max-[35rem]:hidden"
+        >{brushSize}</output
+      >
     </label>
 
-    <div class="actions">
+    <div class="actions flex items-center gap-[0.6rem]">
       <button
-        class="icon-button"
+        class="grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs text-[#c7c4bc] hover:bg-white/[0.08] hover:text-white focus-visible:bg-white/[0.08] focus-visible:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground max-[35rem]:px-2"
         type="button"
         aria-label="Undo"
         title="Undo"
@@ -419,7 +445,7 @@
         <Undo2 size={20} aria-hidden="true" />
       </button>
       <button
-        class="icon-button"
+        class="grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs text-[#c7c4bc] hover:bg-white/[0.08] hover:text-white focus-visible:bg-white/[0.08] focus-visible:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground max-[35rem]:px-2"
         type="button"
         aria-label="Redo"
         title="Redo"
@@ -431,18 +457,29 @@
   </aside>
 
   {#if persistenceError}
-    <div class="save-status save-error" title={persistenceError}>Not saved</div>
+    <div
+      class="fixed right-3 bottom-3 z-3 rounded-[0.4rem] bg-[rgb(18_18_16/0.72)] px-[0.6rem] py-[0.35rem] text-xs text-[#ffb4ab] backdrop-blur-[18px]"
+      title={persistenceError}>Not saved</div
+    >
   {:else if saveState === 'saving'}
-    <div class="save-status">Saving…</div>
+    <div
+      class="fixed right-3 bottom-3 z-3 rounded-[0.4rem] bg-[rgb(18_18_16/0.72)] px-[0.6rem] py-[0.35rem] text-xs text-muted backdrop-blur-[18px]"
+      >Saving…</div
+    >
   {:else if saveState === 'saved'}
-    <div class="save-status">Saved locally</div>
+    <div
+      class="fixed right-3 bottom-3 z-3 rounded-[0.4rem] bg-[rgb(18_18_16/0.72)] px-[0.6rem] py-[0.35rem] text-xs text-muted backdrop-blur-[18px]"
+      >Saved locally</div
+    >
   {/if}
 
-  <section class="workspace" bind:this={workspace} aria-label="Painting canvas">
+  <section class="fixed inset-0" bind:this={workspace} aria-label="Painting canvas">
     <canvas
       bind:this={canvasElement}
-      class:pan-ready={spacePressed && !panning}
-      class:panning
+      class={[
+        'block size-full touch-none',
+        panning ? 'cursor-grabbing' : spacePressed ? 'cursor-grab' : 'cursor-crosshair',
+      ]}
       aria-label="Chromazen drawing canvas"
       onpointerdown={pointerDown}
       onpointermove={pointerMove}
@@ -454,11 +491,15 @@
     ></canvas>
 
     {#if loading}
-      <div class="status">Starting canvas…</div>
+      <div class="absolute inset-0 grid place-content-center bg-[#292926] p-8 text-center text-muted">
+        Starting canvas…
+      </div>
     {:else if error}
-      <div class="status error-state">
-        <strong>WebGPU could not start</strong>
-        <span>{error}</span>
+      <div
+        class="absolute inset-0 grid place-content-center gap-2 bg-[#292926] p-8 text-center text-muted"
+      >
+        <strong class="text-foreground">WebGPU could not start</strong>
+        <span class="max-w-[30rem] text-[0.85rem]">{error}</span>
       </div>
     {/if}
   </section>
@@ -470,234 +511,19 @@
     overflow: hidden;
   }
 
-  .demo {
-    display: flex;
-    min-height: 100svh;
+  .color-input::-webkit-color-swatch-wrapper {
     padding: 0;
-    background: #292926;
   }
 
-  .topbar {
-    position: fixed;
-    z-index: 2;
-    top: 0;
-    left: 0;
-    display: flex;
-    width: 100%;
-    min-height: 4.25rem;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 0.65rem 1rem;
-    pointer-events: none;
-  }
-
-  .paint-controls,
-  .tool-group,
-  .actions,
-  .size-control {
-    display: flex;
-    align-items: center;
-  }
-
-  .gallery-link {
-    color: #c7c4bc;
-    pointer-events: auto;
-    text-decoration: none;
-  }
-
-  .paint-controls {
-    position: absolute;
-    top: 0;
-    left: 50%;
-    height: 3rem;
-    gap: 0.6rem;
-    padding: 0.5rem 1rem;
-    border-radius: 0 0 1rem 1rem;
-    background: rgb(18 18 16 / 0.72);
-    backdrop-filter: blur(18px) saturate(120%);
-    pointer-events: auto;
-    transform: translateX(-50%);
-  }
-
-  .side-controls {
-    position: fixed;
-    z-index: 2;
-    top: 50%;
-    right: 0;
-    display: flex;
-    width: 3rem;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 1rem 0.5rem;
-    border-radius: 1.25rem 0 0 1.25rem;
-    background: rgb(18 18 16 / 0.72);
-    backdrop-filter: blur(18px) saturate(120%);
-    transform: translateY(-50%);
+  .color-input::-webkit-color-swatch,
+  .color-input::-moz-color-swatch {
+    border: 0;
+    border-radius: 50%;
   }
 
   .side-controls .size-control,
   .side-controls .actions {
     flex-direction: column;
-  }
-
-  .tool-group {
-    gap: 0.6rem;
-  }
-
-  .actions {
-    gap: 0.6rem;
-  }
-
-  button {
-    min-height: 2rem;
-    padding: 0.35rem 0.65rem;
-    border: 0;
-    border-radius: 0.35rem;
-    color: #c7c4bc;
-    background: transparent;
-    cursor: pointer;
-    font-size: 0.8rem;
-  }
-
-  .icon-button {
-    display: grid;
-    width: 2rem;
-    padding: 0.35rem;
-    place-items: center;
-  }
-
-  button:hover,
-  button:focus-visible {
-    color: #fff;
-    background: rgb(255 255 255 / 0.08);
-  }
-
-  button.active {
-    color: #fff;
-    background: rgb(255 255 255 / 0.14);
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
-  }
-
-  button:focus-visible,
-  input:focus-visible {
-    outline: 2px solid #f1efe8;
-    outline-offset: 2px;
-  }
-
-  .color-control {
-    display: grid;
-    width: 2rem;
-    height: 2rem;
-    overflow: hidden;
-    border: 1px solid rgb(255 255 255 / 0.18);
-    border-radius: 50%;
-    place-items: center;
-  }
-
-  input[type='color'] {
-    width: 2rem;
-    height: 2rem;
-    padding: 0;
-    border: 0;
-    border-radius: 50%;
-    appearance: none;
-    background: none;
-    cursor: pointer;
-  }
-
-  input[type='color']::-webkit-color-swatch-wrapper {
-    padding: 0;
-  }
-
-  input[type='color']::-webkit-color-swatch,
-  input[type='color']::-moz-color-swatch {
-    border: 0;
-    border-radius: 50%;
-  }
-
-  .size-control {
-    gap: 0.5rem;
-    color: #aaa79e;
-    font-size: 0.75rem;
-  }
-
-  .size-control input {
-    width: 1.5rem;
-    height: 8rem;
-    direction: rtl;
-    accent-color: #f1efe8;
-    writing-mode: vertical-lr;
-  }
-
-  .size-control output {
-    width: auto;
-    color: #f1efe8;
-    font-variant-numeric: tabular-nums;
-    text-align: right;
-  }
-
-  .workspace {
-    position: fixed;
-    inset: 0;
-  }
-
-  canvas {
-    display: block;
-    width: 100%;
-    height: 100%;
-    cursor: crosshair;
-    touch-action: none;
-  }
-
-  canvas.pan-ready {
-    cursor: grab;
-  }
-
-  canvas.panning {
-    cursor: grabbing;
-  }
-
-  .save-status {
-    position: fixed;
-    z-index: 3;
-    right: 0.75rem;
-    bottom: 0.75rem;
-    padding: 0.35rem 0.6rem;
-    border-radius: 0.4rem;
-    color: #aaa79e;
-    background: rgb(18 18 16 / 0.72);
-    font-size: 0.75rem;
-    backdrop-filter: blur(18px);
-  }
-
-  .save-error {
-    color: #ffb4ab;
-  }
-
-  .status {
-    position: absolute;
-    inset: 0;
-    display: grid;
-    padding: 2rem;
-    color: #aaa79e;
-    background: #292926;
-    place-content: center;
-    text-align: center;
-  }
-
-  .error-state {
-    gap: 0.5rem;
-  }
-
-  .error-state strong {
-    color: #f1efe8;
-  }
-
-  .error-state span {
-    max-width: 30rem;
-    font-size: 0.85rem;
   }
 
   @media (max-width: 52rem), (max-height: 32rem) {
@@ -723,27 +549,6 @@
       height: 1.5rem;
       direction: ltr;
       writing-mode: horizontal-tb;
-    }
-  }
-
-  @media (max-width: 35rem) {
-    .topbar {
-      min-height: 3rem;
-      padding: 0.5rem;
-    }
-
-    .size-control span,
-    .size-control output {
-      display: none;
-    }
-
-    .paint-controls {
-      gap: 0.4rem;
-      padding-inline: 0.65rem;
-    }
-
-    button {
-      padding-inline: 0.5rem;
     }
   }
 </style>
