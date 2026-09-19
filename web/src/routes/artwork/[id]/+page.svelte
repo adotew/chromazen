@@ -5,6 +5,7 @@
   import Undo2 from '@lucide/svelte/icons/undo-2'
   import WavesHorizontal from '@lucide/svelte/icons/waves-horizontal'
   import { onMount } from 'svelte'
+  import Menu from '$lib/components/Menu.svelte'
   import { getArtwork, putArtwork, type StoredDocument } from '$lib/artworks'
   import type { WebCanvas } from '$lib/wasm/chromazen_web'
 
@@ -353,9 +354,7 @@
   <header
     class="pointer-events-none fixed top-0 left-0 z-2 flex min-h-17 w-full items-center justify-between gap-4 px-4 py-[0.65rem] max-[35rem]:min-h-12 max-[35rem]:p-2"
   >
-    <a class="pointer-events-auto text-[#c7c4bc] no-underline" href="/gallery" data-sveltekit-reload
-      >Gallery</a
-    >
+    <Menu />
     <div
       class="pointer-events-auto absolute top-0 left-1/2 flex h-12 -translate-x-1/2 items-center gap-[0.6rem] rounded-b-2xl bg-[rgb(18_18_16/0.72)] px-4 py-2 backdrop-blur-[18px] backdrop-saturate-120 max-[35rem]:gap-[0.4rem] max-[35rem]:px-[0.65rem]"
       aria-label="Painting tools"
