@@ -139,20 +139,6 @@ fn color_slider_2d(
             }
         }
         ui.painter().add(egui::Shape::mesh(mesh));
-        let corner_radius = egui::CornerRadius::same(6);
-        ui.painter().with_clip_rect(rect).rect_stroke(
-            rect,
-            corner_radius,
-            egui::Stroke::new(6.0, ui.visuals().window_fill()),
-            egui::StrokeKind::Outside,
-        );
-        ui.painter().rect_stroke(
-            rect,
-            corner_radius,
-            visuals.bg_stroke,
-            egui::StrokeKind::Inside,
-        );
-
         let center = egui::pos2(
             egui::lerp(rect.x_range(), *x_value),
             egui::lerp(rect.bottom()..=rect.top(), *y_value),
