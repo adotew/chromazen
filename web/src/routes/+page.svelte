@@ -6,10 +6,6 @@
   const pageDescription =
     'Chromazen is a fast, distraction-free painting app for macOS, Windows, and Linux, with pressure-sensitive brushes, layers, autosave, and PNG export.'
   const canonicalUrl = 'https://www.chromazen.app/'
-
-  function newArtwork() {
-    window.location.href = `/artwork/${crypto.randomUUID()}`
-  }
 </script>
 
 <svelte:head>
@@ -36,7 +32,7 @@
         <ArrowDownCircle size={18} aria-hidden="true" />
         Download
       </a>
-      <button class="web-app-link" type="button" onclick={newArtwork}>Web App</button>
+      <a class="web-app-link" href="/gallery">Web App</a>
     </div>
     <a class="github-button" href={repositoryUrl} target="_blank" rel="noreferrer">
       <svg viewBox="0 0 24 24" aria-hidden="true">

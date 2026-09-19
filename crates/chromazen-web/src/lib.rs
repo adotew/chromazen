@@ -3,12 +3,17 @@
 use std::time::Duration;
 
 use chromazen_canvas::{
-    BrushSpacing, Canvas, PaintTool, StrokePoint, StrokePositionFilter, StrokeSmoother,
+    BrushSpacing, Canvas, CanvasDocument, LayerId, LayerInfo, PaintTool, StrokePoint,
+    StrokePositionFilter, StrokeSmoother,
 };
+use image::ImageEncoder;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::future_to_promise;
 use web_sys::HtmlCanvasElement;
 
 const DOCUMENT_SIZE: [u32; 2] = [2000, 1500];
+const DOCUMENT_SCHEMA_VERSION: u32 = 1;
 const CHARCOAL_STAMP_SIZE: u32 = 500;
 const CHARCOAL_STAMP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/charcoal.alpha"));
 const _: () = assert!(CHARCOAL_STAMP.len() == (CHARCOAL_STAMP_SIZE * CHARCOAL_STAMP_SIZE) as usize);
@@ -29,6 +34,30 @@ pub struct WebCanvas {
     last_raw_point: Option<StrokePoint>,
     position_filter: StrokePositionFilter,
     smoother: StrokeSmoother,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StoredDocument {
+    schema_version: u32,
+    width: u32,
+    height: u32,
+    background: [u8; 3],
+    brush_color: [u8; 4],
+    selected_layer: u64,
+    layers: Vec<StoredLayer>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StoredLayer {
+    id: u64,
+    name: String,
+    visible: bool,
+    opacity: u8,
+    clipped: bool,
+    #[serde(with = "serde_bytes")]
+    png: Vec<u8>,
 }
 
 #[wasm_bindgen]
@@ -256,6 +285,90 @@ impl WebCanvas {
         self.canvas.clear_selected_layer()
     }
 
+    #[wasm_bindgen(js_name = saveDocument)]
+    pub fn save_document(&mut self) -> Result<js_sys::Promise, JsValue> {
+        self.finish_stroke();
+        let document = self.canvas.document_snapshot();
+        let readback = self
+            .canvas
+            .begin_document_layer_readback()
+            .map_err(js_error)?;
+        let brush_color = self.color.map(|value| (value * 255.0).round() as u8);
+
+        Ok(future_to_promise(async move {
+            let images = readback.finish_async().await.map_err(js_error)?;
+            let mut layers = Vec::with_capacity(document.layers.len());
+            for metadata in &document.layers {
+                let image = images
+                    .iter()
+                    .find_map(|(id, image)| (*id == metadata.id).then_some(image))
+                    .ok_or_else(|| {
+                        js_error(format!("missing pixels for layer {}", metadata.id.0))
+                    })?;
+                layers.push(StoredLayer {
+                    id: metadata.id.0,
+                    name: metadata.name.clone(),
+                    visible: metadata.visible,
+                    opacity: metadata.opacity,
+                    clipped: metadata.clipped,
+                    png: encode_png(image).map_err(js_error)?,
+                });
+            }
+            serde_wasm_bindgen::to_value(&StoredDocument {
+                schema_version: DOCUMENT_SCHEMA_VERSION,
+                width: document.size[0],
+                height: document.size[1],
+                background: document.background,
+                brush_color,
+                selected_layer: document.selected_layer.0,
+                layers,
+            })
+            .map_err(js_error)
+        }))
+    }
+
+    #[wasm_bindgen(js_name = loadDocument)]
+    pub fn load_document(&mut self, value: JsValue) -> Result<(), JsValue> {
+        self.finish_stroke();
+        let stored: StoredDocument = serde_wasm_bindgen::from_value(value).map_err(js_error)?;
+        if stored.schema_version != DOCUMENT_SCHEMA_VERSION {
+            return Err(js_error(format!(
+                "unsupported document schema version {}; expected {DOCUMENT_SCHEMA_VERSION}",
+                stored.schema_version
+            )));
+        }
+        let document = CanvasDocument {
+            size: [stored.width, stored.height],
+            background: stored.background,
+            selected_layer: LayerId(stored.selected_layer),
+            layers: stored
+                .layers
+                .iter()
+                .map(|layer| LayerInfo {
+                    id: LayerId(layer.id),
+                    name: layer.name.clone(),
+                    visible: layer.visible,
+                    opacity: layer.opacity,
+                    clipped: layer.clipped,
+                })
+                .collect(),
+        };
+        let pixels = stored
+            .layers
+            .iter()
+            .map(|layer| {
+                image::load_from_memory(&layer.png)
+                    .map(image::DynamicImage::into_rgba8)
+                    .map_err(js_error)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.canvas
+            .load_document(&document, pixels)
+            .map_err(js_error)?;
+        self.color = stored.brush_color.map(|value| f32::from(value) / 255.0);
+        Ok(())
+    }
+
     pub fn render(&mut self) -> bool {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
@@ -326,6 +439,19 @@ fn sample_time(milliseconds: f64) -> Duration {
 
 fn valid_sample(x: f32, y: f32, pressure: f32, time_ms: f64) -> bool {
     x.is_finite() && y.is_finite() && pressure.is_finite() && time_ms.is_finite()
+}
+
+fn encode_png(image: &image::RgbaImage) -> Result<Vec<u8>, String> {
+    let mut output = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut output)
+        .write_image(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(|error| format!("failed to encode layer PNG: {error}"))?;
+    Ok(output)
 }
 
 fn js_error(error: impl std::fmt::Display) -> JsValue {

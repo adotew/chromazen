@@ -5,36 +5,51 @@
   import Undo2 from '@lucide/svelte/icons/undo-2'
   import WavesHorizontal from '@lucide/svelte/icons/waves-horizontal'
   import { onMount } from 'svelte'
+  import { getArtwork, putArtwork, type StoredDocument } from '$lib/artworks'
   import type { WebCanvas } from '$lib/wasm/chromazen_web'
 
   type Renderer = WebCanvas & {
     setTool(tool: number): void
     panBy(deltaX: number, deltaY: number): boolean
     zoomAt(factor: number, x: number, y: number): boolean
+    saveDocument(): Promise<StoredDocument>
+    loadDocument(document: StoredDocument): void
   }
 
+  let { data }: { data: { id: string } } = $props()
   let canvasElement: HTMLCanvasElement
   let workspace: HTMLElement
   let renderer: Renderer | undefined
   let resizeObserver: ResizeObserver | undefined
   let frame = 0
   let activePointer: number | undefined
-  let panning = false
-  let spacePressed = false
+  let panning = $state(false)
+  let spacePressed = $state(false)
   let lastPanPoint = [0, 0]
   let strokeStartedAt = 0
   let lastPressure = 1
   type Tool = 'brush' | 'eraser' | 'smudge'
   const toolIds: Record<Tool, number> = { brush: 0, eraser: 1, smudge: 2 }
 
-  let loading = true
-  let error = ''
-  let tool: Tool = 'brush'
-  let brushSize = 500
-  let color = '#1d4ed8'
+  let loading = $state(true)
+  let error = $state('')
+  let persistenceError = $state('')
+  let saveState = $state<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+  let tool = $state<Tool>('brush')
+  let brushSize = $state(500)
+  let color = $state('#1d4ed8')
+  let createdAt = Date.now()
+  let changeVersion = 0
+  let savedVersion = 0
+  let saveTimer: ReturnType<typeof setTimeout> | undefined
+  let saveInFlight = false
+  let persistenceReady = false
+  let mounted = false
+  let persistRequested = false
 
   onMount(() => {
     let disposed = false
+    mounted = true
 
     async function start() {
       try {
@@ -50,11 +65,28 @@
         }
         renderer = created as Renderer
         renderer.setBrushSize(brushSize)
-        applyColor()
+        let isNew = false
+        try {
+          const artwork = await getArtwork(data.id)
+          if (disposed) return
+          if (artwork) {
+            renderer.loadDocument(artwork.document)
+            createdAt = artwork.createdAt
+            color = rgbToHex(artwork.document.brushColor)
+          } else {
+            applyColor()
+            isNew = true
+          }
+          persistenceReady = true
+        } catch (cause) {
+          persistenceError = errorMessage(cause)
+          applyColor()
+        }
         resizeObserver = new ResizeObserver(resize)
         resizeObserver.observe(workspace)
         loading = false
         requestFrame()
+        if (isNew) void saveArtwork()
       } catch (cause) {
         error = cause instanceof Error ? cause.message : String(cause)
         loading = false
@@ -64,11 +96,73 @@
     void start()
     return () => {
       disposed = true
+      mounted = false
+      if (saveTimer) clearTimeout(saveTimer)
       resizeObserver?.disconnect()
       if (frame) cancelAnimationFrame(frame)
       renderer?.free()
     }
   })
+
+  function markDirty() {
+    changeVersion += 1
+    saveState = persistenceReady ? 'idle' : 'failed'
+    if (!persistenceReady) return
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => void saveArtwork(), 2000)
+  }
+
+  async function saveArtwork() {
+    if (!renderer || !persistenceReady || saveInFlight) return
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = undefined
+    saveInFlight = true
+    saveState = 'saving'
+    const version = changeVersion
+    try {
+      const document = await renderer.saveDocument()
+      if (!mounted) return
+      const now = Date.now()
+      await putArtwork({
+        schemaVersion: 1,
+        id: data.id,
+        title: 'Untitled',
+        createdAt,
+        updatedAt: now,
+        document,
+      })
+      savedVersion = version
+      saveState = changeVersion === version ? 'saved' : 'idle'
+      if (!persistRequested) {
+        persistRequested = true
+        void navigator.storage?.persist?.()
+      }
+    } catch (cause) {
+      if (!mounted) return
+      persistenceError = errorMessage(cause)
+      saveState = 'failed'
+    } finally {
+      saveInFlight = false
+      if (mounted && changeVersion > version) {
+        if (saveTimer) clearTimeout(saveTimer)
+        saveTimer = setTimeout(() => void saveArtwork(), 2000)
+      }
+    }
+  }
+
+  function beforeUnload(event: BeforeUnloadEvent) {
+    if (!saveInFlight && savedVersion === changeVersion) return
+    event.preventDefault()
+    event.returnValue = ''
+  }
+
+  function rgbToHex([red, green, blue]: [number, number, number, number]) {
+    return `#${[red, green, blue].map((value) => value.toString(16).padStart(2, '0')).join('')}`
+  }
+
+  function errorMessage(cause: unknown) {
+    return cause instanceof Error ? cause.message : String(cause)
+  }
 
   function canvasSize() {
     const bounds = workspace.getBoundingClientRect()
@@ -161,8 +255,9 @@
     if (!renderer || event.pointerId !== activePointer) return
     event.preventDefault()
     if (!panning) {
-      renderer.pushStrokeSamples(samples(event))
-      renderer.endStroke()
+      const samplesChanged = renderer.pushStrokeSamples(samples(event))
+      const strokeChanged = renderer.endStroke()
+      if (samplesChanged || strokeChanged) markDirty()
     }
     activePointer = undefined
     panning = false
@@ -174,7 +269,7 @@
 
   function pointerCancel(event: PointerEvent) {
     if (!renderer || event.pointerId !== activePointer) return
-    if (!panning) renderer.endStroke()
+    if (!panning && renderer.endStroke()) markDirty()
     activePointer = undefined
     panning = false
     requestFrame()
@@ -206,7 +301,7 @@
   function windowBlur() {
     spacePressed = false
     if (activePointer === undefined) return
-    if (!panning) renderer?.endStroke()
+    if (!panning && renderer?.endStroke()) markDirty()
     if (canvasElement.hasPointerCapture(activePointer)) canvasElement.releasePointerCapture(activePointer)
     activePointer = undefined
     panning = false
@@ -223,19 +318,25 @@
     renderer?.setBrushSize(brushSize)
   }
 
-  function applyColor(next = color) {
+  function applyColor(next = color, persist = false) {
     if (!renderer) return
     const value = Number.parseInt(next.slice(1), 16)
     renderer.setColor((value >> 16) & 255, (value >> 8) & 255, value & 255)
+    if (persist) markDirty()
   }
 
   function command(action: 'undo' | 'redo') {
-    renderer?.[action]()
+    if (renderer?.[action]()) markDirty()
     requestFrame()
   }
 </script>
 
-<svelte:window onkeydown={keyDown} onkeyup={keyUp} onblur={windowBlur} />
+<svelte:window
+  onkeydown={keyDown}
+  onkeyup={keyUp}
+  onblur={windowBlur}
+  onbeforeunload={beforeUnload}
+/>
 
 <svelte:head>
   <title>Web App — Chromazen</title>
@@ -248,6 +349,7 @@
 
 <main class="demo">
   <header class="topbar">
+    <a class="gallery-link" href="/gallery" data-sveltekit-reload>Gallery</a>
     <div class="paint-controls" aria-label="Painting tools">
       <div class="tool-group">
         <button
@@ -286,7 +388,7 @@
         <input
           type="color"
           bind:value={color}
-          oninput={(event) => applyColor(event.currentTarget.value)}
+          oninput={(event) => applyColor(event.currentTarget.value, true)}
         />
       </label>
     </div>
@@ -327,6 +429,14 @@
       </button>
     </div>
   </aside>
+
+  {#if persistenceError}
+    <div class="save-status save-error" title={persistenceError}>Not saved</div>
+  {:else if saveState === 'saving'}
+    <div class="save-status">Saving…</div>
+  {:else if saveState === 'saved'}
+    <div class="save-status">Saved locally</div>
+  {/if}
 
   <section class="workspace" bind:this={workspace} aria-label="Painting canvas">
     <canvas
@@ -388,6 +498,12 @@
   .size-control {
     display: flex;
     align-items: center;
+  }
+
+  .gallery-link {
+    color: #c7c4bc;
+    pointer-events: auto;
+    text-decoration: none;
   }
 
   .paint-controls {
@@ -541,6 +657,23 @@
 
   canvas.panning {
     cursor: grabbing;
+  }
+
+  .save-status {
+    position: fixed;
+    z-index: 3;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    padding: 0.35rem 0.6rem;
+    border-radius: 0.4rem;
+    color: #aaa79e;
+    background: rgb(18 18 16 / 0.72);
+    font-size: 0.75rem;
+    backdrop-filter: blur(18px);
+  }
+
+  .save-error {
+    color: #ffb4ab;
   }
 
   .status {

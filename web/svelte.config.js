@@ -6,7 +6,7 @@ const config = {
     adapter: adapter({
       pages: "dist",
       assets: "dist",
-      fallback: "404.html",
+      fallback: "fallback.html",
       strict: true,
     }),
   },

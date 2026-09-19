@@ -1,4 +1,4 @@
-use std::sync::mpsc;
+use futures_channel::oneshot;
 
 use super::layers::{LayerId, PaintLayer};
 
@@ -15,7 +15,7 @@ pub struct LayerReadback {
 struct PendingLayerReadback {
     id: LayerId,
     buffer: wgpu::Buffer,
-    completion: mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    completion: oneshot::Receiver<Result<(), wgpu::BufferAsyncError>>,
 }
 
 impl LayerReadback {
@@ -25,28 +25,60 @@ impl LayerReadback {
             .map_err(|error| format!("failed to wait for layer readback: {error}"))?;
 
         let mut images = Vec::with_capacity(self.layers.len());
-        for layer in self.layers {
+        for mut layer in self.layers {
             layer
                 .completion
-                .recv()
+                .try_recv()
                 .map_err(|error| format!("failed to receive layer readback: {error}"))?
+                .ok_or_else(|| "layer readback did not complete".to_owned())?
                 .map_err(|error| format!("failed to map layer readback: {error}"))?;
-
-            let mapped = layer.buffer.slice(..).get_mapped_range();
-            let pixels = unpack_rows(
-                &mapped,
+            images.push(finish_layer(
+                layer,
+                self.size,
                 self.unpadded_bytes_per_row,
                 self.padded_bytes_per_row,
-                self.size[1] as usize,
-            );
-            drop(mapped);
-            layer.buffer.unmap();
-            let image = image::RgbaImage::from_raw(self.size[0], self.size[1], pixels)
-                .ok_or_else(|| "layer readback produced an invalid image size".to_owned())?;
-            images.push((layer.id, image));
+            )?);
         }
         Ok(images)
     }
+
+    pub async fn finish_async(self) -> Result<Vec<(LayerId, image::RgbaImage)>, String> {
+        let _ = self.device.poll(wgpu::PollType::Poll);
+        let mut images = Vec::with_capacity(self.layers.len());
+        for mut layer in self.layers {
+            (&mut layer.completion)
+                .await
+                .map_err(|error| format!("failed to receive layer readback: {error}"))?
+                .map_err(|error| format!("failed to map layer readback: {error}"))?;
+            images.push(finish_layer(
+                layer,
+                self.size,
+                self.unpadded_bytes_per_row,
+                self.padded_bytes_per_row,
+            )?);
+        }
+        Ok(images)
+    }
+}
+
+fn finish_layer(
+    layer: PendingLayerReadback,
+    size: [u32; 2],
+    unpadded_bytes_per_row: usize,
+    padded_bytes_per_row: usize,
+) -> Result<(LayerId, image::RgbaImage), String> {
+    let mapped = layer.buffer.slice(..).get_mapped_range();
+    let pixels = unpack_rows(
+        &mapped,
+        unpadded_bytes_per_row,
+        padded_bytes_per_row,
+        size[1] as usize,
+    );
+    drop(mapped);
+    layer.buffer.unmap();
+    let image = image::RgbaImage::from_raw(size[0], size[1], pixels)
+        .ok_or_else(|| "layer readback produced an invalid image size".to_owned())?;
+    Ok((layer.id, image))
 }
 
 pub(super) fn begin_read_layers(
@@ -98,7 +130,7 @@ pub(super) fn begin_read_layers(
     let layers = pending
         .into_iter()
         .map(|(id, buffer)| {
-            let (sender, completion) = mpsc::sync_channel(1);
+            let (sender, completion) = oneshot::channel();
             buffer
                 .slice(..)
                 .map_async(wgpu::MapMode::Read, move |result| {
