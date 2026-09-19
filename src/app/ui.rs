@@ -1027,30 +1027,26 @@ fn show_tool_button(
     tool: EditorTool,
     selected: bool,
 ) -> egui::Response {
-    let (icon, label, shortcut, accent) = match tool {
+    let (icon, label, shortcut) = match tool {
         EditorTool::Paint(PaintTool::Brush) => (
             egui::include_image!("../../assets/icons/brush.svg"),
             "Brush",
             "D / B",
-            egui::Color32::from_rgb(169, 186, 200),
         ),
         EditorTool::Paint(PaintTool::Eraser) => (
             egui::include_image!("../../assets/icons/eraser.svg"),
             "Eraser",
             "E",
-            egui::Color32::from_rgb(213, 170, 109),
         ),
         EditorTool::Paint(PaintTool::Smudge) => (
             egui::include_image!("../../assets/icons/waves-horizontal.svg"),
             "Smudge",
             "S",
-            egui::Color32::from_rgb(177, 159, 204),
         ),
         EditorTool::Transform => (
             egui::include_image!("../../assets/icons/move.svg"),
             "Transform",
             "T",
-            egui::Color32::from_rgb(142, 191, 166),
         ),
     };
     let response = ui.interact(rect, ui.id().with(label), egui::Sense::click());
@@ -1058,7 +1054,7 @@ fn show_tool_button(
         egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
     });
     let icon_tint = if selected {
-        accent
+        egui::Color32::from_rgb(10, 132, 255)
     } else if response.hovered() {
         ui.visuals().text_color()
     } else {
