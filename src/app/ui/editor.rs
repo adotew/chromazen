@@ -357,6 +357,7 @@ impl GuiLayer {
             self.show_canvas_crop_overlay(ui.ctx(), workspace_view, workspace_rect);
             self.clear_reference_selection_on_outside_press(ui.ctx());
             self.show_message_dialog(ui.ctx());
+            self.show_settings_dialog(ui.ctx());
             self.show_shortcuts_dialog(ui.ctx());
         })
     }

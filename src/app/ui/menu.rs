@@ -166,6 +166,15 @@ impl GuiLayer {
                         ui.set_min_width(240.0);
                         menu_item(
                             ui,
+                            "Settings…",
+                            Some("Ctrl-,"),
+                            true,
+                            AppCommand::Ui(UiCommand::ShowSettings),
+                            &mut self.commands,
+                        );
+                        ui.separator();
+                        menu_item(
+                            ui,
                             "Save Settings",
                             None,
                             true,

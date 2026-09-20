@@ -342,11 +342,13 @@ impl ApplicationHandler<AppEvent> for App {
                     .then(|| self.input.command_for_platform_shortcut(&event))
                     .flatten()
                     .filter(|command| {
-                        let is_new_artwork = matches!(
+                        let always_available = matches!(
                             command,
                             AppCommand::Navigation(NavigationCommand::NewArtwork)
+                                | AppCommand::Ui(_)
                         );
-                        is_new_artwork || (!canvas_crop_active && self.screen == AppScreen::Editor)
+                        always_available
+                            || (!canvas_crop_active && self.screen == AppScreen::Editor)
                     });
                 if let Some(command) = platform_command {
                     self.pending_commands.push(command);

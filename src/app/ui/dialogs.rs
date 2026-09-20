@@ -1,6 +1,30 @@
 use super::*;
 
+use crate::config::DEFAULT_ACCENT_COLOR;
+
+const ACCENT_COLORS: [(&str, egui::Color32); 7] = [
+    (
+        "Blue",
+        egui::Color32::from_rgb(
+            DEFAULT_ACCENT_COLOR[0],
+            DEFAULT_ACCENT_COLOR[1],
+            DEFAULT_ACCENT_COLOR[2],
+        ),
+    ),
+    ("Teal", egui::Color32::from_rgb(0, 151, 167)),
+    ("Green", egui::Color32::from_rgb(46, 155, 98)),
+    ("Orange", egui::Color32::from_rgb(217, 119, 6)),
+    ("Red", egui::Color32::from_rgb(220, 76, 76)),
+    ("Pink", egui::Color32::from_rgb(216, 79, 139)),
+    ("Purple", egui::Color32::from_rgb(142, 93, 231)),
+];
+
 impl GuiLayer {
+    pub(crate) fn open_settings_dialog(&mut self) {
+        self.settings_dialog_open = true;
+        self.context.request_repaint();
+    }
+
     pub(crate) fn open_shortcuts_dialog(&mut self) {
         self.shortcuts_dialog_open = true;
         self.context.request_repaint();
@@ -117,6 +141,73 @@ impl GuiLayer {
         }
     }
 
+    pub(super) fn show_settings_dialog(&mut self, context: &egui::Context) {
+        if !self.settings_dialog_open {
+            return;
+        }
+        let mut accent_color = self.accent_color;
+        let mut changed = false;
+        let mut close = false;
+        let response = egui::Modal::new(egui::Id::new("settings dialog")).show(context, |ui| {
+            ui.set_width(420.0);
+            ui.heading("Settings");
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                ui.label("Accent color");
+                ui.add_space(8.0);
+                for (name, color) in ACCENT_COLORS {
+                    let selected = color == accent_color;
+                    let (rect, response) =
+                        ui.allocate_exact_size(egui::Vec2::splat(34.0), egui::Sense::click());
+                    response.widget_info(|| {
+                        egui::WidgetInfo::selected(
+                            egui::WidgetType::RadioButton,
+                            true,
+                            selected,
+                            name,
+                        )
+                    });
+                    if response.clicked() {
+                        accent_color = color;
+                        changed = true;
+                    }
+                    ui.painter().circle_filled(rect.center(), 11.0, color);
+                    if selected || response.hovered() {
+                        ui.painter().circle_stroke(
+                            rect.center(),
+                            15.0,
+                            egui::Stroke::new(
+                                if selected { 2.0 } else { 1.0 },
+                                ui.visuals().text_color(),
+                            ),
+                        );
+                    }
+                    response.on_hover_text(name);
+                }
+            });
+            ui.add_space(16.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                close = ui.button("Done").clicked();
+            });
+        });
+        close |= response.should_close();
+        if changed {
+            self.set_accent_color(accent_color);
+        }
+        if close {
+            self.settings_dialog_open = false;
+            self.commands
+                .push(AppCommand::Settings(SettingsCommand::Save));
+        }
+    }
+
+    pub(super) fn set_accent_color(&mut self, accent_color: egui::Color32) {
+        self.accent_color = accent_color;
+        self.context
+            .all_styles_mut(|style| apply_accent_color_to_style(style, accent_color));
+        self.context.request_repaint();
+    }
+
     pub(super) fn show_shortcuts_dialog(&mut self, context: &egui::Context) {
         if !self.shortcuts_dialog_open {
             return;
@@ -170,6 +261,7 @@ impl GuiLayer {
                                 ui,
                                 "Document",
                                 &[
+                                    ("Settings", SETTINGS_SHORTCUT),
                                     ("Save", SAVE_SHORTCUT),
                                     ("Export PNG", EXPORT_SHORTCUT),
                                     ("Undo", UNDO_SHORTCUT),
@@ -189,5 +281,20 @@ impl GuiLayer {
         if response.inner || context.input(|input| input.key_pressed(egui::Key::Escape)) {
             self.shortcuts_dialog_open = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accent_colors_include_original_blue() {
+        let original = egui::Color32::from_rgb(
+            DEFAULT_ACCENT_COLOR[0],
+            DEFAULT_ACCENT_COLOR[1],
+            DEFAULT_ACCENT_COLOR[2],
+        );
+        assert!(ACCENT_COLORS.iter().any(|(_, color)| *color == original));
     }
 }

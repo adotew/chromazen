@@ -736,6 +736,7 @@ fn logical_shortcut_key(key: &Key) -> Option<KeyCode> {
             "y" => Some(KeyCode::KeyY),
             "r" => Some(KeyCode::KeyR),
             "c" => Some(KeyCode::KeyC),
+            "," => Some(KeyCode::Comma),
             "/" | "?" => Some(KeyCode::Slash),
             _ => None,
         },
@@ -750,6 +751,7 @@ fn application_command_for_key(key: KeyCode, modifiers: ModifiersState) -> Optio
         (KeyCode::KeyN, ModifiersState::CONTROL) => {
             Some(AppCommand::Navigation(NavigationCommand::NewArtwork))
         }
+        (KeyCode::Comma, ModifiersState::CONTROL) => Some(AppCommand::Ui(UiCommand::ShowSettings)),
         (KeyCode::Slash, ModifiersState::SHIFT) => Some(AppCommand::Ui(UiCommand::ShowShortcuts)),
         _ => None,
     }
@@ -1160,6 +1162,10 @@ mod tests {
             Some(KeyCode::KeyY)
         );
         assert_eq!(
+            logical_shortcut_key(&Key::Character(",".into())),
+            Some(KeyCode::Comma)
+        );
+        assert_eq!(
             logical_shortcut_key(&Key::Named(NamedKey::ArrowLeft)),
             Some(KeyCode::ArrowLeft)
         );
@@ -1170,6 +1176,10 @@ mod tests {
         assert_eq!(
             application_command_for_key(KeyCode::KeyN, ModifiersState::CONTROL),
             Some(AppCommand::Navigation(NavigationCommand::NewArtwork))
+        );
+        assert_eq!(
+            application_command_for_key(KeyCode::Comma, ModifiersState::CONTROL),
+            Some(AppCommand::Ui(UiCommand::ShowSettings))
         );
         assert_eq!(
             application_command_for_key(KeyCode::Slash, ModifiersState::SHIFT),

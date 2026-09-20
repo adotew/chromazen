@@ -13,6 +13,7 @@ pub(super) enum SettingsCommand {
         tool_sizes: [f32; 3],
         tool_opacities: [f32; 3],
         panel_layout: PanelLayout,
+        accent_color: [u8; 3],
     },
     SwitchBrush {
         tool: PaintTool,
@@ -163,6 +164,7 @@ impl SettingsController {
                 tool_sizes,
                 tool_opacities,
                 panel_layout,
+                accent_color,
             } => {
                 self.config.brush = brush;
                 self.config.brush.size = tool_sizes[0];
@@ -175,6 +177,7 @@ impl SettingsController {
                 self.config.eraser_brush = tool_brushes[1].clone();
                 self.config.smudge_brush = tool_brushes[2].clone();
                 self.config.panel_layout = panel_layout;
+                self.config.accent_color = accent_color;
                 let Some(store) = &self.store else {
                     return Some(SettingsEffect::Error(
                         "The configuration directory is unavailable".to_owned(),

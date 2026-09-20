@@ -264,8 +264,14 @@ impl App {
                 self.brush_import.start(tool, paths);
             }
             AppSettingsCommand::Save => {
-                let Some((brush, tool_brushes, tool_sizes, tool_opacities, panel_layout)) =
-                    self.gui.as_ref().map(GuiLayer::settings_for_save)
+                let Some((
+                    brush,
+                    tool_brushes,
+                    tool_sizes,
+                    tool_opacities,
+                    panel_layout,
+                    accent_color,
+                )) = self.gui.as_ref().map(GuiLayer::settings_for_save)
                 else {
                     return;
                 };
@@ -275,6 +281,7 @@ impl App {
                     tool_sizes,
                     tool_opacities,
                     panel_layout,
+                    accent_color,
                 }]);
             }
             AppSettingsCommand::ReloadConfiguration => {
@@ -375,6 +382,11 @@ impl App {
 
     fn handle_ui_command(&mut self, command: UiCommand) {
         match command {
+            UiCommand::ShowSettings => {
+                if let Some(gui) = self.gui.as_mut() {
+                    gui.open_settings_dialog();
+                }
+            }
             UiCommand::ShowShortcuts => {
                 if let Some(gui) = self.gui.as_mut() {
                     gui.open_shortcuts_dialog();

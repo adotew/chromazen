@@ -23,11 +23,13 @@ pub(crate) use brush::{BrushCatalog, BrushSummary, LoadedBrushPreset};
 const APP_NAME: &str = "Chromazen";
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CURRENT_SCHEMA_VERSION: u32 = 1;
+pub(crate) const DEFAULT_ACCENT_COLOR: [u8; 3] = [10, 132, 255];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct AppConfig {
     pub(crate) schema_version: u32,
+    pub(crate) accent_color: [u8; 3],
     /// Brush-tool preset. Kept under its original name for config compatibility.
     pub(crate) active_brush: String,
     pub(crate) eraser_brush: String,
@@ -44,6 +46,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
+            accent_color: DEFAULT_ACCENT_COLOR,
             active_brush: DEFAULT_BRUSH_ID.to_owned(),
             eraser_brush: DEFAULT_BRUSH_ID.to_owned(),
             smudge_brush: DEFAULT_BRUSH_ID.to_owned(),
@@ -356,6 +359,7 @@ mod tests {
         assert_eq!(config.eraser_opacity, 1.0);
         assert_eq!(config.smudge_opacity, 1.0);
         assert_eq!(config.brush.color, CurrentBrushConfig::default().color);
+        assert_eq!(config.accent_color, DEFAULT_ACCENT_COLOR);
         assert_eq!(config.active_brush, "charcoal");
     }
 
@@ -397,6 +401,7 @@ mod tests {
         config.eraser_opacity = 0.6;
         config.smudge_opacity = 0.8;
         config.brush.color = [1, 2, 3, 255];
+        config.accent_color = [4, 5, 6];
         config.panel_layout = PanelLayout {
             brush_panel_pos: [1.0, 2.0],
             color_panel_pos: [5.0, 6.0],

@@ -56,7 +56,7 @@ impl GuiLayer {
                         ui.painter().hline(
                             row.row.rect.x_range().shrink(8.0),
                             y,
-                            egui::Stroke::new(1.5_f32, ui.visuals().selection.stroke.color),
+                            egui::Stroke::new(1.5_f32, ui.visuals().selection.bg_fill),
                         );
                         if let Some(dragged) = row.row.dnd_release_payload::<LayerId>() {
                             self.commands

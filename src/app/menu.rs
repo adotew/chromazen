@@ -17,6 +17,7 @@ mod imp {
     const EXPORT_PNG_ID: &str = "chromazen.file.export-png";
     const ADD_REFERENCE_ID: &str = "chromazen.file.add-reference";
     const IMPORT_BRUSHES_ID: &str = "chromazen.file.import-brushes";
+    const SETTINGS_ID: &str = "chromazen.application.settings";
     const QUIT_ID: &str = "chromazen.application.quit";
     const UNDO_ID: &str = "chromazen.edit.undo";
     const REDO_ID: &str = "chromazen.edit.redo";
@@ -288,12 +289,19 @@ mod imp {
             }),
         );
         let separator_1 = PredefinedMenuItem::separator();
-        let services = PredefinedMenuItem::services(None);
+        let settings = MenuItem::with_id(
+            SETTINGS_ID,
+            "Settings…",
+            true,
+            Some(Accelerator::new(Some(CMD_OR_CTRL), Code::Comma)),
+        );
         let separator_2 = PredefinedMenuItem::separator();
+        let services = PredefinedMenuItem::services(None);
+        let separator_3 = PredefinedMenuItem::separator();
         let hide = PredefinedMenuItem::hide(None);
         let hide_others = PredefinedMenuItem::hide_others(None);
         let show_all = PredefinedMenuItem::show_all(None);
-        let separator_3 = PredefinedMenuItem::separator();
+        let separator_4 = PredefinedMenuItem::separator();
         let quit = MenuItem::with_id(
             QUIT_ID,
             "Quit Chromazen",
@@ -307,12 +315,14 @@ mod imp {
             &[
                 &about,
                 &separator_1,
-                &services,
+                &settings,
                 &separator_2,
+                &services,
+                &separator_3,
                 &hide,
                 &hide_others,
                 &show_all,
-                &separator_3,
+                &separator_4,
                 &quit,
             ],
         )
@@ -326,6 +336,7 @@ mod imp {
             EXPORT_PNG_ID => Some(AppCommand::Editor(EditorCommand::ExportPng)),
             ADD_REFERENCE_ID => Some(AppCommand::Editor(EditorCommand::AddReferences)),
             IMPORT_BRUSHES_ID => Some(AppCommand::Settings(SettingsCommand::ImportBrushes)),
+            SETTINGS_ID => Some(AppCommand::Ui(UiCommand::ShowSettings)),
             QUIT_ID => Some(AppCommand::Navigation(NavigationCommand::Quit)),
             UNDO_ID => Some(AppCommand::Editor(EditorCommand::Undo)),
             REDO_ID => Some(AppCommand::Editor(EditorCommand::Redo)),
@@ -379,6 +390,10 @@ mod imp {
             assert_eq!(
                 command_for_id(&MenuId::new(IMPORT_BRUSHES_ID)),
                 Some(AppCommand::Settings(SettingsCommand::ImportBrushes))
+            );
+            assert_eq!(
+                command_for_id(&MenuId::new(SETTINGS_ID)),
+                Some(AppCommand::Ui(UiCommand::ShowSettings))
             );
             assert_eq!(
                 command_for_id(&MenuId::new(QUIT_ID)),

@@ -113,5 +113,6 @@ pub(super) enum GalleryCommand {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum UiCommand {
+    ShowSettings,
     ShowShortcuts,
 }

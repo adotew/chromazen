@@ -52,6 +52,10 @@ const LAYER_PANEL_WIDTH: f32 = 300.0;
 const LAYER_LIST_MAX_HEIGHT: f32 = 440.0;
 
 #[cfg(target_os = "macos")]
+const SETTINGS_SHORTCUT: &str = "⌘-,";
+#[cfg(not(target_os = "macos"))]
+const SETTINGS_SHORTCUT: &str = "Ctrl-,";
+#[cfg(target_os = "macos")]
 const SAVE_SHORTCUT: &str = "⌘-S";
 #[cfg(not(target_os = "macos"))]
 const SAVE_SHORTCUT: &str = "Ctrl-S";
@@ -154,6 +158,7 @@ pub struct GuiLayer {
     brush_adjustment_preview: Option<chromazen_canvas::BrushCursor>,
     commands: Vec<AppCommand>,
     message_dialog: Option<MessageDialog>,
+    settings_dialog_open: bool,
     shortcuts_dialog_open: bool,
     background_edit_start: Option<[u8; 3]>,
     layer_name_edit: Option<LayerNameEdit>,
@@ -173,6 +178,7 @@ pub struct GuiLayer {
     color_window_open: bool,
     layers_window_open: bool,
     panel_layout: PanelLayout,
+    accent_color: egui::Color32,
     canvas_size_constraints: CanvasSizeConstraints,
     new_artwork_dialog: Option<NewArtworkDialog>,
     canvas_crop: Option<CanvasCrop>,
@@ -331,8 +337,13 @@ impl GuiLayer {
         load_error: Option<String>,
     ) -> Self {
         let context = egui::Context::default();
+        let accent_color = egui::Color32::from_rgb(
+            config.accent_color[0],
+            config.accent_color[1],
+            config.accent_color[2],
+        );
         install_fonts(&context);
-        install_rounded_ui_style(&context);
+        install_rounded_ui_style(&context, accent_color);
         egui_extras::install_image_loaders(&context);
         let state = EguiWinitState::new(
             context.clone(),
@@ -383,6 +394,7 @@ impl GuiLayer {
             brush_adjustment_preview: None,
             commands: Vec::new(),
             message_dialog,
+            settings_dialog_open: false,
             shortcuts_dialog_open: false,
             background_edit_start: None,
             layer_name_edit: None,
@@ -402,6 +414,7 @@ impl GuiLayer {
             color_window_open: false,
             layers_window_open: false,
             panel_layout: config.panel_layout,
+            accent_color,
             canvas_size_constraints,
             new_artwork_dialog: None,
             canvas_crop: None,
@@ -497,6 +510,7 @@ impl GuiLayer {
             }
             self.show_new_artwork_dialog(ui.ctx());
             self.show_message_dialog(ui.ctx());
+            self.show_settings_dialog(ui.ctx());
             self.show_shortcuts_dialog(ui.ctx());
         })
     }
@@ -531,6 +545,7 @@ impl GuiLayer {
         [f32; 3],
         [f32; 3],
         PanelLayout,
+        [u8; 3],
     ) {
         let mut brush = self.current_brush_config();
         brush.size = self.tool_sizes[tool_index(PaintTool::Brush)];
@@ -541,6 +556,7 @@ impl GuiLayer {
             self.tool_sizes,
             self.tool_opacities,
             self.panel_layout,
+            rgb(self.accent_color),
         )
     }
 
@@ -647,6 +663,11 @@ impl GuiLayer {
             self.tool_sizes[index].clamp(*self.size_range.start(), *self.size_range.end());
         self.brush.opacity = self.tool_opacities[index];
         self.panel_layout = config.panel_layout;
+        self.set_accent_color(egui::Color32::from_rgb(
+            config.accent_color[0],
+            config.accent_color[1],
+            config.accent_color[2],
+        ));
         self.context.request_repaint();
     }
 }
@@ -1054,7 +1075,7 @@ fn show_tool_button(
         egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
     });
     let icon_tint = if selected {
-        egui::Color32::from_rgb(10, 132, 255)
+        ui.visuals().selection.bg_fill
     } else if response.hovered() {
         ui.visuals().text_color()
     } else {
@@ -1104,7 +1125,7 @@ fn paint_reference_selection(
     reference_rect: egui::Rect,
     show_resize_handle: bool,
 ) {
-    let selection = egui::Color32::from_rgb(13, 153, 255);
+    let selection = painter.ctx().global_style().visuals.selection.bg_fill;
     painter.rect_stroke(
         reference_rect,
         0.0,
@@ -1213,7 +1234,7 @@ fn install_fonts(context: &egui::Context) {
     });
 }
 
-fn install_rounded_ui_style(context: &egui::Context) {
+fn install_rounded_ui_style(context: &egui::Context, accent_color: egui::Color32) {
     context.all_styles_mut(|style| {
         apply_button_padding(style);
         let dark_mode = style.visuals.dark_mode;
@@ -1266,7 +1287,17 @@ fn install_rounded_ui_style(context: &egui::Context) {
         visuals.widgets.open.weak_bg_fill = visuals.widgets.hovered.weak_bg_fill;
         visuals.slider_trailing_fill = true;
         visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
+        apply_accent_color_to_style(style, accent_color);
     });
+}
+
+fn apply_accent_color_to_style(style: &mut egui::Style, accent_color: egui::Color32) {
+    style.visuals.selection.bg_fill = accent_color;
+    style.visuals.selection.stroke.color = if egui::Rgba::from(accent_color).intensity() < 0.5 {
+        egui::Color32::WHITE
+    } else {
+        egui::Color32::BLACK
+    };
 }
 
 fn apply_button_padding(style: &mut egui::Style) {
@@ -1538,6 +1569,17 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn accent_color_updates_selection_style() {
+        let mut style = egui::Style::default();
+        let accent = egui::Color32::from_rgb(12, 34, 56);
+
+        apply_accent_color_to_style(&mut style, accent);
+
+        assert_eq!(style.visuals.selection.bg_fill, accent);
+        assert_eq!(style.visuals.selection.stroke.color, egui::Color32::WHITE);
     }
 
     #[test]
