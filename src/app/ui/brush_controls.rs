@@ -191,17 +191,11 @@ fn brush_slider(
             egui::lerp((track.top() + 7.0)..=(track.bottom() - 7.0), 1.0 - fraction),
         );
         let thumb = egui::Rect::from_center_size(thumb_center, egui::vec2(24.0, 14.0));
-        let (track_shade, idle, hovered, active, disabled) = if dark {
-            (48, 105, 135, 155, 60)
-        } else {
-            (230, 65, 45, 30, 130)
-        };
-        ui.painter().rect_filled(
-            track,
-            egui::CornerRadius::same(4),
-            egui::Color32::from_gray(track_shade),
-        );
-        let thumb_shade = if !response.enabled() {
+        let frosted = ui.visuals().window_fill().a() < u8::MAX;
+        let [track_fill, idle, hovered, active, disabled] = brush_slider_fills(dark, frosted);
+        ui.painter()
+            .rect_filled(track, egui::CornerRadius::same(4), track_fill);
+        let thumb_fill = if !response.enabled() {
             disabled
         } else if response.is_pointer_button_down_on() {
             active
@@ -210,11 +204,8 @@ fn brush_slider(
         } else {
             idle
         };
-        ui.painter().rect_filled(
-            thumb,
-            egui::CornerRadius::same(4),
-            egui::Color32::from_gray(thumb_shade),
-        );
+        ui.painter()
+            .rect_filled(thumb, egui::CornerRadius::same(4), thumb_fill);
         response
             .widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), f64::from(*value), label));
         response.on_hover_text(label)

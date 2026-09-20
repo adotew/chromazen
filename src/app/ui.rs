@@ -478,10 +478,11 @@ impl GuiLayer {
         let screen_rect = self.context.content_rect();
         let dark_mode = self.context.global_style().visuals.dark_mode;
         let surface_fill = surface_fill(dark_mode, self.surface_style);
-        let row_fills = [
+        let mut overlay_fills = vec![
             frosted_row_fill(dark_mode, false),
             frosted_row_fill(dark_mode, true),
         ];
+        overlay_fills.extend(brush_slider_fills(dark_mode, true));
         let mut surfaces = Vec::new();
         for (shape_index, clipped) in shapes.iter_mut().enumerate() {
             let mut rects = Vec::new();
@@ -490,7 +491,7 @@ impl GuiLayer {
                 self.frost_texture,
                 screen_rect,
                 surface_fill,
-                row_fills,
+                &overlay_fills,
                 &mut rects,
             );
             let Some(rect) = rects.into_iter().reduce(egui::Rect::union) else {
@@ -1385,12 +1386,27 @@ fn frosted_row_fill(dark_mode: bool, selected: bool) -> egui::Color32 {
     }
 }
 
+fn brush_slider_fills(dark_mode: bool, frosted: bool) -> [egui::Color32; 5] {
+    let shades = if dark_mode {
+        [48, 105, 135, 155, 60]
+    } else {
+        [230, 65, 45, 30, 130]
+    };
+    shades.map(|shade| {
+        if frosted {
+            egui::Color32::from_rgba_unmultiplied(shade, shade, shade, 220)
+        } else {
+            egui::Color32::from_gray(shade)
+        }
+    })
+}
+
 fn frost_shape(
     shape: &mut egui::Shape,
     texture_id: egui::TextureId,
     screen_rect: egui::Rect,
     surface_fill: egui::Color32,
-    row_fills: [egui::Color32; 2],
+    overlay_fills: &[egui::Color32],
     surface_rects: &mut Vec<egui::Rect>,
 ) {
     match shape {
@@ -1401,13 +1417,13 @@ fn frost_shape(
                     texture_id,
                     screen_rect,
                     surface_fill,
-                    row_fills,
+                    overlay_fills,
                     surface_rects,
                 );
             }
         }
         egui::Shape::Rect(rect)
-            if (rect.fill == surface_fill || row_fills.contains(&rect.fill))
+            if (rect.fill == surface_fill || overlay_fills.contains(&rect.fill))
                 && rect.brush.is_none() =>
         {
             let screen_size = screen_rect.size().max(egui::Vec2::splat(1.0));
@@ -1731,7 +1747,7 @@ mod tests {
             texture_id,
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0)),
             fill,
-            [frosted_row_fill(true, false), frosted_row_fill(true, true)],
+            &[frosted_row_fill(true, false), frosted_row_fill(true, true)],
             &mut surface_rects,
         );
         assert_eq!(surface_rects, [first_rect, second_rect]);
@@ -1778,7 +1794,7 @@ mod tests {
             egui::TextureId::User(42),
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0)),
             surface,
-            [frosted_row_fill(true, false), row_fill],
+            &[frosted_row_fill(true, false), row_fill],
             &mut surface_rects,
         );
 
@@ -1792,6 +1808,25 @@ mod tests {
         assert_eq!(tint.fill, row_fill);
         assert!(row_fill.r() > surface.r());
         assert!(frosted_row_fill(false, true).r() < surface_fill(false, SurfaceStyle::Frosted).r());
+    }
+
+    #[test]
+    fn frosted_slider_chrome_keeps_theme_contrast() {
+        let [dark_track, dark_thumb, ..] = brush_slider_fills(true, true);
+        let [light_track, light_thumb, ..] = brush_slider_fills(false, true);
+
+        assert!(dark_track.r() < dark_thumb.r());
+        assert!(light_track.r() > light_thumb.r());
+        assert!(
+            brush_slider_fills(true, true)
+                .into_iter()
+                .all(|fill| fill.a() < u8::MAX)
+        );
+        assert!(
+            brush_slider_fills(true, false)
+                .into_iter()
+                .all(|fill| fill.a() == u8::MAX)
+        );
     }
 
     #[test]
