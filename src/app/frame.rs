@@ -338,11 +338,9 @@ impl App {
                 label: Some("frame encoder"),
             });
 
-        let retain_backdrop = frost_visible && !gpu.surface_is_sampleable();
-        paint.render_to_view_with_backdrop(&mut encoder, &view, brush_cursor, retain_backdrop);
-        if frost_visible && !gpu.surface_is_sampleable() {
-            gpu.render_frost(&mut encoder, paint.backdrop_view());
-        }
+        let fallback_view = frost_visible.then(|| gpu.fallback_frame_view()).flatten();
+        let render_view = fallback_view.unwrap_or(&view);
+        paint.render_to_view(&mut encoder, render_view, brush_cursor);
         let canvas_needs_redraw = paint.has_pending_stamps();
 
         let screen_descriptor = ScreenDescriptor {
@@ -356,18 +354,18 @@ impl App {
             &paint_jobs,
             &screen_descriptor,
         );
-        if frost_visible && gpu.surface_is_sampleable() {
+        if frost_visible {
             // Refresh between overlapping surfaces so each panel samples the UI already painted
             // below it. Non-overlapping panels reuse the same quarter-resolution blur. The egui
             // renderer starts its buffer-slice iterators at zero on every call, so retain earlier
             // jobs with empty clips to advance those iterators without drawing them again.
             for batch in &paint_batches {
                 if batch.refresh_frost {
-                    gpu.render_frost(&mut encoder, &view);
+                    gpu.render_frost(&mut encoder, render_view);
                 }
                 render_egui_batch(
                     &mut encoder,
-                    &view,
+                    render_view,
                     &mut gui.renderer,
                     &paint_jobs[..batch.range.end],
                     &screen_descriptor,
@@ -379,11 +377,14 @@ impl App {
         } else {
             render_egui_batch(
                 &mut encoder,
-                &view,
+                render_view,
                 &mut gui.renderer,
                 &paint_jobs,
                 &screen_descriptor,
             );
+        }
+        if fallback_view.is_some() {
+            gpu.blit_fallback_frame(&mut encoder, &view);
         }
 
         gpu.queue().submit(

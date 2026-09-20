@@ -12,7 +12,53 @@ pub(crate) struct GpuContext {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     frost: FrostRenderer,
-    surface_sampleable: bool,
+    fallback_frame: Option<FallbackFrame>,
+}
+
+struct FallbackFrame {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    blitter: wgpu::util::TextureBlitter,
+}
+
+impl FallbackFrame {
+    fn new(device: &wgpu::Device, size: [u32; 2], format: wgpu::TextureFormat) -> Self {
+        let (texture, view) = create_frame_texture(device, size, format);
+        Self {
+            _texture: texture,
+            view,
+            blitter: wgpu::util::TextureBlitter::new(device, format),
+        }
+    }
+
+    fn resize(&mut self, device: &wgpu::Device, size: [u32; 2], format: wgpu::TextureFormat) {
+        let (texture, view) = create_frame_texture(device, size, format);
+        self._texture = texture;
+        self.view = view;
+    }
+}
+
+fn create_frame_texture(
+    device: &wgpu::Device,
+    size: [u32; 2],
+    format: wgpu::TextureFormat,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("fallback frame texture"),
+        size: wgpu::Extent3d {
+            width: size[0],
+            height: size[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
 }
 
 impl GpuContext {
@@ -47,7 +93,7 @@ impl GpuContext {
             .unwrap_or_else(|_| caps.formats[0]);
         let frost_supported = caps.usages.contains(wgpu::TextureUsages::TEXTURE_BINDING);
         if !frost_supported {
-            log::debug!("using the canvas backdrop for frosted surfaces");
+            log::debug!("using an offscreen frame for frosted surfaces");
         }
         let surface_usage = wgpu::TextureUsages::RENDER_ATTACHMENT
             | if frost_supported {
@@ -68,6 +114,8 @@ impl GpuContext {
         };
         surface.configure(&device, &config);
         let frost = FrostRenderer::new(&device, [config.width, config.height]);
+        let fallback_frame = (!frost_supported)
+            .then(|| FallbackFrame::new(&device, [config.width, config.height], config.format));
 
         Ok(Self {
             surface,
@@ -75,7 +123,7 @@ impl GpuContext {
             queue,
             config,
             frost,
-            surface_sampleable: frost_supported,
+            fallback_frame,
         })
     }
 
@@ -103,8 +151,8 @@ impl GpuContext {
         self.frost.generation()
     }
 
-    pub(crate) fn surface_is_sampleable(&self) -> bool {
-        self.surface_sampleable
+    pub(crate) fn fallback_frame_view(&self) -> Option<&wgpu::TextureView> {
+        self.fallback_frame.as_ref().map(|frame| &frame.view)
     }
 
     pub(crate) fn render_frost(
@@ -115,6 +163,18 @@ impl GpuContext {
         self.frost.render(&self.device, encoder, source);
     }
 
+    pub(crate) fn blit_fallback_frame(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+    ) {
+        if let Some(frame) = &self.fallback_frame {
+            frame
+                .blitter
+                .copy(&self.device, encoder, &frame.view, target);
+        }
+    }
+
     pub(crate) fn resize(&mut self, size: PhysicalSize<u32>) {
         if size.width == 0 || size.height == 0 {
             return;
@@ -122,6 +182,9 @@ impl GpuContext {
         self.config.width = size.width;
         self.config.height = size.height;
         self.frost.resize(&self.device, [size.width, size.height]);
+        if let Some(frame) = &mut self.fallback_frame {
+            frame.resize(&self.device, [size.width, size.height], self.config.format);
+        }
         self.reconfigure_surface();
     }
 
