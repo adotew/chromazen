@@ -104,7 +104,11 @@ impl GuiLayer {
             if response.clicked() {
                 egui::Popup::close_all(ui.ctx());
                 if tool == active_tool {
-                    self.brush_window_open = !self.brush_window_open;
+                    if self.sidebar_visible {
+                        self.toggle_sidebar();
+                    } else {
+                        self.brush_window_open = !self.brush_window_open;
+                    }
                 } else {
                     selected_tool = Some(tool);
                 }

@@ -125,10 +125,31 @@ impl GuiLayer {
                         self.show_brush_color_picker(&mut content_ui);
                         content_ui.add_space(8.0);
                         let stroke = content_ui.visuals().widgets.noninteractive.bg_stroke;
-                        content_ui.visuals_mut().widgets.noninteractive.bg_stroke.color =
-                            stroke.color.gamma_multiply(0.5);
+                        content_ui
+                            .visuals_mut()
+                            .widgets
+                            .noninteractive
+                            .bg_stroke
+                            .color = stroke.color.gamma_multiply(0.5);
                         content_ui.add(egui::Separator::default().grow(8.0));
                         content_ui.visuals_mut().widgets.noninteractive.bg_stroke = stroke;
+                        if let Some(paint_tool) = tool.paint_tool() {
+                            content_ui.add_space(8.0);
+                            content_ui.vertical_centered(|ui| {
+                                ui.heading("Brush");
+                            });
+                            content_ui.add_space(4.0);
+                            self.show_brush_panel(&mut content_ui, paint_tool);
+                            content_ui.add_space(8.0);
+                            content_ui
+                                .visuals_mut()
+                                .widgets
+                                .noninteractive
+                                .bg_stroke
+                                .color = stroke.color.gamma_multiply(0.5);
+                            content_ui.add(egui::Separator::default().grow(8.0));
+                            content_ui.visuals_mut().widgets.noninteractive.bg_stroke = stroke;
+                        }
                         content_ui.add_space(8.0);
                         let header_width = content_ui.available_width();
                         content_ui.allocate_ui(egui::vec2(header_width, 28.0), |ui| {
@@ -169,7 +190,8 @@ impl GuiLayer {
                 self.panel_layout.color_panel_pos = [min.x, min.y];
             }
 
-            if self.brush_window_open
+            if !self.sidebar_visible
+                && self.brush_window_open
                 && let Some(paint_tool) = tool.paint_tool()
                 && let Some(response) = egui::Window::new("Brush")
                     .id(egui::Id::new("floating brush"))
