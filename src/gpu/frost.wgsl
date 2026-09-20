@@ -27,29 +27,35 @@ fn fs_downsample(@builtin(position) position: vec4f) -> @location(0) vec4f {
 }
 
 fn gaussian(uv: vec2f, step: vec2f) -> vec4f {
-    // A three-sigma, radius-18 Gaussian at quarter resolution gives a smooth
-    // 72-physical-pixel support. Adjacent taps are paired with bilinear filtering, preserving
+    // A three-sigma, radius-24 Gaussian at quarter resolution gives a smooth
+    // 96-physical-pixel support. Adjacent taps are paired with bilinear filtering, preserving
     // every part of the kernel instead of widening the gaps between taps (which creates bands at
     // hard edges).
-    var color = textureSample(inputTexture, inputSampler, uv) * 0.066625;
-    color += textureSample(inputTexture, inputSampler, uv + step * 1.489585) * 0.128731;
-    color += textureSample(inputTexture, inputSampler, uv - step * 1.489585) * 0.128731;
-    color += textureSample(inputTexture, inputSampler, uv + step * 3.475714) * 0.112146;
-    color += textureSample(inputTexture, inputSampler, uv - step * 3.475714) * 0.112146;
-    color += textureSample(inputTexture, inputSampler, uv + step * 5.461880) * 0.087491;
-    color += textureSample(inputTexture, inputSampler, uv - step * 5.461880) * 0.087491;
-    color += textureSample(inputTexture, inputSampler, uv + step * 7.448104) * 0.061125;
-    color += textureSample(inputTexture, inputSampler, uv - step * 7.448104) * 0.061125;
-    color += textureSample(inputTexture, inputSampler, uv + step * 9.434408) * 0.038243;
-    color += textureSample(inputTexture, inputSampler, uv - step * 9.434408) * 0.038243;
-    color += textureSample(inputTexture, inputSampler, uv + step * 11.420811) * 0.021427;
-    color += textureSample(inputTexture, inputSampler, uv - step * 11.420811) * 0.021427;
-    color += textureSample(inputTexture, inputSampler, uv + step * 13.407333) * 0.010751;
-    color += textureSample(inputTexture, inputSampler, uv - step * 13.407333) * 0.010751;
-    color += textureSample(inputTexture, inputSampler, uv + step * 15.393994) * 0.004830;
-    color += textureSample(inputTexture, inputSampler, uv - step * 15.393994) * 0.004830;
-    color += textureSample(inputTexture, inputSampler, uv + step * 17.380810) * 0.001944;
-    color += textureSample(inputTexture, inputSampler, uv - step * 17.380810) * 0.001944;
+    var color = textureSample(inputTexture, inputSampler, uv) * 0.049977;
+    color += textureSample(inputTexture, inputSampler, uv + step * 1.494141) * 0.098027;
+    color += textureSample(inputTexture, inputSampler, uv - step * 1.494141) * 0.098027;
+    color += textureSample(inputTexture, inputSampler, uv + step * 3.486332) * 0.090688;
+    color += textureSample(inputTexture, inputSampler, uv - step * 3.486332) * 0.090688;
+    color += textureSample(inputTexture, inputSampler, uv + step * 5.478529) * 0.078834;
+    color += textureSample(inputTexture, inputSampler, uv - step * 5.478529) * 0.078834;
+    color += textureSample(inputTexture, inputSampler, uv + step * 7.470737) * 0.064394;
+    color += textureSample(inputTexture, inputSampler, uv - step * 7.470737) * 0.064394;
+    color += textureSample(inputTexture, inputSampler, uv + step * 9.462959) * 0.049423;
+    color += textureSample(inputTexture, inputSampler, uv - step * 9.462959) * 0.049423;
+    color += textureSample(inputTexture, inputSampler, uv + step * 11.455199) * 0.035644;
+    color += textureSample(inputTexture, inputSampler, uv - step * 11.455199) * 0.035644;
+    color += textureSample(inputTexture, inputSampler, uv + step * 13.447460) * 0.024155;
+    color += textureSample(inputTexture, inputSampler, uv - step * 13.447460) * 0.024155;
+    color += textureSample(inputTexture, inputSampler, uv + step * 15.439747) * 0.015381;
+    color += textureSample(inputTexture, inputSampler, uv - step * 15.439747) * 0.015381;
+    color += textureSample(inputTexture, inputSampler, uv + step * 17.432063) * 0.009203;
+    color += textureSample(inputTexture, inputSampler, uv - step * 17.432063) * 0.009203;
+    color += textureSample(inputTexture, inputSampler, uv + step * 19.424412) * 0.005174;
+    color += textureSample(inputTexture, inputSampler, uv - step * 19.424412) * 0.005174;
+    color += textureSample(inputTexture, inputSampler, uv + step * 21.416797) * 0.002733;
+    color += textureSample(inputTexture, inputSampler, uv - step * 21.416797) * 0.002733;
+    color += textureSample(inputTexture, inputSampler, uv + step * 23.409221) * 0.001357;
+    color += textureSample(inputTexture, inputSampler, uv - step * 23.409221) * 0.001357;
     return color;
 }
 

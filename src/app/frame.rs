@@ -1,6 +1,6 @@
 use super::*;
 
-const FROST_BLUR_SUPPORT_PIXELS: f32 = 72.0;
+const FROST_BLUR_SUPPORT_PIXELS: f32 = 96.0;
 
 struct EguiPaintBatch {
     range: std::ops::Range<usize>,
