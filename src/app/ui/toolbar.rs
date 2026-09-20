@@ -154,7 +154,7 @@ impl GuiLayer {
             ui.painter().circle_stroke(
                 color_rect.center(),
                 11.0,
-                egui::Stroke::new(2.0, ui.visuals().text_color()),
+                egui::Stroke::new(2.0_f32, ui.visuals().text_color()),
             );
         }
         if color_response.clicked() {

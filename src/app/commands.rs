@@ -264,14 +264,15 @@ impl App {
                 self.brush_import.start(tool, paths);
             }
             AppSettingsCommand::Save => {
-                let Some((
+                let Some(UiSettingsSnapshot {
                     brush,
                     tool_brushes,
                     tool_sizes,
                     tool_opacities,
                     panel_layout,
                     accent_color,
-                )) = self.gui.as_ref().map(GuiLayer::settings_for_save)
+                    surface_style,
+                }) = self.gui.as_ref().map(GuiLayer::settings_for_save)
                 else {
                     return;
                 };
@@ -282,6 +283,7 @@ impl App {
                     tool_opacities,
                     panel_layout,
                     accent_color,
+                    surface_style,
                 }]);
             }
             AppSettingsCommand::ReloadConfiguration => {

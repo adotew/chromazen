@@ -1,5 +1,98 @@
 use super::*;
 
+const FROST_BLUR_SUPPORT_PIXELS: f32 = 72.0;
+
+struct EguiPaintBatch {
+    range: std::ops::Range<usize>,
+    refresh_frost: bool,
+}
+
+fn frost_refresh_required(
+    surface_index: usize,
+    surfaces: &[ui::FrostedSurface],
+    pixels_per_point: f32,
+) -> bool {
+    if surface_index == 0 {
+        return true;
+    }
+    let blur_support = FROST_BLUR_SUPPORT_PIXELS / pixels_per_point.max(0.01);
+    let surface = &surfaces[surface_index];
+    surfaces[..surface_index]
+        .iter()
+        .any(|previous| surface.rect.expand(blur_support).intersects(previous.rect))
+}
+
+fn tessellate_frost_batches(
+    context: &egui::Context,
+    shapes: Vec<egui::epaint::ClippedShape>,
+    pixels_per_point: f32,
+    surfaces: &[ui::FrostedSurface],
+) -> (Vec<egui::ClippedPrimitive>, Vec<EguiPaintBatch>) {
+    let mut shape_batches = Vec::new();
+    let mut current_shapes = Vec::new();
+    let mut current_refresh = false;
+    let mut next_surface = 0;
+
+    for (shape_index, shape) in shapes.into_iter().enumerate() {
+        if surfaces
+            .get(next_surface)
+            .is_some_and(|surface| surface.shape_index == shape_index)
+        {
+            if !current_shapes.is_empty() {
+                shape_batches.push((std::mem::take(&mut current_shapes), current_refresh));
+            }
+            current_refresh = frost_refresh_required(next_surface, surfaces, pixels_per_point);
+            next_surface += 1;
+        }
+        current_shapes.push(shape);
+    }
+    if !current_shapes.is_empty() {
+        shape_batches.push((current_shapes, current_refresh));
+    }
+
+    let mut paint_jobs = Vec::new();
+    let mut paint_batches = Vec::with_capacity(shape_batches.len());
+    for (shapes, refresh_frost) in shape_batches {
+        let start = paint_jobs.len();
+        paint_jobs.extend(context.tessellate(shapes, pixels_per_point));
+        paint_batches.push(EguiPaintBatch {
+            range: start..paint_jobs.len(),
+            refresh_frost,
+        });
+    }
+    (paint_jobs, paint_batches)
+}
+
+fn render_egui_batch(
+    encoder: &mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+    renderer: &mut egui_wgpu::Renderer,
+    paint_jobs: &[egui::ClippedPrimitive],
+    screen_descriptor: &ScreenDescriptor,
+) {
+    if paint_jobs.is_empty() {
+        return;
+    }
+    let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("egui pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            resolve_target: None,
+            depth_slice: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    let mut pass = pass.forget_lifetime();
+    renderer.render(&mut pass, paint_jobs, screen_descriptor);
+}
+
 impl App {
     pub(super) fn redraw(&mut self, window: &Window, event_loop: &ActiveEventLoop) {
         let mut app_action_processed = self.apply_export_completion();
@@ -166,7 +259,7 @@ impl App {
     pub(super) fn render_and_present_frame(
         &mut self,
         window: &Window,
-        full_output: egui::FullOutput,
+        mut full_output: egui::FullOutput,
     ) -> Option<RenderOutcome> {
         let cursor_pos = self.input.brush_cursor_pos();
         let is_resizing_brush = self.input.is_resizing_brush();
@@ -178,6 +271,9 @@ impl App {
         let gpu = self.gpu.as_ref()?;
         let paint = self.paint.as_mut()?;
         let gui = self.gui.as_mut()?;
+        gui.sync_frost_texture(gpu);
+        let frosted_surfaces = gui.prepare_frosted_surfaces(&mut full_output.shapes);
+        let frost_visible = !frosted_surfaces.is_empty();
         let pointer_over_ui = gui.context.is_pointer_over_egui();
         let pointer_over_reference =
             self.screen == AppScreen::Editor && gui.pointer_over_reference();
@@ -216,9 +312,12 @@ impl App {
                 .update_texture(gpu.device(), gpu.queue(), *id, image_delta);
         }
 
-        let paint_jobs = gui
-            .context
-            .tessellate(full_output.shapes, full_output.pixels_per_point);
+        let (mut paint_jobs, paint_batches) = tessellate_frost_batches(
+            &gui.context,
+            full_output.shapes,
+            full_output.pixels_per_point,
+            &frosted_surfaces,
+        );
         let frame = match gpu.acquire_frame() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -239,7 +338,11 @@ impl App {
                 label: Some("frame encoder"),
             });
 
-        paint.render_to_view(&mut encoder, &view, brush_cursor);
+        let retain_backdrop = frost_visible && !gpu.surface_is_sampleable();
+        paint.render_to_view_with_backdrop(&mut encoder, &view, brush_cursor, retain_backdrop);
+        if frost_visible && !gpu.surface_is_sampleable() {
+            gpu.render_frost(&mut encoder, paint.backdrop_view());
+        }
         let canvas_needs_redraw = paint.has_pending_stamps();
 
         let screen_descriptor = ScreenDescriptor {
@@ -253,26 +356,34 @@ impl App {
             &paint_jobs,
             &screen_descriptor,
         );
-        {
-            let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("egui pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            let mut pass = pass.forget_lifetime();
-            gui.renderer
-                .render(&mut pass, &paint_jobs, &screen_descriptor);
+        if frost_visible && gpu.surface_is_sampleable() {
+            // Refresh between overlapping surfaces so each panel samples the UI already painted
+            // below it. Non-overlapping panels reuse the same quarter-resolution blur. The egui
+            // renderer starts its buffer-slice iterators at zero on every call, so retain earlier
+            // jobs with empty clips to advance those iterators without drawing them again.
+            for batch in &paint_batches {
+                if batch.refresh_frost {
+                    gpu.render_frost(&mut encoder, &view);
+                }
+                render_egui_batch(
+                    &mut encoder,
+                    &view,
+                    &mut gui.renderer,
+                    &paint_jobs[..batch.range.end],
+                    &screen_descriptor,
+                );
+                for job in &mut paint_jobs[batch.range.clone()] {
+                    job.clip_rect = egui::Rect::ZERO;
+                }
+            }
+        } else {
+            render_egui_batch(
+                &mut encoder,
+                &view,
+                &mut gui.renderer,
+                &paint_jobs,
+                &screen_descriptor,
+            );
         }
 
         gpu.queue().submit(
@@ -383,5 +494,33 @@ impl App {
         } else {
             event_loop.set_control_flow(ControlFlow::WaitUntil(next_repaint));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frost_is_refreshed_only_for_nearby_stacked_surfaces() {
+        let surfaces = [
+            ui::FrostedSurface {
+                shape_index: 0,
+                rect: egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 100.0)),
+            },
+            ui::FrostedSurface {
+                shape_index: 1,
+                rect: egui::Rect::from_min_max(egui::pos2(150.0, 0.0), egui::pos2(250.0, 100.0)),
+            },
+            ui::FrostedSurface {
+                shape_index: 2,
+                rect: egui::Rect::from_min_max(egui::pos2(400.0, 0.0), egui::pos2(500.0, 100.0)),
+            },
+        ];
+
+        assert!(frost_refresh_required(0, &surfaces, 2.0));
+        assert!(frost_refresh_required(1, &surfaces, 1.0));
+        assert!(!frost_refresh_required(1, &surfaces, 2.0));
+        assert!(!frost_refresh_required(2, &surfaces, 1.0));
     }
 }

@@ -22,8 +22,15 @@ impl App {
             }
         }
         if let Some(gui) = self.gui.as_ref() {
-            let (brush, tool_brushes, tool_sizes, tool_opacities, panel_layout, accent_color) =
-                gui.settings_for_save();
+            let UiSettingsSnapshot {
+                brush,
+                tool_brushes,
+                tool_sizes,
+                tool_opacities,
+                panel_layout,
+                accent_color,
+                surface_style,
+            } = gui.settings_for_save();
             if let Some(effect) = self.settings.handle_command(SettingsCommand::Save {
                 brush,
                 tool_brushes,
@@ -31,6 +38,7 @@ impl App {
                 tool_opacities,
                 panel_layout,
                 accent_color,
+                surface_style,
             }) {
                 match effect {
                     SettingsEffect::Success(_) => {}

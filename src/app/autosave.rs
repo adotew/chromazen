@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::{mpsc, Arc},
+    sync::{Arc, mpsc},
     time::{Duration, Instant},
 };
 
@@ -8,8 +8,8 @@ use chromazen_canvas::{Canvas, DocumentVersions, LayerId};
 use image::imageops::FilterType;
 
 use crate::artwork::{
-    encode_png, flatten_premultiplied_layers, ArtworkId, ArtworkStore, CompositeLayer, LayerSource,
-    LayerWrite, ReferenceSource, ReferenceWrite, RevisionWrite,
+    ArtworkId, ArtworkStore, CompositeLayer, LayerSource, LayerWrite, ReferenceSource,
+    ReferenceWrite, RevisionWrite, encode_png, flatten_premultiplied_layers,
 };
 
 use super::references::{ReferenceBoard, ReferenceId, ReferenceVersions};

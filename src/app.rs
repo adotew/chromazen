@@ -43,7 +43,7 @@ use self::{
     reference_load::ReferenceLoadController,
     references::ReferenceBoard,
     settings::{SettingsCommand, SettingsController, SettingsEffect},
-    ui::{ApplicationMenuState, EditorUiState, EyedropperIndicator, GuiLayer},
+    ui::{ApplicationMenuState, EditorUiState, EyedropperIndicator, GuiLayer, UiSettingsSnapshot},
 };
 use chromazen_canvas::{BrushCursor, Canvas, DEFAULT_CANVAS_SIZE, DocumentVersions};
 

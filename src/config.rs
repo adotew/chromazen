@@ -40,6 +40,7 @@ pub(crate) struct AppConfig {
     pub(crate) smudge_opacity: f32,
     pub(crate) brush: CurrentBrushConfig,
     pub(crate) panel_layout: PanelLayout,
+    pub(crate) surface_style: SurfaceStyle,
 }
 
 impl Default for AppConfig {
@@ -56,8 +57,17 @@ impl Default for AppConfig {
             smudge_opacity: CurrentBrushConfig::default().opacity,
             brush: CurrentBrushConfig::default(),
             panel_layout: PanelLayout::default(),
+            surface_style: SurfaceStyle::default(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SurfaceStyle {
+    #[default]
+    Frosted,
+    Opaque,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -361,6 +371,22 @@ mod tests {
         assert_eq!(config.brush.color, CurrentBrushConfig::default().color);
         assert_eq!(config.accent_color, DEFAULT_ACCENT_COLOR);
         assert_eq!(config.active_brush, "charcoal");
+        assert_eq!(config.surface_style, SurfaceStyle::Frosted);
+    }
+
+    #[test]
+    fn surface_style_round_trips_and_defaults_to_frosted() {
+        let default_config: AppConfig = toml::from_str("").expect("parse defaults");
+        assert_eq!(default_config.surface_style, SurfaceStyle::Frosted);
+
+        let opaque: AppConfig =
+            toml::from_str("surface_style = \"opaque\"\n").expect("parse opaque style");
+        assert_eq!(opaque.surface_style, SurfaceStyle::Opaque);
+        assert!(
+            toml::to_string(&opaque)
+                .expect("serialize opaque style")
+                .contains("surface_style = \"opaque\"")
+        );
     }
 
     #[test]

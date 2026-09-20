@@ -1924,6 +1924,19 @@ impl Canvas {
         view: &wgpu::TextureView,
         brush_cursor: Option<BrushCursor>,
     ) {
+        self.render_to_view_with_backdrop(encoder, view, brush_cursor, false);
+    }
+
+    /// Renders to `view`, optionally retaining the cursor-free result in [`Self::backdrop_view`].
+    /// Retaining the backdrop adds a full-surface blit and is intended for compositors that cannot
+    /// sample their presentation surface directly.
+    pub fn render_to_view_with_backdrop(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        brush_cursor: Option<BrushCursor>,
+        retain_backdrop: bool,
+    ) {
         self.flush_stamps(encoder);
         self.flush_stroke_preview(encoder);
         // Keep the active layer's thumbnail dirty until the stroke is committed. Updating it for
@@ -1935,8 +1948,10 @@ impl Canvas {
             self.write_brush_cursor(cursor);
         }
 
-        // The cursor samples the completed canvas, so cursor frames compose offscreen first.
-        let canvas_view = if brush_cursor.is_some() {
+        // The cursor and external backdrop consumers sample the completed canvas, so those frames
+        // compose offscreen first.
+        let use_backdrop = brush_cursor.is_some() || retain_backdrop;
+        let canvas_view = if use_backdrop {
             &self.resources.backdrop_view
         } else {
             view
@@ -2150,8 +2165,7 @@ impl Canvas {
             }
         }
 
-        if brush_cursor.is_some() {
-            let surface_size = self.surface_size();
+        if use_backdrop {
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("canvas screen pass"),
@@ -2173,6 +2187,10 @@ impl Canvas {
                 pass.set_bind_group(0, &self.resources.cursor_bind_group, &[]);
                 pass.draw(0..3, 0..1);
             }
+            if brush_cursor.is_none() {
+                return;
+            }
+            let surface_size = self.surface_size();
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("brush cursor pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2194,6 +2212,10 @@ impl Canvas {
             pass.set_bind_group(0, &self.resources.cursor_bind_group, &[]);
             pass.draw(0..6, 0..1);
         }
+    }
+
+    pub fn backdrop_view(&self) -> &wgpu::TextureView {
+        &self.resources.backdrop_view
     }
 
     fn ensure_clipped_layer_bind_groups(&mut self) {

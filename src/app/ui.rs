@@ -29,7 +29,9 @@ use chromazen_canvas::{
 
 use crate::{
     artwork::ArtworkSummary,
-    config::{AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset, PanelLayout},
+    config::{
+        AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset, PanelLayout, SurfaceStyle,
+    },
     gpu::GpuContext,
     paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings},
 };
@@ -142,10 +144,28 @@ pub(crate) struct EditorUiState<'a> {
     pub(crate) workspace_view: PaintViewSnapshot,
 }
 
+pub(crate) struct UiSettingsSnapshot {
+    pub(crate) brush: CurrentBrushConfig,
+    pub(crate) tool_brushes: [String; 3],
+    pub(crate) tool_sizes: [f32; 3],
+    pub(crate) tool_opacities: [f32; 3],
+    pub(crate) panel_layout: PanelLayout,
+    pub(crate) accent_color: [u8; 3],
+    pub(crate) surface_style: SurfaceStyle,
+}
+
+pub(crate) struct FrostedSurface {
+    pub(crate) shape_index: usize,
+    pub(crate) rect: egui::Rect,
+}
+
 pub struct GuiLayer {
     pub context: egui::Context,
     pub state: EguiWinitState,
     pub renderer: EguiRenderer,
+    frost_texture: egui::TextureId,
+    frost_texture_generation: u64,
+    surface_style: SurfaceStyle,
     pub brush: BrushSettings,
     tool_brushes: [String; 3],
     tool_sizes: [f32; 3],
@@ -343,7 +363,7 @@ impl GuiLayer {
             config.accent_color[2],
         );
         install_fonts(&context);
-        install_rounded_ui_style(&context, accent_color);
+        install_rounded_ui_style(&context, accent_color, config.surface_style);
         egui_extras::install_image_loaders(&context);
         let state = EguiWinitState::new(
             context.clone(),
@@ -353,10 +373,15 @@ impl GuiLayer {
             window.theme(),
             Some(gpu.device().limits().max_texture_dimension_2d as usize),
         );
-        let renderer = EguiRenderer::new(
+        let mut renderer = EguiRenderer::new(
             gpu.device(),
             gpu.surface_format(),
             RendererOptions::default(),
+        );
+        let frost_texture = renderer.register_native_texture(
+            gpu.device(),
+            gpu.frost_view(),
+            wgpu::FilterMode::Linear,
         );
         let preset = &brush_preset.preset;
         let message_dialog = load_error.map(|error| {
@@ -370,6 +395,9 @@ impl GuiLayer {
             context,
             state,
             renderer,
+            frost_texture,
+            frost_texture_generation: gpu.frost_generation(),
+            surface_style: config.surface_style,
             brush: brush_settings_from_config(&config.brush, brush_preset),
             tool_brushes: [
                 brush_preset.id.clone(),
@@ -421,6 +449,56 @@ impl GuiLayer {
             layer_transform_drag: None,
             gallery: gallery::GalleryUi::default(),
         }
+    }
+
+    pub(crate) fn sync_frost_texture(&mut self, gpu: &GpuContext) {
+        let generation = gpu.frost_generation();
+        if generation == self.frost_texture_generation {
+            return;
+        }
+        self.renderer.update_egui_texture_from_wgpu_texture(
+            gpu.device(),
+            gpu.frost_view(),
+            wgpu::FilterMode::Linear,
+            self.frost_texture,
+        );
+        self.frost_texture_generation = generation;
+    }
+
+    /// Replaces UI surface fills with a screen-mapped copy of the shared blurred canvas.
+    /// This runs before tessellation, so all surfaces still use egui's normal clipping and
+    /// rounded-rectangle geometry.
+    pub(crate) fn prepare_frosted_surfaces(
+        &self,
+        shapes: &mut [egui::epaint::ClippedShape],
+    ) -> Vec<FrostedSurface> {
+        if self.surface_style != SurfaceStyle::Frosted {
+            return Vec::new();
+        }
+        let screen_rect = self.context.content_rect();
+        let dark_mode = self.context.global_style().visuals.dark_mode;
+        let surface_fill = surface_fill(dark_mode, self.surface_style);
+        let row_fills = [
+            frosted_row_fill(dark_mode, false),
+            frosted_row_fill(dark_mode, true),
+        ];
+        let mut surfaces = Vec::new();
+        for (shape_index, clipped) in shapes.iter_mut().enumerate() {
+            let mut rects = Vec::new();
+            frost_shape(
+                &mut clipped.shape,
+                self.frost_texture,
+                screen_rect,
+                surface_fill,
+                row_fills,
+                &mut rects,
+            );
+            let Some(rect) = rects.into_iter().reduce(egui::Rect::union) else {
+                continue;
+            };
+            surfaces.push(FrostedSurface { shape_index, rect });
+        }
+        surfaces
     }
 
     pub(crate) fn sync_layer_thumbnails(&mut self, paint: &Canvas, device: &wgpu::Device) {
@@ -537,27 +615,19 @@ impl GuiLayer {
         self.size_range.clone()
     }
 
-    pub(crate) fn settings_for_save(
-        &self,
-    ) -> (
-        CurrentBrushConfig,
-        [String; 3],
-        [f32; 3],
-        [f32; 3],
-        PanelLayout,
-        [u8; 3],
-    ) {
+    pub(crate) fn settings_for_save(&self) -> UiSettingsSnapshot {
         let mut brush = self.current_brush_config();
         brush.size = self.tool_sizes[tool_index(PaintTool::Brush)];
         brush.opacity = self.tool_opacities[tool_index(PaintTool::Brush)];
-        (
+        UiSettingsSnapshot {
             brush,
-            self.tool_brushes.clone(),
-            self.tool_sizes,
-            self.tool_opacities,
-            self.panel_layout,
-            rgb(self.accent_color),
-        )
+            tool_brushes: self.tool_brushes.clone(),
+            tool_sizes: self.tool_sizes,
+            tool_opacities: self.tool_opacities,
+            panel_layout: self.panel_layout,
+            accent_color: rgb(self.accent_color),
+            surface_style: self.surface_style,
+        }
     }
 
     pub(crate) fn brush_for_tool(&self, tool: PaintTool) -> &str {
@@ -663,6 +733,7 @@ impl GuiLayer {
             self.tool_sizes[index].clamp(*self.size_range.start(), *self.size_range.end());
         self.brush.opacity = self.tool_opacities[index];
         self.panel_layout = config.panel_layout;
+        self.set_surface_style(config.surface_style);
         self.set_accent_color(egui::Color32::from_rgb(
             config.accent_color[0],
             config.accent_color[1],
@@ -761,14 +832,19 @@ fn selectable_row(
 ) -> (egui::Rect, egui::Response) {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), sense);
     let dark_mode = ui.visuals().dark_mode;
+    let frosted = ui.visuals().window_fill().a() < u8::MAX;
     let fill = if selected {
-        if dark_mode {
+        if frosted {
+            frosted_row_fill(dark_mode, true)
+        } else if dark_mode {
             egui::Color32::from_rgb(34, 39, 46)
         } else {
             egui::Color32::from_gray(224)
         }
     } else if response.hovered() {
-        if dark_mode {
+        if frosted {
+            frosted_row_fill(dark_mode, false)
+        } else if dark_mode {
             egui::Color32::from_rgb(24, 28, 34)
         } else {
             egui::Color32::from_gray(240)
@@ -1234,18 +1310,18 @@ fn install_fonts(context: &egui::Context) {
     });
 }
 
-fn install_rounded_ui_style(context: &egui::Context, accent_color: egui::Color32) {
+fn install_rounded_ui_style(
+    context: &egui::Context,
+    accent_color: egui::Color32,
+    surface_style: SurfaceStyle,
+) {
     context.all_styles_mut(|style| {
         apply_button_padding(style);
         let dark_mode = style.visuals.dark_mode;
         let visuals = &mut style.visuals;
         visuals.window_corner_radius = egui::CornerRadius::same(16);
         visuals.menu_corner_radius = egui::CornerRadius::same(12);
-        visuals.window_fill = if dark_mode {
-            egui::Color32::from_rgb(17, 19, 24)
-        } else {
-            egui::Color32::from_rgb(248, 250, 252)
-        };
+        visuals.window_fill = surface_fill(dark_mode, surface_style);
         // egui uses the window stroke for both the outer border and the title separator.
         // Removing it keeps the title bar visually continuous with the window body.
         visuals.window_stroke = egui::Stroke::NONE;
@@ -1289,6 +1365,73 @@ fn install_rounded_ui_style(context: &egui::Context, accent_color: egui::Color32
         visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
         apply_accent_color_to_style(style, accent_color);
     });
+}
+
+fn surface_fill(dark_mode: bool, surface_style: SurfaceStyle) -> egui::Color32 {
+    match (dark_mode, surface_style) {
+        (true, SurfaceStyle::Frosted) => egui::Color32::from_rgba_unmultiplied(17, 19, 24, 208),
+        (false, SurfaceStyle::Frosted) => egui::Color32::from_rgba_unmultiplied(248, 250, 252, 218),
+        (true, SurfaceStyle::Opaque) => egui::Color32::from_rgb(17, 19, 24),
+        (false, SurfaceStyle::Opaque) => egui::Color32::from_rgb(248, 250, 252),
+    }
+}
+
+fn frosted_row_fill(dark_mode: bool, selected: bool) -> egui::Color32 {
+    match (dark_mode, selected) {
+        (true, true) => egui::Color32::from_rgba_unmultiplied(39, 44, 52, 215),
+        (true, false) => egui::Color32::from_rgba_unmultiplied(27, 31, 37, 211),
+        (false, true) => egui::Color32::from_rgba_unmultiplied(226, 229, 232, 222),
+        (false, false) => egui::Color32::from_rgba_unmultiplied(238, 240, 242, 220),
+    }
+}
+
+fn frost_shape(
+    shape: &mut egui::Shape,
+    texture_id: egui::TextureId,
+    screen_rect: egui::Rect,
+    surface_fill: egui::Color32,
+    row_fills: [egui::Color32; 2],
+    surface_rects: &mut Vec<egui::Rect>,
+) {
+    match shape {
+        egui::Shape::Vec(shapes) => {
+            for shape in shapes {
+                frost_shape(
+                    shape,
+                    texture_id,
+                    screen_rect,
+                    surface_fill,
+                    row_fills,
+                    surface_rects,
+                );
+            }
+        }
+        egui::Shape::Rect(rect)
+            if (rect.fill == surface_fill || row_fills.contains(&rect.fill))
+                && rect.brush.is_none() =>
+        {
+            let screen_size = screen_rect.size().max(egui::Vec2::splat(1.0));
+            let uv_for = |position: egui::Pos2| {
+                egui::pos2(
+                    (position.x - screen_rect.min.x) / screen_size.x,
+                    (position.y - screen_rect.min.y) / screen_size.y,
+                )
+            };
+            let uv = egui::Rect::from_min_max(uv_for(rect.rect.min), uv_for(rect.rect.max));
+            let mut backdrop = rect.clone().with_texture(texture_id, uv);
+            backdrop.fill = egui::Color32::WHITE;
+            backdrop.stroke = egui::Stroke::NONE;
+            backdrop.blur_width = 0.0;
+
+            let mut tint = rect.clone();
+            tint.stroke = egui::Stroke::NONE;
+            if rect.fill == surface_fill {
+                surface_rects.push(rect.rect);
+            }
+            *shape = egui::Shape::Vec(vec![egui::Shape::Rect(backdrop), egui::Shape::Rect(tint)]);
+        }
+        _ => {}
+    }
 }
 
 fn apply_accent_color_to_style(style: &mut egui::Style, accent_color: egui::Color32) {
@@ -1569,6 +1712,86 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn frosted_surfaces_share_screen_mapped_texture() {
+        let fill = surface_fill(true, SurfaceStyle::Frosted);
+        let first_rect = egui::Rect::from_min_max(egui::pos2(10.0, 20.0), egui::pos2(30.0, 40.0));
+        let second_rect = egui::Rect::from_min_max(egui::pos2(50.0, 60.0), egui::pos2(80.0, 90.0));
+        let mut shape = egui::Shape::Vec(vec![
+            egui::Shape::rect_filled(first_rect, 8, fill),
+            egui::Shape::rect_filled(second_rect, 8, fill),
+        ]);
+        let texture_id = egui::TextureId::User(42);
+
+        let mut surface_rects = Vec::new();
+        frost_shape(
+            &mut shape,
+            texture_id,
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0)),
+            fill,
+            [frosted_row_fill(true, false), frosted_row_fill(true, true)],
+            &mut surface_rects,
+        );
+        assert_eq!(surface_rects, [first_rect, second_rect]);
+
+        let egui::Shape::Vec(surfaces) = shape else {
+            panic!("surface list");
+        };
+        for surface in surfaces {
+            let egui::Shape::Vec(layers) = surface else {
+                panic!("frosted surface layers");
+            };
+            let egui::Shape::Rect(backdrop) = &layers[0] else {
+                panic!("frosted backdrop");
+            };
+            assert_eq!(
+                backdrop
+                    .brush
+                    .as_ref()
+                    .expect("backdrop texture")
+                    .fill_texture_id,
+                texture_id
+            );
+            let egui::Shape::Rect(tint) = &layers[1] else {
+                panic!("surface tint");
+            };
+            assert_eq!(tint.fill, fill);
+            assert_eq!(tint.stroke, egui::Stroke::NONE);
+        }
+    }
+
+    #[test]
+    fn frosted_row_uses_backdrop_without_starting_a_surface_batch() {
+        let surface = surface_fill(true, SurfaceStyle::Frosted);
+        let row_fill = frosted_row_fill(true, true);
+        let mut shape = egui::Shape::rect_filled(
+            egui::Rect::from_min_max(egui::pos2(10.0, 20.0), egui::pos2(30.0, 40.0)),
+            8,
+            row_fill,
+        );
+        let mut surface_rects = Vec::new();
+
+        frost_shape(
+            &mut shape,
+            egui::TextureId::User(42),
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0)),
+            surface,
+            [frosted_row_fill(true, false), row_fill],
+            &mut surface_rects,
+        );
+
+        assert!(surface_rects.is_empty());
+        let egui::Shape::Vec(layers) = shape else {
+            panic!("frosted row layers");
+        };
+        let egui::Shape::Rect(tint) = &layers[1] else {
+            panic!("frosted row tint");
+        };
+        assert_eq!(tint.fill, row_fill);
+        assert!(row_fill.r() > surface.r());
+        assert!(frosted_row_fill(false, true).r() < surface_fill(false, SurfaceStyle::Frosted).r());
     }
 
     #[test]

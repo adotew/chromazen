@@ -1,7 +1,7 @@
 use crate::{
     config::{
         AppConfig, BrushCatalog, ConfigError, ConfigStore, CurrentBrushConfig, LoadedBrushPreset,
-        PanelLayout,
+        PanelLayout, SurfaceStyle,
     },
     paint::PaintTool,
 };
@@ -14,6 +14,7 @@ pub(super) enum SettingsCommand {
         tool_opacities: [f32; 3],
         panel_layout: PanelLayout,
         accent_color: [u8; 3],
+        surface_style: SurfaceStyle,
     },
     SwitchBrush {
         tool: PaintTool,
@@ -165,6 +166,7 @@ impl SettingsController {
                 tool_opacities,
                 panel_layout,
                 accent_color,
+                surface_style,
             } => {
                 self.config.brush = brush;
                 self.config.brush.size = tool_sizes[0];
@@ -178,6 +180,7 @@ impl SettingsController {
                 self.config.smudge_brush = tool_brushes[2].clone();
                 self.config.panel_layout = panel_layout;
                 self.config.accent_color = accent_color;
+                self.config.surface_style = surface_style;
                 let Some(store) = &self.store else {
                     return Some(SettingsEffect::Error(
                         "The configuration directory is unavailable".to_owned(),

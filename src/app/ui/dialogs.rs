@@ -146,6 +146,7 @@ impl GuiLayer {
             return;
         }
         let mut accent_color = self.accent_color;
+        let mut surface_style = self.surface_style;
         let mut changed = false;
         let mut close = false;
         let response = egui::Modal::new(egui::Id::new("settings dialog")).show(context, |ui| {
@@ -177,13 +178,24 @@ impl GuiLayer {
                             rect.center(),
                             15.0,
                             egui::Stroke::new(
-                                if selected { 2.0 } else { 1.0 },
+                                if selected { 2.0_f32 } else { 1.0_f32 },
                                 ui.visuals().text_color(),
                             ),
                         );
                     }
                     response.on_hover_text(name);
                 }
+            });
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                ui.label("Interface backgrounds");
+                ui.add_space(8.0);
+                changed |= ui
+                    .selectable_value(&mut surface_style, SurfaceStyle::Frosted, "Frosted")
+                    .changed();
+                changed |= ui
+                    .selectable_value(&mut surface_style, SurfaceStyle::Opaque, "Opaque")
+                    .changed();
             });
             ui.add_space(16.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -193,12 +205,21 @@ impl GuiLayer {
         close |= response.should_close();
         if changed {
             self.set_accent_color(accent_color);
+            self.set_surface_style(surface_style);
         }
         if close {
             self.settings_dialog_open = false;
             self.commands
                 .push(AppCommand::Settings(SettingsCommand::Save));
         }
+    }
+
+    pub(super) fn set_surface_style(&mut self, surface_style: SurfaceStyle) {
+        self.surface_style = surface_style;
+        self.context.all_styles_mut(|style| {
+            style.visuals.window_fill = surface_fill(style.visuals.dark_mode, surface_style);
+        });
+        self.context.request_repaint();
     }
 
     pub(super) fn set_accent_color(&mut self, accent_color: egui::Color32) {

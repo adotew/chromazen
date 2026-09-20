@@ -1,8 +1,8 @@
 #[cfg(target_os = "macos")]
 mod imp {
     use muda::{
-        accelerator::{Accelerator, Code, Modifiers, CMD_OR_CTRL},
         Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
+        accelerator::{Accelerator, CMD_OR_CTRL, Code, Modifiers},
     };
     use winit::window::Window;
 
