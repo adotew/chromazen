@@ -38,6 +38,7 @@
   let isLinux = $state(false)
   let persistenceError = $state('')
   let saveState = $state<SaveState>('idle')
+  let manualSaving = $state(false)
   let manualSaved = $state(false)
   let tool = $state<Tool>('brush')
   let brushSize = $state(500)
@@ -54,6 +55,15 @@
     onError: (message) => (persistenceError = message),
     onManualSavedChange: (saved) => (manualSaved = saved),
   })
+
+  async function manualSave() {
+    manualSaving = true
+    try {
+      await saver.manualSave()
+    } finally {
+      manualSaving = false
+    }
+  }
 
   onMount(() => {
     let disposed = false
@@ -248,7 +258,7 @@
   function keyDown(event: KeyboardEvent) {
     if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
       event.preventDefault()
-      void saver.manualSave()
+      void manualSave()
       return
     }
     if (event.code !== 'Space' || activePointer !== undefined) return
@@ -316,7 +326,7 @@
   <header
     class="pointer-events-none fixed top-0 left-0 z-2 flex min-h-17 w-full items-center justify-between gap-4 px-4 py-[0.65rem] max-[35rem]:min-h-12 max-[35rem]:p-2"
   >
-    <Menu onSave={saver.manualSave} onReturnToGallery={saver.returnToGallery} />
+    <Menu onSave={manualSave} onReturnToGallery={saver.returnToGallery} />
     <div
       class="pointer-events-auto absolute top-0 left-1/2 flex h-12 -translate-x-1/2 items-center gap-[0.6rem] rounded-b-[1.5rem] bg-[rgb(18_18_16/0.72)] px-4 py-2 backdrop-blur-[18px] backdrop-saturate-120 max-[35rem]:gap-[0.4rem] max-[35rem]:px-[0.65rem]"
       aria-label="Painting tools"
@@ -421,7 +431,7 @@
       class="fixed right-3 bottom-3 z-3 rounded-[0.4rem] bg-[rgb(18_18_16/0.72)] px-[0.6rem] py-[0.35rem] text-xs text-[#ffb4ab] backdrop-blur-[18px]"
       title={persistenceError}>Not saved</div
     >
-  {:else if saveState === 'saving'}
+  {:else if manualSaving && saveState === 'saving'}
     <div
       class="fixed right-3 bottom-3 z-3 rounded-[0.4rem] bg-[rgb(18_18_16/0.72)] px-[0.6rem] py-[0.35rem] text-xs text-muted backdrop-blur-[18px]"
       >Saving…</div
