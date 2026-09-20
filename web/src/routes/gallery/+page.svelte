@@ -72,10 +72,15 @@
       >
     </h1>
     <button
-      class="cursor-pointer rounded-full border-0 bg-foreground px-[1.2rem] py-3 font-semibold text-background"
+      class="grid size-8 cursor-pointer place-items-center rounded-lg border-0 bg-foreground text-background"
       type="button"
-      onclick={newArtwork}>New artwork</button
+      aria-label="New artwork"
+      onclick={newArtwork}
     >
+      <svg class="size-6" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" />
+      </svg>
+    </button>
   </header>
 
   {#if error}
@@ -86,11 +91,6 @@
     <section class="mt-20 text-center">
       <h2 class="m-0 font-elms font-light">Start painting</h2>
       <p class="mt-2 mb-0 text-muted">Your artwork will appear here and save automatically.</p>
-      <button
-        class="mt-6 cursor-pointer rounded-full border-0 bg-foreground px-[1.2rem] py-3 font-semibold text-background"
-        type="button"
-        onclick={newArtwork}>New artwork</button
-      >
     </section>
   {:else}
     <section
