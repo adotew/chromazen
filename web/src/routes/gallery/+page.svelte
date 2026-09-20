@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation'
   import { onMount } from 'svelte'
-  import { deleteArtwork, listArtworks, type ArtworkRecord } from '$lib/artworks'
+  import { listArtworks, type ArtworkRecord } from '$lib/artworks'
 
   type GalleryArtwork = ArtworkRecord & { previewUrl: string }
 
@@ -37,17 +37,6 @@
 
   function newArtwork() {
     void goto(`/artwork/${crypto.randomUUID()}`)
-  }
-
-  async function removeArtwork(artwork: GalleryArtwork) {
-    if (!confirm(`Delete “${artwork.title}”?`)) return
-    try {
-      await deleteArtwork(artwork.id)
-      URL.revokeObjectURL(artwork.previewUrl)
-      artworks = artworks.filter((candidate) => candidate.id !== artwork.id)
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause)
-    }
   }
 </script>
 
@@ -98,32 +87,13 @@
       aria-label="Your artwork"
     >
       {#each artworks as artwork (artwork.id)}
-        <article class="overflow-hidden rounded-xl border border-[rgb(128_128_128/0.25)]">
-          <a
-            class="grid aspect-4/3 place-items-center overflow-hidden bg-white"
-            href={`/artwork/${artwork.id}`}
-            aria-label={`Open ${artwork.title}`}
-          >
-            <img class="size-full object-contain" src={artwork.previewUrl} alt="" />
-          </a>
-          <div class="flex items-center justify-between gap-4 p-4">
-            <div class="min-w-0">
-              <a
-                class="block overflow-hidden font-semibold text-ellipsis whitespace-nowrap no-underline"
-                href={`/artwork/${artwork.id}`}>{artwork.title}</a
-              >
-              <small class="mt-1 block text-muted"
-                >{new Date(artwork.updatedAt).toLocaleString()}</small
-              >
-            </div>
-            <button
-              class="cursor-pointer border-0 bg-transparent p-0 text-xs font-normal text-muted underline"
-              type="button"
-              aria-label={`Delete ${artwork.title}`}
-              onclick={() => removeArtwork(artwork)}>Delete</button
-            >
-          </div>
-        </article>
+        <a
+          class="grid aspect-4/3 place-items-center overflow-hidden rounded-3xl bg-white"
+          href={`/artwork/${artwork.id}`}
+          aria-label={`Open ${artwork.title}`}
+        >
+          <img class="size-full object-contain" src={artwork.previewUrl} alt="" />
+        </a>
       {/each}
     </section>
   {/if}
