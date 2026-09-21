@@ -1327,18 +1327,8 @@ fn install_rounded_ui_style(
         // Removing it keeps the title bar visually continuous with the window body.
         visuals.window_stroke = egui::Stroke::NONE;
         visuals.window_highlight_topmost = false;
-        visuals.window_shadow = egui::Shadow {
-            offset: [0, 10],
-            blur: 28,
-            spread: 1,
-            color: egui::Color32::from_black_alpha(if dark_mode { 105 } else { 48 }),
-        };
-        visuals.popup_shadow = egui::Shadow {
-            offset: [0, 8],
-            blur: 22,
-            spread: 0,
-            color: egui::Color32::from_black_alpha(if dark_mode { 100 } else { 42 }),
-        };
+        visuals.window_shadow = egui::Shadow::NONE;
+        visuals.popup_shadow = egui::Shadow::NONE;
 
         let radius = egui::CornerRadius::same(9);
         visuals.widgets.noninteractive.corner_radius = radius;
