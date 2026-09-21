@@ -9,17 +9,18 @@ struct EguiPaintBatch {
 
 fn frost_refresh_required(
     surface_index: usize,
-    surfaces: &[ui::FrostedSurface],
+    surface: &ui::FrostedSurface,
+    changed_rects: &[egui::Rect],
     pixels_per_point: f32,
 ) -> bool {
     if surface_index == 0 {
         return true;
     }
     let blur_support = FROST_BLUR_SUPPORT_PIXELS / pixels_per_point.max(0.01);
-    let surface = &surfaces[surface_index];
-    surfaces[..surface_index]
+    let affected_rect = surface.rect.expand(blur_support);
+    changed_rects
         .iter()
-        .any(|previous| surface.rect.expand(blur_support).intersects(previous.rect))
+        .any(|changed| affected_rect.intersects(*changed))
 }
 
 fn tessellate_frost_batches(
@@ -32,17 +33,28 @@ fn tessellate_frost_batches(
     let mut current_shapes = Vec::new();
     let mut current_refresh = false;
     let mut next_surface = 0;
+    let mut changed_rects = Vec::new();
 
     for (shape_index, shape) in shapes.into_iter().enumerate() {
-        if surfaces
+        if let Some(surface) = surfaces
             .get(next_surface)
-            .is_some_and(|surface| surface.shape_index == shape_index)
+            .filter(|surface| surface.shape_index == shape_index)
         {
             if !current_shapes.is_empty() {
                 shape_batches.push((std::mem::take(&mut current_shapes), current_refresh));
             }
-            current_refresh = frost_refresh_required(next_surface, surfaces, pixels_per_point);
+            current_refresh =
+                frost_refresh_required(next_surface, surface, &changed_rects, pixels_per_point);
+            if current_refresh {
+                changed_rects.clear();
+            }
             next_surface += 1;
+        }
+        let changed_rect = shape
+            .clip_rect
+            .intersect(shape.shape.visual_bounding_rect());
+        if changed_rect.is_positive() {
+            changed_rects.push(changed_rect);
         }
         current_shapes.push(shape);
     }
@@ -503,25 +515,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn frost_is_refreshed_only_for_nearby_stacked_surfaces() {
-        let surfaces = [
-            ui::FrostedSurface {
-                shape_index: 0,
-                rect: egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 100.0)),
-            },
-            ui::FrostedSurface {
-                shape_index: 1,
-                rect: egui::Rect::from_min_max(egui::pos2(150.0, 0.0), egui::pos2(250.0, 100.0)),
-            },
-            ui::FrostedSurface {
-                shape_index: 2,
-                rect: egui::Rect::from_min_max(egui::pos2(400.0, 0.0), egui::pos2(500.0, 100.0)),
-            },
-        ];
+    fn frost_is_refreshed_only_for_content_near_the_surface() {
+        let first = ui::FrostedSurface {
+            shape_index: 0,
+            rect: egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 100.0)),
+        };
+        let second = ui::FrostedSurface {
+            shape_index: 2,
+            rect: egui::Rect::from_min_max(egui::pos2(400.0, 0.0), egui::pos2(500.0, 100.0)),
+        };
+        let reference = egui::Rect::from_min_max(egui::pos2(420.0, 20.0), egui::pos2(480.0, 80.0));
+        let distant = egui::Rect::from_min_max(egui::pos2(700.0, 20.0), egui::pos2(760.0, 80.0));
 
-        assert!(frost_refresh_required(0, &surfaces, 2.0));
-        assert!(frost_refresh_required(1, &surfaces, 1.0));
-        assert!(!frost_refresh_required(1, &surfaces, 2.0));
-        assert!(!frost_refresh_required(2, &surfaces, 1.0));
+        assert!(frost_refresh_required(0, &first, &[], 2.0));
+        assert!(frost_refresh_required(1, &second, &[reference], 2.0));
+        assert!(!frost_refresh_required(1, &second, &[distant], 2.0));
+    }
+
+    #[test]
+    fn frost_is_refreshed_for_nearby_stacked_surfaces() {
+        let first = ui::FrostedSurface {
+            shape_index: 0,
+            rect: egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 100.0)),
+        };
+        let second = ui::FrostedSurface {
+            shape_index: 1,
+            rect: egui::Rect::from_min_max(egui::pos2(150.0, 0.0), egui::pos2(250.0, 100.0)),
+        };
+
+        assert!(frost_refresh_required(1, &second, &[first.rect], 1.0));
+        assert!(!frost_refresh_required(1, &second, &[first.rect], 2.0));
     }
 }

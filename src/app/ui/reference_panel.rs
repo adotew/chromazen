@@ -90,6 +90,20 @@ impl GuiLayer {
             if selected {
                 self.pointer_over_selected_reference = pointer_over_image || pointer_over_resize;
             }
+            let layer_id = egui::LayerId::new(
+                egui::Order::Background,
+                egui::Id::new(("reference", reference.id.0)),
+            );
+            context
+                .layer_painter(layer_id)
+                .with_clip_rect(context.content_rect())
+                .image(
+                    texture_id,
+                    rect,
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+
             let visible_rect = rect.intersect(workspace_rect);
             if !visible_rect.is_positive() {
                 continue;
@@ -104,16 +118,14 @@ impl GuiLayer {
                 }
             }
 
-            let area = egui::Area::new(egui::Id::new(("reference", reference.id.0)))
-                .order(egui::Order::Background)
+            let area = egui::Area::new(layer_id.id)
+                .order(layer_id.order)
                 .fixed_pos(visible_rect.min)
                 .default_size(visible_rect.size())
-                // Keep the canvas-relative transform authoritative. The area's interactive bounds
-                // are only the visible image, while its painter clips the full image to the
-                // workspace instead of moving the reference back inside the window.
+                // Keep the canvas-relative transform authoritative. Interaction stays inside the
+                // workspace, while painting can continue beneath frosted sidebars.
                 .constrain(false)
                 .show(context, |ui| {
-                    ui.shrink_clip_rect(workspace_rect);
                     let draggable = reference_is_draggable(reference.locked, selected, panning);
                     let sense = if panning {
                         egui::Sense::hover()
@@ -123,12 +135,6 @@ impl GuiLayer {
                         egui::Sense::click()
                     };
                     let response = ui.allocate_rect(visible_rect, sense);
-                    ui.painter().image(
-                        texture_id,
-                        rect,
-                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                        egui::Color32::WHITE,
-                    );
                     let resize = (!panning && !reference.locked && selected).then(|| {
                         let (_, handle_rect) = reference_resize_handle_geometry(rect);
                         ui.interact(
@@ -189,7 +195,7 @@ impl GuiLayer {
 
             if self.selected_reference == Some(reference.id) {
                 let painter = context
-                    .layer_painter(area.response.layer_id)
+                    .layer_painter(layer_id)
                     .with_clip_rect(workspace_rect);
                 paint_reference_selection(&painter, rect, !reference.locked);
             }
