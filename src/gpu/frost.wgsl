@@ -68,5 +68,8 @@ fn fs_horizontal(@builtin(position) position: vec4f) -> @location(0) vec4f {
 @fragment
 fn fs_vertical(@builtin(position) position: vec4f) -> @location(0) vec4f {
     let size = vec2f(textureDimensions(inputTexture));
-    return gaussian(position.xy / size, vec2f(0.0, 1.0 / size.y));
+    let color = gaussian(position.xy / size, vec2f(0.0, 1.0 / size.y));
+    let luminance = dot(color.rgb, vec3f(0.2126, 0.7152, 0.0722));
+    let vibrant = mix(vec3f(luminance), color.rgb, 1.25) * 1.03;
+    return vec4f(clamp(vibrant, vec3f(0.0), vec3f(1.0)), color.a);
 }

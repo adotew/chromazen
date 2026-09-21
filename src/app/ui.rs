@@ -1370,8 +1370,8 @@ fn install_rounded_ui_style(
 
 fn surface_fill(dark_mode: bool, surface_style: SurfaceStyle) -> egui::Color32 {
     match (dark_mode, surface_style) {
-        (true, SurfaceStyle::Frosted) => egui::Color32::from_rgba_unmultiplied(17, 19, 24, 208),
-        (false, SurfaceStyle::Frosted) => egui::Color32::from_rgba_unmultiplied(248, 250, 252, 218),
+        (true, SurfaceStyle::Frosted) => egui::Color32::from_rgba_unmultiplied(17, 19, 24, 160),
+        (false, SurfaceStyle::Frosted) => egui::Color32::from_rgba_unmultiplied(248, 250, 252, 205),
         (true, SurfaceStyle::Opaque) => egui::Color32::from_rgb(17, 19, 24),
         (false, SurfaceStyle::Opaque) => egui::Color32::from_rgb(248, 250, 252),
     }
@@ -1440,7 +1440,11 @@ fn frost_shape(
             backdrop.blur_width = 0.0;
 
             let mut tint = rect.clone();
-            tint.stroke = egui::Stroke::NONE;
+            tint.stroke = if rect.fill == surface_fill {
+                egui::Stroke::new(0.5, egui::Color32::from_white_alpha(36))
+            } else {
+                egui::Stroke::NONE
+            };
             if rect.fill == surface_fill {
                 surface_rects.push(rect.rect);
             }
@@ -1774,7 +1778,10 @@ mod tests {
                 panic!("surface tint");
             };
             assert_eq!(tint.fill, fill);
-            assert_eq!(tint.stroke, egui::Stroke::NONE);
+            assert_eq!(
+                tint.stroke,
+                egui::Stroke::new(0.5, egui::Color32::from_white_alpha(36))
+            );
         }
     }
 
