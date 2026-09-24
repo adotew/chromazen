@@ -12,6 +12,7 @@ const SIZE: [u32; 2] = [1031, 773];
 pub(super) fn run(device: &wgpu::Device, queue: &wgpu::Queue) {
     let start = Instant::now();
     brush_eraser_and_snapshot(device, queue);
+    tiled_fragment_budget_preserves_maximum_coverage(device, queue);
     smudge_matches_sequential_source(device, queue);
     transform_resize_and_duplicate(device, queue);
     clipped_merge_preserves_pixels_and_history(device, queue);
@@ -129,6 +130,43 @@ fn brush_eraser_and_snapshot(device: &wgpu::Device, queue: &wgpu::Queue) {
     assert_pixels(&pixels(&canvas)[0], &painted, 0);
     assert!(canvas.redo());
     assert_pixels(&pixels(&canvas)[0], &erased, 0);
+}
+
+fn tiled_fragment_budget_preserves_maximum_coverage(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let mut canvas = canvas(device, queue);
+    let dab = point(512.0, 512.0, 5.0);
+    assert!(canvas.begin_stroke(PaintTool::Brush, dab, [1.0, 0.0, 0.0, 1.0], 0.5));
+    for _ in 0..300 {
+        assert!(canvas.queue_stamp(dab));
+    }
+    super::render_pixels(device, queue, &mut canvas, None);
+    assert!(canvas.has_pending_stamps());
+    assert_eq!(canvas.work_counters().committed_dabs, 256);
+    assert_eq!(canvas.work_counters().tile_fragments, 1024);
+    canvas.end_stroke();
+    assert!(!canvas.has_pending_stamps());
+    assert_eq!(canvas.work_counters().committed_dabs, 300);
+    assert_eq!(canvas.work_counters().tile_fragments, 1200);
+    let image = &pixels(&canvas)[0];
+    for (x, y, pixel) in image.enumerate_pixels() {
+        let expected = if (507..517).contains(&x) && (507..517).contains(&y) {
+            Rgba([128, 0, 0, 128])
+        } else {
+            Rgba([0; 4])
+        };
+        assert!(
+            pixel
+                .0
+                .into_iter()
+                .zip(expected.0)
+                .all(|(a, b)| a.abs_diff(b) <= 1),
+            "({x}, {y}): {pixel:?}, expected {expected:?}"
+        );
+    }
+    assert!(canvas.undo());
+    assert!(pixels(&canvas)[0].as_raw().iter().all(|&value| value == 0));
+    assert!(canvas.redo());
+    assert_pixels(&pixels(&canvas)[0], image, 0);
 }
 
 fn smudge_matches_sequential_source(device: &wgpu::Device, queue: &wgpu::Queue) {
