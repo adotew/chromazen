@@ -2379,6 +2379,14 @@ impl Canvas {
     }
 
     fn flush_stamps(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        if !self.stamp_queue.has_pending() {
+            return;
+        }
+        let active_stroke = self.active_stroke.expect("stamp requires active stroke");
+        if active_stroke.render_path() == StrokeRenderPath::Mask {
+            self.flush_mask_stamps(encoder, active_stroke);
+            return;
+        }
         let mut raw = self.stamp_queue.drain_raw(
             self.document_size[0],
             self.document_size[1],
@@ -2391,16 +2399,9 @@ impl Canvas {
 
         self.work.committed_dabs += count as u64;
         self.work.upload_bytes += (count * std::mem::size_of::<StampRaw>()) as u64;
-        let active_stroke = self.active_stroke.expect("stamp requires active stroke");
-        self.work.paint_passes += if active_stroke.render_path() == StrokeRenderPath::DirectSmudge {
-            count as u64
-        } else {
-            1
-        };
-        if active_stroke.render_path() == StrokeRenderPath::DirectSmudge {
-            for stamp in &mut raw {
-                stamp.scale_source_offset(active_stroke.opacity);
-            }
+        self.work.paint_passes += count as u64;
+        for stamp in &mut raw {
+            stamp.scale_source_offset(active_stroke.opacity);
         }
         self.queue
             .write_buffer(&self.resources.stamp_buffer, 0, bytemuck::cast_slice(&raw));
@@ -2419,15 +2420,40 @@ impl Canvas {
                 stamp.target_rect(),
             );
         }
-        if active_stroke.render_path() == StrokeRenderPath::DirectSmudge {
-            self.flush_smudge_stamps(encoder, layer_index, &raw);
+        self.flush_smudge_stamps(encoder, layer_index, &raw);
+    }
+
+    fn flush_mask_stamps(&mut self, encoder: &mut wgpu::CommandEncoder, stroke: ActiveStroke) {
+        let drain = self
+            .stamp_queue
+            .drain_mask_tiles(self.document_size, MAX_STAMPS_PER_FRAME);
+        if drain.stamps.is_empty() {
             return;
         }
-
-        debug_assert!(matches!(
-            active_stroke.tool,
-            PaintTool::Brush | PaintTool::Eraser
-        ));
+        self.work.committed_dabs += drain.started_dabs as u64;
+        self.work.tile_fragments += drain.stamps.len() as u64;
+        self.work.upload_bytes += std::mem::size_of_val(drain.stamps.as_slice()) as u64;
+        self.work.paint_passes += 1;
+        self.queue.write_buffer(
+            &self.resources.stamp_buffer,
+            0,
+            bytemuck::cast_slice(&drain.stamps),
+        );
+        let layer = self
+            .layers
+            .iter_mut()
+            .find(|layer| layer.id == stroke.layer_id)
+            .expect("active stroke layer");
+        layer.preview_dirty = true;
+        for batch in &drain.batches {
+            self.history.capture_rect(
+                &self.device,
+                encoder,
+                stroke.layer_id,
+                &layer.texture,
+                batch.rect,
+            );
+        }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("stroke mask stamp pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2446,7 +2472,11 @@ impl Canvas {
         });
         pass.set_pipeline(&self.resources.mask_pipeline);
         pass.set_bind_group(0, &self.resources.stamp_bind_group, &[]);
-        pass.draw(0..6, 0..count as u32);
+        for batch in drain.batches {
+            let rect = batch.rect;
+            pass.set_scissor_rect(rect.x, rect.y, rect.width, rect.height);
+            pass.draw(0..6, batch.instances);
+        }
     }
 
     fn flush_stroke_preview(&mut self, encoder: &mut wgpu::CommandEncoder) {

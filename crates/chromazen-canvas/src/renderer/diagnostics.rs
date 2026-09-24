@@ -34,6 +34,8 @@ impl CanvasMemoryUsage {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CanvasWork {
     pub committed_dabs: u64,
+    /// Brush/eraser instances after subdivision at tile boundaries.
+    pub tile_fragments: u64,
     pub preview_dabs: u64,
     /// Mask, smudge, stroke commit and mask-clear passes.
     pub paint_passes: u64,

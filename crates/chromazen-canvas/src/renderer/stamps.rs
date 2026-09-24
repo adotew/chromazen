@@ -2,7 +2,10 @@ use std::collections::VecDeque;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::{BrushSpacing, StrokePoint};
+use crate::{
+    BrushSpacing, StrokePoint,
+    tiles::{DEFAULT_TILE_SIZE, TileCoord, TileGrid, TileRegions},
+};
 
 use super::history::TextureRect;
 
@@ -46,9 +49,26 @@ struct Stamp {
     source_center: [f32; 2],
 }
 
-#[derive(Clone)]
+struct TileCursor {
+    stamp: StampRaw,
+    regions: std::iter::Peekable<TileRegions>,
+}
+
+pub(crate) struct MaskTileBatch {
+    pub(crate) coord: TileCoord,
+    pub(crate) rect: TextureRect,
+    pub(crate) instances: std::ops::Range<u32>,
+}
+
+pub(crate) struct MaskTileDrain {
+    pub(crate) stamps: Vec<StampRaw>,
+    pub(crate) batches: Vec<MaskTileBatch>,
+    pub(crate) started_dabs: usize,
+}
+
 pub(crate) struct StampQueue {
     pending: VecDeque<Stamp>,
+    tile_cursor: Option<TileCursor>,
     distance_since_last_stamp: f32,
     last_generated_center: Option<[f32; 2]>,
     stamp_aspect: f32,
@@ -65,6 +85,7 @@ impl StampQueue {
     pub(crate) fn new(stamp_aspect: f32) -> Self {
         Self {
             pending: VecDeque::new(),
+            tile_cursor: None,
             distance_since_last_stamp: 0.0,
             last_generated_center: None,
             stamp_aspect,
@@ -83,6 +104,7 @@ impl StampQueue {
 
     pub(crate) fn clear(&mut self) {
         self.pending.clear();
+        self.tile_cursor = None;
         self.distance_since_last_stamp = 0.0;
         self.last_generated_center = None;
         self.dirty_rect = None;
@@ -93,7 +115,7 @@ impl StampQueue {
     }
 
     pub(crate) fn has_pending(&self) -> bool {
-        !self.pending.is_empty()
+        self.tile_cursor.is_some() || !self.pending.is_empty()
     }
 
     pub(crate) fn begin_stroke(&mut self, origin: StrokePoint) {
@@ -172,6 +194,19 @@ impl StampQueue {
         width: u32,
         height: u32,
     ) -> usize {
+        let mut budget = usize::MAX;
+        self.stamp_line_with_budget(from, to, rgba, spacing, [width, height], &mut budget)
+    }
+
+    fn stamp_line_with_budget(
+        &mut self,
+        from: StrokePoint,
+        to: StrokePoint,
+        rgba: [f32; 4],
+        spacing: BrushSpacing,
+        [width, height]: [u32; 2],
+        budget: &mut usize,
+    ) -> usize {
         let dx = to.x - from.x;
         let dy = to.y - from.y;
         let dist = dx.hypot(dy);
@@ -181,7 +216,7 @@ impl StampQueue {
 
         let mut queued = 0;
         let mut travelled = 0.0;
-        while travelled < dist {
+        while travelled < dist && *budget != 0 {
             let spacing_t = travelled / dist;
             let spacing_radius = lerp(from.radius, to.radius, spacing_t);
             let spacing = stamp_spacing(spacing_radius, spacing);
@@ -193,6 +228,7 @@ impl StampQueue {
                 return queued;
             }
 
+            *budget -= 1;
             travelled += distance_to_next_stamp;
             let t = travelled / dist;
             let radius = lerp(from.radius, to.radius, t);
@@ -229,29 +265,102 @@ impl StampQueue {
         width: u32,
         height: u32,
     ) -> Vec<StampRaw> {
-        let mut preview_queue = self.clone();
-        preview_queue.pending.clear();
-        preview_queue.dirty_rect = None;
+        // Prediction only needs spacing state, never the queued committed work.
+        let mut preview_queue = Self::new(self.stamp_aspect);
+        preview_queue.distance_since_last_stamp = self.distance_since_last_stamp;
+        preview_queue.last_generated_center = self.last_generated_center;
+        let mut budget = MAX_STAMPS_PER_FRAME - 1;
         let mut previous = committed_tip;
         let mut endpoint = None;
         for point in preview_points {
-            preview_queue.stamp_line(previous, point, rgba, spacing, width, height);
+            preview_queue.stamp_line_with_budget(
+                previous,
+                point,
+                rgba,
+                spacing,
+                [width, height],
+                &mut budget,
+            );
             previous = point;
             endpoint = Some(point);
         }
         if let Some(point) = endpoint {
             preview_queue.queue_point(point, rgba, width, height);
         }
-        let mut raw = preview_queue.drain_raw(width, height, usize::MAX);
-        if raw.len() > MAX_STAMPS_PER_FRAME {
-            let endpoint = raw[raw.len() - 1];
-            raw.truncate(MAX_STAMPS_PER_FRAME - 1);
-            raw.push(endpoint);
+        preview_queue.drain_raw(width, height, MAX_STAMPS_PER_FRAME)
+    }
+
+    /// Brush/eraser coverage is a maximum, so fragments can be grouped by tile
+    /// without changing the result. Smudge must use ordered, pre-dab snapshots
+    /// instead; it deliberately does not use this grouping path.
+    pub(crate) fn drain_mask_tiles(&mut self, size: [u32; 2], budget: usize) -> MaskTileDrain {
+        let grid = TileGrid::new(size, DEFAULT_TILE_SIZE).expect("validated document size");
+        let mut fragments = Vec::new();
+        let mut started_dabs = 0;
+        while fragments.len() < budget {
+            if self.tile_cursor.is_none() {
+                let Some(stamp) = self.pending.pop_front() else {
+                    break;
+                };
+                let stamp = stamp_to_raw(stamp, self.stamp_aspect, size[0], size[1]);
+                let rect = stamp.target_rect();
+                let min = [i64::from(rect.x), i64::from(rect.y)];
+                let max = [
+                    min[0] + i64::from(rect.width),
+                    min[1] + i64::from(rect.height),
+                ];
+                self.tile_cursor = Some(TileCursor {
+                    stamp,
+                    regions: grid.intersecting(min, max).peekable(),
+                });
+                started_dabs += 1;
+            }
+            let cursor = self.tile_cursor.as_mut().expect("started dab");
+            if let Some(region) = cursor.regions.next() {
+                fragments.push((region, cursor.stamp));
+            }
+            if cursor.regions.peek().is_none() {
+                self.tile_cursor = None;
+            }
         }
-        raw
+        fragments.sort_unstable_by_key(|(region, _)| region.coord);
+        let mut batches: Vec<MaskTileBatch> = Vec::new();
+        let mut stamps = Vec::with_capacity(fragments.len());
+        for (region, stamp) in fragments {
+            let rect = TextureRect {
+                x: region.document_origin[0],
+                y: region.document_origin[1],
+                width: region.size[0],
+                height: region.size[1],
+            };
+            let index = stamps.len() as u32;
+            if let Some(batch) = batches
+                .last_mut()
+                .filter(|batch| batch.coord == region.coord)
+            {
+                batch.rect = batch.rect.union(rect);
+                batch.instances.end = index + 1;
+            } else {
+                batches.push(MaskTileBatch {
+                    coord: region.coord,
+                    rect,
+                    instances: index..index + 1,
+                });
+            }
+            stamps.push(stamp);
+        }
+        MaskTileDrain {
+            stamps,
+            batches,
+            started_dabs,
+        }
     }
 
     pub(crate) fn drain_raw(&mut self, width: u32, height: u32, max_count: usize) -> Vec<StampRaw> {
+        assert!(
+            self.tile_cursor.is_none(),
+            "cannot change draining mode mid-dab"
+        );
         let count = self.pending.len().min(max_count);
         let mut raw = Vec::with_capacity(count);
         for _ in 0..count {
@@ -459,6 +568,75 @@ mod tests {
                 height: 15,
             }
         );
+    }
+
+    #[test]
+    fn tiled_mask_drain_bounds_expansion_and_resumes_the_same_dab() {
+        let size = [1031, 773];
+        let mut queue = StampQueue::default();
+        queue.begin_stroke(point(512.0, 512.0));
+        assert!(queue.queue_point(
+            StrokePoint {
+                x: 512.0,
+                y: 512.0,
+                radius: 800.0,
+                opacity: 1.0
+            },
+            [1.0; 4],
+            size[0],
+            size[1]
+        ));
+        let mut seen = Vec::new();
+        for budget in [2, 1, 2, 1] {
+            let batch = queue.drain_mask_tiles(size, budget);
+            assert!(batch.stamps.len() <= budget);
+            assert_eq!(batch.stamps.len(), batch.batches.len());
+            seen.extend(
+                batch
+                    .batches
+                    .into_iter()
+                    .map(|batch| (batch.coord, batch.rect)),
+            );
+            if seen.len() < 6 {
+                assert!(queue.has_pending());
+            }
+        }
+        assert!(!queue.has_pending());
+        assert_eq!(seen.len(), 6);
+        seen.sort_unstable_by_key(|(coord, _)| *coord);
+        let grid = TileGrid::new(size, DEFAULT_TILE_SIZE).unwrap();
+        for (coord, rect) in seen {
+            let origin = grid.origin(coord).unwrap();
+            let extent = grid.extent(coord).unwrap();
+            assert_eq!(
+                [rect.x, rect.y, rect.width, rect.height],
+                [origin[0], origin[1], extent[0], extent[1]]
+            );
+        }
+        assert_eq!(queue.drain_mask_tiles(size, 1).started_dabs, 0);
+    }
+
+    #[test]
+    fn tile_batches_group_repeated_dabs_without_crossing_tile_bounds() {
+        let size = [1031, 773];
+        let mut queue = StampQueue::default();
+        queue.begin_stroke(point(511.0, 511.0));
+        for (x, y) in [(511.0, 511.0), (512.0, 511.0), (1029.0, 772.0)] {
+            assert!(queue.queue_point(point(x, y), [1.0; 4], size[0], size[1]));
+        }
+        let drain = queue.drain_mask_tiles(size, 1024);
+        assert_eq!(drain.started_dabs, 3);
+        assert!(!queue.has_pending());
+        assert_eq!(drain.stamps.len(), 10);
+        let grid = TileGrid::new(size, DEFAULT_TILE_SIZE).unwrap();
+        for batch in drain.batches {
+            let origin = grid.origin(batch.coord).unwrap();
+            let extent = grid.extent(batch.coord).unwrap();
+            assert!(batch.instances.start < batch.instances.end);
+            assert!(batch.rect.x >= origin[0] && batch.rect.y >= origin[1]);
+            assert!(batch.rect.x + batch.rect.width <= origin[0] + extent[0]);
+            assert!(batch.rect.y + batch.rect.height <= origin[1] + extent[1]);
+        }
     }
 
     #[test]
