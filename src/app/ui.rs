@@ -1467,7 +1467,7 @@ fn frost_shape(
 
             let mut tint = rect.clone();
             tint.stroke = if rect.fill == surface_fill {
-                egui::Stroke::new(0.5, egui::Color32::from_white_alpha(36))
+                egui::Stroke::new(0.5_f32, egui::Color32::from_white_alpha(36))
             } else {
                 egui::Stroke::NONE
             };
@@ -1824,7 +1824,7 @@ mod tests {
             assert_eq!(tint.fill, fill);
             assert_eq!(
                 tint.stroke,
-                egui::Stroke::new(0.5, egui::Color32::from_white_alpha(36))
+                egui::Stroke::new(0.5_f32, egui::Color32::from_white_alpha(36))
             );
         }
     }
