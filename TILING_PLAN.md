@@ -357,5 +357,5 @@ The existing native gallery reader now inspects each image header and rejects di
 
 This is groundwork, **not a v4 tiled save or lazy reader**: existing PNGs are still whole layers, loaded eagerly, and the pointer/store remain single-writer by application convention rather than cross-process locking. Leases protect paths inside this process, not external modifications or another process opening the same root. Native schema 4, incremental tile writes, bounded autosave and explicit host ownership still remain. No artwork schema change was published.
 
-Workspace tests, headless GPU tests, clippy and WASM compilation pass for these intermediate conversions. Phases 3–7 remain unimplemented. Continue phase 2 before claiming tiled painting or bounded residency.
+Workspace tests, headless GPU tests, strict clippy, WASM compilation, and `web/` Svelte check/build pass for these intermediate conversions. `wasm-pack` is not installed in this environment, so browser bindings were not rebuilt or manually exercised. Phases 3–7 remain unimplemented. Continue phase 2 before claiming tiled painting or bounded residency.
 
