@@ -2198,31 +2198,68 @@ impl Canvas {
                 pass.set_bind_group(0, &self.resources.cursor_bind_group, &[]);
                 pass.draw(0..3, 0..1);
             }
-            if brush_cursor.is_none() {
-                return;
+            if brush_cursor.is_some() {
+                self.draw_brush_cursor(encoder, view);
             }
-            let surface_size = self.surface_size();
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("brush cursor pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_scissor_rect(0, 0, surface_size[0], surface_size[1]);
-            pass.set_pipeline(&self.resources.cursor_pipeline);
-            pass.set_bind_group(0, &self.resources.cursor_bind_group, &[]);
-            pass.draw(0..6, 0..1);
         }
+    }
+
+    /// Draws the cursor over the composed frame. `frame` must be the COPY_SRC texture backing
+    /// `view`, with the same size and format as the canvas surface. Capture it before drawing:
+    /// sampling `view` while it is a render attachment would be invalid and would miss the UI.
+    pub fn render_brush_cursor_over_view(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        frame: &wgpu::Texture,
+        view: &wgpu::TextureView,
+        cursor: BrushCursor,
+    ) {
+        let surface_size = self.surface_size();
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: frame,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.resources.backdrop_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: surface_size[0],
+                height: surface_size[1],
+                depth_or_array_layers: 1,
+            },
+        );
+        self.write_brush_cursor(cursor);
+        self.draw_brush_cursor(encoder, view);
+    }
+
+    fn draw_brush_cursor(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        let surface_size = self.surface_size();
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("brush cursor pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_scissor_rect(0, 0, surface_size[0], surface_size[1]);
+        pass.set_pipeline(&self.resources.cursor_pipeline);
+        pass.set_bind_group(0, &self.resources.cursor_bind_group, &[]);
+        pass.draw(0..6, 0..1);
     }
 
     pub fn backdrop_view(&self) -> &wgpu::TextureView {

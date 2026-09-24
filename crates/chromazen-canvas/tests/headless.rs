@@ -83,6 +83,7 @@ async fn run() {
 
     preview_is_visible_but_not_committed(&device, &queue);
     run_brush_cursor_contrast(&device, &queue);
+    run_adjustment_preview_over_reference(&device, &queue);
     run_workspace_background_colors(&device, &queue);
 }
 
@@ -213,6 +214,36 @@ fn run_brush_cursor_contrast(device: &wgpu::Device, queue: &wgpu::Queue) {
     }
 }
 
+fn run_adjustment_preview_over_reference(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let brush = image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4]));
+    let mut canvas = Canvas::new(
+        device.clone(),
+        queue.clone(),
+        wgpu::TextureFormat::Rgba8Unorm,
+        RENDER_SIZE,
+        RENDER_SIZE,
+        &brush,
+        [0.16; 3],
+    )
+    .expect("preview canvas");
+    let pixels = render_pixels_with_reference_overlay(
+        device,
+        queue,
+        &mut canvas,
+        BrushCursor {
+            center: [32.0, 32.0],
+            diameter: 16.0,
+        },
+    );
+    assert_visible_outline(&pixels, [20, 20, 44, 44], [255, 0, 0]);
+    // Only the reference's red may contribute to the outline, never the white canvas below it.
+    for pixel in pixels.as_chunks::<4>().0 {
+        assert_eq!(&pixel[1..3], &[0, 0]);
+    }
+    let center = ((32 * RENDER_SIZE[0] + 32) * 4) as usize;
+    assert_eq!(&pixels[center..center + 3], &[255, 0, 0]);
+}
+
 fn run_workspace_background_colors(device: &wgpu::Device, queue: &wgpu::Queue) {
     let brush = image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4]));
     let mut canvas = Canvas::new(
@@ -246,6 +277,25 @@ fn render_pixels(
     canvas: &mut Canvas,
     cursor: Option<BrushCursor>,
 ) -> Vec<u8> {
+    render_pixels_inner(device, queue, canvas, cursor, None)
+}
+
+fn render_pixels_with_reference_overlay(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    canvas: &mut Canvas,
+    cursor: BrushCursor,
+) -> Vec<u8> {
+    render_pixels_inner(device, queue, canvas, None, Some(cursor))
+}
+
+fn render_pixels_inner(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    canvas: &mut Canvas,
+    cursor: Option<BrushCursor>,
+    overlay_cursor: Option<BrushCursor>,
+) -> Vec<u8> {
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("cursor contrast render target"),
         size: wgpu::Extent3d {
@@ -273,6 +323,27 @@ fn render_pixels(
         label: Some("cursor contrast render encoder"),
     });
     canvas.render_to_view(&mut encoder, &view, cursor);
+    if let Some(cursor) = overlay_cursor {
+        // Simulate an egui reference painted after the canvas and before the preview.
+        let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("reference overlay pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::RED),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        drop(pass);
+        canvas.render_brush_cursor_over_view(&mut encoder, &target, &view, cursor);
+    }
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
             texture: &target,

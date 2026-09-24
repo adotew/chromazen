@@ -294,7 +294,8 @@ impl App {
             self.screen == AppScreen::Editor && gui.reference_resize_active();
         let pointer_over_ui_or_reference =
             pointer_over_ui || pointer_over_reference || reference_drag_active;
-        let brush_cursor = gui.brush_adjustment_preview().or_else(|| {
+        let adjustment_preview = gui.brush_adjustment_preview();
+        let brush_cursor = adjustment_preview.or_else(|| {
             cursor_pos
                 .filter(|_| !pointer_over_ui_or_reference)
                 .map(|center| BrushCursor {
@@ -350,10 +351,17 @@ impl App {
                 label: Some("frame encoder"),
             });
 
-        let fallback_view = frost_visible.then(|| gpu.fallback_frame_view()).flatten();
-        let render_view = fallback_view.unwrap_or(&view);
+        let fallback_frame = (frost_visible || adjustment_preview.is_some())
+            .then(|| gpu.fallback_frame())
+            .flatten();
+        let (render_texture, render_view) = fallback_frame.unwrap_or((&frame.texture, &view));
         paint.set_workspace_background_color(gui.workspace_background_color());
-        paint.render_to_view(&mut encoder, render_view, brush_cursor);
+        // Adjustment previews sit above references (egui); ordinary cursors remain below UI.
+        paint.render_to_view(
+            &mut encoder,
+            render_view,
+            brush_cursor.filter(|_| adjustment_preview.is_none()),
+        );
         let canvas_needs_redraw = paint.has_pending_stamps();
 
         let screen_descriptor = ScreenDescriptor {
@@ -396,7 +404,10 @@ impl App {
                 &screen_descriptor,
             );
         }
-        if fallback_view.is_some() {
+        if let Some(cursor) = adjustment_preview {
+            paint.render_brush_cursor_over_view(&mut encoder, render_texture, render_view, cursor);
+        }
+        if fallback_frame.is_some() {
             gpu.blit_fallback_frame(&mut encoder, &view);
         }
 

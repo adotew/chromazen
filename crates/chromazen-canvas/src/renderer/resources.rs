@@ -20,7 +20,7 @@ pub(crate) struct RenderResources {
     pub(crate) stamp_bind_group: wgpu::BindGroup,
     pub(crate) preview_stamp_bind_group: wgpu::BindGroup,
     pub(crate) cursor_bind_group: wgpu::BindGroup,
-    backdrop_texture: wgpu::Texture,
+    pub(crate) backdrop_texture: wgpu::Texture,
     pub(crate) backdrop_view: wgpu::TextureView,
     pub(crate) smudge_texture: wgpu::Texture,
     smudge_texture_view: wgpu::TextureView,
@@ -1599,7 +1599,9 @@ fn create_backdrop_texture(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST,
         view_formats: &[format],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());

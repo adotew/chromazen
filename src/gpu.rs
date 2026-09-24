@@ -54,7 +54,9 @@ fn create_frame_texture(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -92,12 +94,18 @@ impl GpuContext {
         let surface_format = egui_wgpu::preferred_framebuffer_format(&caps.formats)
             .unwrap_or_else(|_| caps.formats[0]);
         let frost_supported = caps.usages.contains(wgpu::TextureUsages::TEXTURE_BINDING);
+        let frame_copy_supported = caps.usages.contains(wgpu::TextureUsages::COPY_SRC);
         if !frost_supported {
             log::debug!("using an offscreen frame for frosted surfaces");
         }
         let surface_usage = wgpu::TextureUsages::RENDER_ATTACHMENT
             | if frost_supported {
                 wgpu::TextureUsages::TEXTURE_BINDING
+            } else {
+                wgpu::TextureUsages::empty()
+            }
+            | if frame_copy_supported {
+                wgpu::TextureUsages::COPY_SRC
             } else {
                 wgpu::TextureUsages::empty()
             };
@@ -114,7 +122,7 @@ impl GpuContext {
         };
         surface.configure(&device, &config);
         let frost = FrostRenderer::new(&device, [config.width, config.height]);
-        let fallback_frame = (!frost_supported)
+        let fallback_frame = (!frost_supported || !frame_copy_supported)
             .then(|| FallbackFrame::new(&device, [config.width, config.height], config.format));
 
         Ok(Self {
@@ -151,8 +159,10 @@ impl GpuContext {
         self.frost.generation()
     }
 
-    pub(crate) fn fallback_frame_view(&self) -> Option<&wgpu::TextureView> {
-        self.fallback_frame.as_ref().map(|frame| &frame.view)
+    pub(crate) fn fallback_frame(&self) -> Option<(&wgpu::Texture, &wgpu::TextureView)> {
+        self.fallback_frame
+            .as_ref()
+            .map(|frame| (&frame._texture, &frame.view))
     }
 
     pub(crate) fn render_frost(
