@@ -1094,7 +1094,13 @@ fn show_brush_resize_label(
         return;
     }
 
-    let painter = ui.painter().with_clip_rect(canvas_rect);
+    let painter = ui
+        .ctx()
+        .layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("brush resize label"),
+        ))
+        .with_clip_rect(canvas_rect);
     let text = format!("{brush_size:.0} px · {:.0}%", brush_opacity * 100.0);
     let font = egui::FontId::proportional(16.0);
     let text_width = painter
