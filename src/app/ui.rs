@@ -1809,11 +1809,11 @@ mod tests {
 
     #[test]
     fn frosted_slider_chrome_keeps_theme_contrast() {
-        let [dark_track, dark_thumb, ..] = brush_slider_fills(true, true);
-        let [light_track, light_thumb, ..] = brush_slider_fills(false, true);
+        let [dark_track, dark_fill, ..] = brush_slider_fills(true, true);
+        let [light_track, light_fill, ..] = brush_slider_fills(false, true);
 
-        assert!(dark_track.r() < dark_thumb.r());
-        assert!(light_track.r() > light_thumb.r());
+        assert!(dark_track.r() < dark_fill.r());
+        assert!(light_track.r() > light_fill.r());
         assert!(
             brush_slider_fills(true, true)
                 .into_iter()

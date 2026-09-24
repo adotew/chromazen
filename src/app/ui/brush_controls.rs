@@ -186,16 +186,11 @@ fn brush_slider(
             response.rect.center(),
             egui::vec2(26.0, response.rect.height()),
         );
-        let thumb_center = egui::pos2(
-            track.center().x,
-            egui::lerp((track.top() + 7.0)..=(track.bottom() - 7.0), 1.0 - fraction),
-        );
-        let thumb = egui::Rect::from_center_size(thumb_center, egui::vec2(24.0, 14.0));
         let frosted = ui.visuals().window_fill().a() < u8::MAX;
         let [track_fill, idle, hovered, active, disabled] = brush_slider_fills(dark, frosted);
         ui.painter()
             .rect_filled(track, egui::CornerRadius::same(4), track_fill);
-        let thumb_fill = if !response.enabled() {
+        let value_fill = if !response.enabled() {
             disabled
         } else if response.is_pointer_button_down_on() {
             active
@@ -204,8 +199,14 @@ fn brush_slider(
         } else {
             idle
         };
-        ui.painter()
-            .rect_filled(thumb, egui::CornerRadius::same(4), thumb_fill);
+        if fraction > 0.0 {
+            let filled = egui::Rect::from_min_max(
+                egui::pos2(track.left(), track.bottom() - track.height() * fraction),
+                track.right_bottom(),
+            );
+            ui.painter()
+                .rect_filled(filled, egui::CornerRadius::same(4), value_fill);
+        }
         response
             .widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), f64::from(*value), label));
         response.on_hover_text(label)
@@ -264,7 +265,7 @@ mod tests {
     }
 
     #[test]
-    fn slider_thumb_position_matches_linear_and_logarithmic_values() {
+    fn slider_fill_fraction_matches_linear_and_logarithmic_values() {
         assert_eq!(slider_fraction(0.5, &(0.0..=1.0), false), 0.5);
         assert!((slider_fraction(10.0, &(1.0..=100.0), true) - 0.5).abs() < f32::EPSILON);
     }
