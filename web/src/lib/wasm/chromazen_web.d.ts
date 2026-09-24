@@ -7,7 +7,7 @@ export class WebCanvas {
     [Symbol.dispose](): void;
     beginStroke(x: number, y: number, pressure: number, time_ms: number): boolean;
     clear(): boolean;
-    static create(element: HTMLCanvasElement, width: number, height: number, scale: number): Promise<WebCanvas>;
+    static create(element: HTMLCanvasElement, width: number, height: number, scale: number, dark_mode: boolean): Promise<WebCanvas>;
     endStroke(): boolean;
     loadDocument(value: any): void;
     panBy(delta_x: number, delta_y: number): boolean;
@@ -19,6 +19,7 @@ export class WebCanvas {
     setBrushSize(size: number): void;
     setColor(red: number, green: number, blue: number): void;
     setTool(tool: number): void;
+    setWorkspaceDarkMode(dark_mode: boolean): void;
     undo(): boolean;
     zoomAt(factor: number, x: number, y: number): boolean;
 }
@@ -30,7 +31,7 @@ export interface InitOutput {
     readonly __wbg_webcanvas_free: (a: number, b: number) => void;
     readonly webcanvas_beginStroke: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly webcanvas_clear: (a: number) => number;
-    readonly webcanvas_create: (a: any, b: number, c: number, d: number) => any;
+    readonly webcanvas_create: (a: any, b: number, c: number, d: number, e: number) => any;
     readonly webcanvas_endStroke: (a: number) => number;
     readonly webcanvas_loadDocument: (a: number, b: any) => [number, number];
     readonly webcanvas_panBy: (a: number, b: number, c: number) => number;
@@ -42,6 +43,7 @@ export interface InitOutput {
     readonly webcanvas_setBrushSize: (a: number, b: number) => void;
     readonly webcanvas_setColor: (a: number, b: number, c: number, d: number) => void;
     readonly webcanvas_setTool: (a: number, b: number) => [number, number];
+    readonly webcanvas_setWorkspaceDarkMode: (a: number, b: number) => void;
     readonly webcanvas_undo: (a: number) => number;
     readonly webcanvas_zoomAt: (a: number, b: number, c: number, d: number) => number;
     readonly wasm_bindgen__convert__closures_____invoke__h3c9d997bc3177e87: (a: number, b: number, c: any) => [number, number];

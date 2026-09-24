@@ -147,6 +147,7 @@ impl GuiLayer {
         }
         let mut accent_color = self.accent_color;
         let mut surface_style = self.surface_style;
+        let mut workspace_background = self.workspace_background;
         let mut changed = false;
         let mut close = false;
         let response = egui::Modal::new(egui::Id::new("settings dialog")).show(context, |ui| {
@@ -188,6 +189,25 @@ impl GuiLayer {
             });
             ui.add_space(16.0);
             ui.horizontal(|ui| {
+                ui.label("Workspace background");
+                ui.add_space(8.0);
+                changed |= ui
+                    .selectable_value(
+                        &mut workspace_background,
+                        WorkspaceBackground::Standard,
+                        "Standard",
+                    )
+                    .changed();
+                changed |= ui
+                    .selectable_value(
+                        &mut workspace_background,
+                        WorkspaceBackground::NeutralGray,
+                        "Neutral Gray",
+                    )
+                    .changed();
+            });
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
                 ui.label("Interface backgrounds");
                 ui.add_space(8.0);
                 changed |= ui
@@ -206,6 +226,7 @@ impl GuiLayer {
         if changed {
             self.set_accent_color(accent_color);
             self.set_surface_style(surface_style);
+            self.workspace_background = workspace_background;
         }
         if close {
             self.settings_dialog_open = false;

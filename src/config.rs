@@ -41,6 +41,7 @@ pub(crate) struct AppConfig {
     pub(crate) brush: CurrentBrushConfig,
     pub(crate) panel_layout: PanelLayout,
     pub(crate) surface_style: SurfaceStyle,
+    pub(crate) workspace_background: WorkspaceBackground,
 }
 
 impl Default for AppConfig {
@@ -58,6 +59,7 @@ impl Default for AppConfig {
             brush: CurrentBrushConfig::default(),
             panel_layout: PanelLayout::default(),
             surface_style: SurfaceStyle::default(),
+            workspace_background: WorkspaceBackground::default(),
         }
     }
 }
@@ -68,6 +70,14 @@ pub(crate) enum SurfaceStyle {
     #[default]
     Frosted,
     Opaque,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WorkspaceBackground {
+    #[default]
+    Standard,
+    NeutralGray,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -372,6 +382,7 @@ mod tests {
         assert_eq!(config.accent_color, DEFAULT_ACCENT_COLOR);
         assert_eq!(config.active_brush, "charcoal");
         assert_eq!(config.surface_style, SurfaceStyle::Frosted);
+        assert_eq!(config.workspace_background, WorkspaceBackground::Standard);
     }
 
     #[test]
@@ -428,6 +439,7 @@ mod tests {
         config.smudge_opacity = 0.8;
         config.brush.color = [1, 2, 3, 255];
         config.accent_color = [4, 5, 6];
+        config.workspace_background = WorkspaceBackground::NeutralGray;
         config.panel_layout = PanelLayout {
             brush_panel_pos: [1.0, 2.0],
             color_panel_pos: [5.0, 6.0],

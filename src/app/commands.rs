@@ -272,6 +272,7 @@ impl App {
                     panel_layout,
                     accent_color,
                     surface_style,
+                    workspace_background,
                 }) = self.gui.as_ref().map(GuiLayer::settings_for_save)
                 else {
                     return;
@@ -284,6 +285,7 @@ impl App {
                     panel_layout,
                     accent_color,
                     surface_style,
+                    workspace_background,
                 }]);
             }
             AppSettingsCommand::ReloadConfiguration => {

@@ -18,6 +18,10 @@ const CHARCOAL_STAMP_SIZE: u32 = 500;
 const CHARCOAL_STAMP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/charcoal.alpha"));
 const _: () = assert!(CHARCOAL_STAMP.len() == (CHARCOAL_STAMP_SIZE * CHARCOAL_STAMP_SIZE) as usize);
 
+fn workspace_background_color(dark_mode: bool) -> [f32; 3] {
+    [if dark_mode { 0.16 } else { 0.82 }; 3]
+}
+
 #[wasm_bindgen]
 pub struct WebCanvas {
     surface: wgpu::Surface<'static>,
@@ -67,6 +71,7 @@ impl WebCanvas {
         width: u32,
         height: u32,
         scale: f32,
+        dark_mode: bool,
     ) -> Result<WebCanvas, JsValue> {
         let width = width.max(1);
         let height = height.max(1);
@@ -124,6 +129,7 @@ impl WebCanvas {
             [width, height],
             DOCUMENT_SIZE,
             &brush_stamp,
+            workspace_background_color(dark_mode),
         )
         .map_err(js_error)?;
 
@@ -154,6 +160,12 @@ impl WebCanvas {
         self.scale = scale.max(1.0);
         self.surface.configure(&self.device, &self.config);
         self.canvas.resize([width, height]);
+    }
+
+    #[wasm_bindgen(js_name = setWorkspaceDarkMode)]
+    pub fn set_workspace_dark_mode(&mut self, dark_mode: bool) {
+        self.canvas
+            .set_workspace_background_color(workspace_background_color(dark_mode));
     }
 
     #[wasm_bindgen(js_name = panBy)]

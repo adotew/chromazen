@@ -37,12 +37,6 @@ const MAX_CANVAS_DIMENSION: u32 = 8192;
 const MAX_CANVAS_PIXELS: u64 = 32 * 1024 * 1024;
 const DOCUMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const STROKE_MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
-const WORKSPACE_BACKGROUND_COLOR: wgpu::Color = wgpu::Color {
-    r: 0.5,
-    g: 0.5,
-    b: 0.5,
-    a: 1.0,
-};
 const LAYER_PREVIEW_SIZE: u32 = 128;
 // Eight simulation steps per brush radius retain tip detail without dense-pass overhead.
 const SMUDGE_MIN_STEP_RATIO: f32 = 0.125;
@@ -322,6 +316,7 @@ pub struct Canvas {
     layers: Vec<PaintLayer>,
     selection: LayerId,
     background_color: [f32; 4],
+    workspace_background_color: wgpu::Color,
     next_layer_id: u64,
     next_layer_number: u64,
     next_layer_resource_id: u64,
@@ -349,6 +344,7 @@ impl Canvas {
         surface_size: [u32; 2],
         document_size: [u32; 2],
         brush_stamp: &image::RgbaImage,
+        workspace_background_color: [f32; 3],
     ) -> Result<Self, String> {
         CanvasSizeConstraints {
             max_dimension: device
@@ -387,6 +383,12 @@ impl Canvas {
             layers: vec![first_layer],
             selection: LayerId(1),
             background_color: DEFAULT_BACKGROUND_COLOR,
+            workspace_background_color: wgpu::Color {
+                r: f64::from(workspace_background_color[0]),
+                g: f64::from(workspace_background_color[1]),
+                b: f64::from(workspace_background_color[2]),
+                a: 1.0,
+            },
             next_layer_id: 2,
             next_layer_number: 2,
             next_layer_resource_id: 2,
@@ -416,6 +418,15 @@ impl Canvas {
     }
     pub fn document_size(&self) -> [u32; 2] {
         self.document_size
+    }
+
+    pub fn set_workspace_background_color(&mut self, color: [f32; 3]) {
+        self.workspace_background_color = wgpu::Color {
+            r: f64::from(color[0]),
+            g: f64::from(color[1]),
+            b: f64::from(color[2]),
+            a: 1.0,
+        };
     }
     pub fn zoom(&self) -> f32 {
         self.view.zoom()
@@ -1969,7 +1980,7 @@ impl Canvas {
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(WORKSPACE_BACKGROUND_COLOR),
+                        load: wgpu::LoadOp::Clear(self.workspace_background_color),
                         store: wgpu::StoreOp::Store,
                     },
                 })],

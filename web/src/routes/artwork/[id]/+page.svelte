@@ -14,6 +14,7 @@
     setTool(tool: number): void
     panBy(deltaX: number, deltaY: number): boolean
     zoomAt(factor: number, x: number, y: number): boolean
+    setWorkspaceDarkMode(darkMode: boolean): void
     saveDocument(): Promise<StoredDocument>
     loadDocument(document: StoredDocument): void
   }
@@ -67,6 +68,12 @@
 
   onMount(() => {
     let disposed = false
+    const darkMode = window.matchMedia('(prefers-color-scheme: dark)')
+    function themeChanged() {
+      renderer?.setWorkspaceDarkMode(darkMode.matches)
+      requestFrame()
+    }
+    darkMode.addEventListener('change', themeChanged)
     mounted = true
     isLinux = /Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent)
 
@@ -77,12 +84,13 @@
         if (disposed) return
 
         const { width, height, scale } = canvasSize()
-        const created = await wasm.WebCanvas.create(canvasElement, width, height, scale)
+        const created = await wasm.WebCanvas.create(canvasElement, width, height, scale, darkMode.matches)
         if (disposed) {
           created.free()
           return
         }
         renderer = created as Renderer
+        renderer.setWorkspaceDarkMode(darkMode.matches)
         renderer.setBrushSize(brushSize)
         let isNew = false
         try {
@@ -116,6 +124,7 @@
     return () => {
       disposed = true
       mounted = false
+      darkMode.removeEventListener('change', themeChanged)
       saver.dispose()
       resizeObserver?.disconnect()
       if (frame) cancelAnimationFrame(frame)

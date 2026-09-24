@@ -40,10 +40,11 @@ export class WebCanvas {
      * @param {number} width
      * @param {number} height
      * @param {number} scale
+     * @param {boolean} dark_mode
      * @returns {Promise<WebCanvas>}
      */
-    static create(element, width, height, scale) {
-        const ret = wasm.webcanvas_create(element, width, height, scale);
+    static create(element, width, height, scale, dark_mode) {
+        const ret = wasm.webcanvas_create(element, width, height, scale, dark_mode);
         return ret;
     }
     /**
@@ -135,6 +136,12 @@ export class WebCanvas {
         if (ret[1]) {
             throw takeFromExternrefTable0(ret[0]);
         }
+    }
+    /**
+     * @param {boolean} dark_mode
+     */
+    setWorkspaceDarkMode(dark_mode) {
+        wasm.webcanvas_setWorkspaceDarkMode(this.__wbg_ptr, dark_mode);
     }
     /**
      * @returns {boolean}

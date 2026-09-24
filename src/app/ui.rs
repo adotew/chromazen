@@ -31,6 +31,7 @@ use crate::{
     artwork::ArtworkSummary,
     config::{
         AppConfig, BrushCatalog, CurrentBrushConfig, LoadedBrushPreset, PanelLayout, SurfaceStyle,
+        WorkspaceBackground,
     },
     gpu::GpuContext,
     paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings},
@@ -152,6 +153,7 @@ pub(crate) struct UiSettingsSnapshot {
     pub(crate) panel_layout: PanelLayout,
     pub(crate) accent_color: [u8; 3],
     pub(crate) surface_style: SurfaceStyle,
+    pub(crate) workspace_background: WorkspaceBackground,
 }
 
 pub(crate) struct FrostedSurface {
@@ -166,6 +168,7 @@ pub struct GuiLayer {
     frost_texture: egui::TextureId,
     frost_texture_generation: u64,
     surface_style: SurfaceStyle,
+    workspace_background: WorkspaceBackground,
     pub brush: BrushSettings,
     tool_brushes: [String; 3],
     tool_sizes: [f32; 3],
@@ -398,6 +401,7 @@ impl GuiLayer {
             frost_texture,
             frost_texture_generation: gpu.frost_generation(),
             surface_style: config.surface_style,
+            workspace_background: config.workspace_background,
             brush: brush_settings_from_config(&config.brush, brush_preset),
             tool_brushes: [
                 brush_preset.id.clone(),
@@ -628,7 +632,13 @@ impl GuiLayer {
             panel_layout: self.panel_layout,
             accent_color: rgb(self.accent_color),
             surface_style: self.surface_style,
+            workspace_background: self.workspace_background,
         }
+    }
+
+    pub(crate) fn workspace_background_color(&self) -> [f32; 3] {
+        let dark_mode = self.context.global_style().visuals.dark_mode;
+        workspace_background_color(self.workspace_background, dark_mode)
     }
 
     pub(crate) fn brush_for_tool(&self, tool: PaintTool) -> &str {
@@ -735,6 +745,7 @@ impl GuiLayer {
         self.brush.opacity = self.tool_opacities[index];
         self.panel_layout = config.panel_layout;
         self.set_surface_style(config.surface_style);
+        self.workspace_background = config.workspace_background;
         self.set_accent_color(egui::Color32::from_rgb(
             config.accent_color[0],
             config.accent_color[1],
@@ -742,6 +753,18 @@ impl GuiLayer {
         ));
         self.context.request_repaint();
     }
+}
+
+pub(crate) fn workspace_background_color(
+    background: WorkspaceBackground,
+    dark_mode: bool,
+) -> [f32; 3] {
+    let gray = if background == WorkspaceBackground::Standard {
+        if dark_mode { 0.16 } else { 0.82 }
+    } else {
+        0.5
+    };
+    [gray; 3]
 }
 
 fn shortcut_section(ui: &mut egui::Ui, title: &str, shortcuts: &[(&str, &str)]) {
@@ -1519,6 +1542,24 @@ pub fn repaint_delay(output: &egui::FullOutput) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_background_follows_theme_only_for_standard() {
+        assert_eq!(
+            workspace_background_color(WorkspaceBackground::Standard, true),
+            [0.16; 3]
+        );
+        assert_eq!(
+            workspace_background_color(WorkspaceBackground::Standard, false),
+            [0.82; 3]
+        );
+        for dark_mode in [true, false] {
+            assert_eq!(
+                workspace_background_color(WorkspaceBackground::NeutralGray, dark_mode),
+                [0.5; 3]
+            );
+        }
+    }
 
     #[test]
     fn application_menu_disables_document_actions_without_artwork() {

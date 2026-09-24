@@ -352,6 +352,7 @@ impl App {
 
         let fallback_view = frost_visible.then(|| gpu.fallback_frame_view()).flatten();
         let render_view = fallback_view.unwrap_or(&view);
+        paint.set_workspace_background_color(gui.workspace_background_color());
         paint.render_to_view(&mut encoder, render_view, brush_cursor);
         let canvas_needs_redraw = paint.has_pending_stamps();
 

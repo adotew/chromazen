@@ -41,6 +41,7 @@ async fn run() {
         size,
         size,
         &brush,
+        [0.16; 3],
     )
     .expect("canvas");
     let point = StrokePoint {
@@ -82,6 +83,7 @@ async fn run() {
 
     preview_is_visible_but_not_committed(&device, &queue);
     run_brush_cursor_contrast(&device, &queue);
+    run_workspace_background_colors(&device, &queue);
 }
 
 fn center_alpha(canvas: &Canvas) -> u8 {
@@ -103,6 +105,7 @@ fn preview_is_visible_but_not_committed(device: &wgpu::Device, queue: &wgpu::Que
         RENDER_SIZE,
         RENDER_SIZE,
         &brush,
+        [0.16; 3],
     )
     .expect("preview canvas");
     let start = StrokePoint {
@@ -136,8 +139,8 @@ fn preview_is_visible_but_not_committed(device: &wgpu::Device, queue: &wgpu::Que
 fn run_brush_cursor_contrast(device: &wgpu::Device, queue: &wgpu::Queue) {
     let brush = image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4]));
 
-    // A narrow document leaves workspace visible on both sides. This catches the original
-    // regression because the workspace is exactly 50% gray.
+    // A narrow document leaves workspace visible on both sides. Test the neutral gray option
+    // because the cursor's contrast changes near 50% gray.
     let mut workspace_canvas = Canvas::new(
         device.clone(),
         queue.clone(),
@@ -145,6 +148,7 @@ fn run_brush_cursor_contrast(device: &wgpu::Device, queue: &wgpu::Queue) {
         RENDER_SIZE,
         [16, 32],
         &brush,
+        [0.5; 3],
     )
     .expect("workspace canvas");
     let pixels = render_pixels(
@@ -177,6 +181,7 @@ fn run_brush_cursor_contrast(device: &wgpu::Device, queue: &wgpu::Queue) {
             RENDER_SIZE,
             RENDER_SIZE,
             &brush,
+            [0.16; 3],
         )
         .expect("canvas");
         canvas.set_background_color(background);
@@ -205,6 +210,33 @@ fn run_brush_cursor_contrast(device: &wgpu::Device, queue: &wgpu::Queue) {
             change <= 0.04,
             "cursor contrast changes too abruptly between neighboring midtones: {pair:?}"
         );
+    }
+}
+
+fn run_workspace_background_colors(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let brush = image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4]));
+    let mut canvas = Canvas::new(
+        device.clone(),
+        queue.clone(),
+        wgpu::TextureFormat::Rgba8Unorm,
+        RENDER_SIZE,
+        [16, 32],
+        &brush,
+        [0.82; 3],
+    )
+    .expect("workspace canvas");
+
+    let initial_pixels = render_pixels(device, queue, &mut canvas, None);
+    assert!(initial_pixels[0].abs_diff(209) <= 1);
+
+    for (gray, expected) in [(0.16, 41_u8), (0.5, 128), (0.82, 209)] {
+        canvas.set_workspace_background_color([gray; 3]);
+        let pixels = render_pixels(device, queue, &mut canvas, None);
+        for &channel in &pixels[..3] {
+            assert!(channel.abs_diff(expected) <= 1);
+        }
+        let document_offset = ((32 * RENDER_SIZE[0] + 32) * 4) as usize;
+        assert_eq!(&pixels[document_offset..document_offset + 3], &[255; 3]);
     }
 }
 

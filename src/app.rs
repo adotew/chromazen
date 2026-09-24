@@ -25,7 +25,7 @@ use winit::{
     application::ApplicationHandler,
     event::{ElementState, MouseButton, StartCause, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
-    window::{CursorIcon, Window, WindowAttributes},
+    window::{CursorIcon, Theme, Window, WindowAttributes},
 };
 
 use self::{
@@ -43,7 +43,10 @@ use self::{
     reference_load::ReferenceLoadController,
     references::ReferenceBoard,
     settings::{SettingsCommand, SettingsController, SettingsEffect},
-    ui::{ApplicationMenuState, EditorUiState, EyedropperIndicator, GuiLayer, UiSettingsSnapshot},
+    ui::{
+        ApplicationMenuState, EditorUiState, EyedropperIndicator, GuiLayer, UiSettingsSnapshot,
+        workspace_background_color,
+    },
 };
 use chromazen_canvas::{BrushCursor, Canvas, DEFAULT_CANVAS_SIZE, DocumentVersions};
 
@@ -210,6 +213,10 @@ impl ApplicationHandler<AppEvent> for App {
             gpu.surface_size(),
             DEFAULT_CANVAS_SIZE,
             &self.settings.active_brush().stamp_image,
+            workspace_background_color(
+                self.settings.config().workspace_background,
+                !matches!(window.theme(), Some(Theme::Light)),
+            ),
         )
         .expect("failed to initialize wgpu paint renderer");
         let gui = GuiLayer::new(
