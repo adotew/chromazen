@@ -255,26 +255,11 @@ fn load_artwork(
     constraints.validate([loaded.document.width, loaded.document.height])?;
     let mut layers = Vec::with_capacity(loaded.layer_paths.len());
     for (metadata, path) in loaded.document.layers.iter().zip(&loaded.layer_paths) {
-        let image = image::open(path)
-            .map_err(|error| {
-                format!(
-                    "failed to decode layer {} from {}: {error}",
-                    metadata.id,
-                    path.display()
-                )
-            })?
-            .to_rgba8();
-        if image.dimensions() != (loaded.document.width, loaded.document.height) {
-            return Err(format!(
-                "layer {} has dimensions {}x{}; expected {}x{}",
-                metadata.id,
-                image.width(),
-                image.height(),
-                loaded.document.width,
-                loaded.document.height
-            ));
-        }
-        layers.push(image);
+        layers.push(decode_layer_image(
+            path,
+            metadata.id,
+            [loaded.document.width, loaded.document.height],
+        )?);
     }
     let reference_sources = loaded
         .document
@@ -293,9 +278,67 @@ fn load_artwork(
     })
 }
 
+/// Reject mismatched PNG headers before allocating a decoded layer. The
+/// document constraints were validated before this call; a corrupt or hostile
+/// image must never force an unrelated, much larger allocation first.
+fn decode_layer_image(
+    path: &std::path::Path,
+    id: u64,
+    expected: [u32; 2],
+) -> Result<image::RgbaImage, String> {
+    let reader = image::ImageReader::open(path)
+        .map_err(|error| format!("failed to open layer {id} from {}: {error}", path.display()))?
+        .with_guessed_format()
+        .map_err(|error| format!("failed to read layer {id} from {}: {error}", path.display()))?;
+    let (width, height) = reader.into_dimensions().map_err(|error| {
+        format!(
+            "failed to inspect layer {id} from {}: {error}",
+            path.display()
+        )
+    })?;
+    if [width, height] != expected {
+        return Err(format!(
+            "layer {id} has dimensions {width}x{height}; expected {}x{}",
+            expected[0], expected[1]
+        ));
+    }
+    image::open(path)
+        .map(image::DynamicImage::into_rgba8)
+        .map_err(|error| {
+            format!(
+                "failed to decode layer {id} from {}: {error}",
+                path.display()
+            )
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mismatched_layer_header_is_rejected_before_decoding_pixels() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("layer.png");
+        let image = image::RgbaImage::from_pixel(4, 3, image::Rgba([11, 22, 33, 255]));
+        std::fs::write(&path, crate::artwork::encode_png(&image).unwrap()).unwrap();
+        assert_eq!(decode_layer_image(&path, 7, [4, 3]).unwrap(), image);
+        assert!(
+            decode_layer_image(&path, 7, [1, 1])
+                .unwrap_err()
+                .contains("4x3; expected 1x1")
+        );
+
+        let huge = temp.path().join("huge.png");
+        let mut encoder = png::Encoder::new(std::fs::File::create(&huge).unwrap(), 30_000, 30_000);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_chunk(png::chunk::IDAT, &[]).unwrap();
+        writer.finish().unwrap();
+        let error = decode_layer_image(&huge, 7, [1, 1]).unwrap_err();
+        assert!(error.contains("30000x30000; expected 1x1"), "{error}");
+    }
 
     #[test]
     fn stale_thumbnail_completion_is_ignored() {
