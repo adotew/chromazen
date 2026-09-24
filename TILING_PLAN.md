@@ -343,6 +343,8 @@ These are intermediate changes, **not the phase-2 acceptance gate**: live layers
 
 ### Phase-6 prerequisite — Streaming native PNG encoding
 
+Transform content-bounds selection also consumes mapped readback rows directly instead of allocating a full decoded CPU layer. A GPU regression checks alpha at the bottom/right partial tile, invalidation after clear and restoration after undo. This still stages a full-layer GPU buffer and scans synchronously; sparse per-tile bounds metadata and incremental transform readiness remain necessary in phase 3.
+
 Native export now composites premultiplied RGBA8 one row at a time into a directly streamed PNG writer inside `AtomicWriteFile`, instead of allocating a second full-size composite or complete encoded PNG. `LayerReadback::for_each_row` now visits mapped padded GPU buffers without creating whole decoded CPU images; the native export worker borrows those frozen source rows, composites them, and streams output. It shares the blend/rounding implementation with the whole-image raster adapter. Tests cover odd-width multi-row clipped/opacity layers, row alignment/snapshot isolation from a real GPU readback, early callback errors/unmapping, short/out-of-order PNG rows and preservation of an existing export on error. `png = 0.18.1` is a direct root dependency. **Export is not yet bounded end-to-end**: `Canvas::begin_document_layer_readback` still stages every whole-layer GPU texture at once, and layer storage itself is monolithic. This must become a versioned tile/band snapshot before lifting document limits. Browser artwork export is unchanged.
 
 ### Phase-4 prerequisite — Native revision path leases

@@ -662,6 +662,7 @@ impl Canvas {
         {
             return bounds;
         }
+        let mut alpha = AlphaBoundsAccumulator::new(self.document_size);
         let bounds = persistence::begin_read_layers(
             &self.device,
             &self.queue,
@@ -669,11 +670,13 @@ impl Canvas {
             self.document_size,
             &self.readbacks,
         )
-        .finish()
+        .for_each_row(|y, rows| {
+            alpha.include_row(y, rows[0].1);
+            Ok(())
+        })
         .map_err(|error| log::error!("failed to find layer content bounds: {error}"))
         .ok()
-        .and_then(|layers| layers.into_iter().next())
-        .and_then(|(_, image)| alpha_content_bounds(&image));
+        .and_then(|()| alpha.finish());
         self.content_bounds_cache = Some((layer_id, layer_resource_id, bounds));
         bounds
     }
@@ -2963,22 +2966,53 @@ fn clear_layer(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureV
     queue.submit(std::iter::once(encoder.finish()));
 }
 
-fn alpha_content_bounds(image: &image::RgbaImage) -> Option<LayerContentBounds> {
-    let mut min = [image.width(), image.height()];
-    let mut max = [0, 0];
-    for (x, y, pixel) in image.enumerate_pixels() {
-        if pixel[3] == 0 {
-            continue;
+struct AlphaBoundsAccumulator {
+    min: [u32; 2],
+    max: [u32; 2],
+}
+
+impl AlphaBoundsAccumulator {
+    fn new(size: [u32; 2]) -> Self {
+        Self {
+            min: size,
+            max: [0; 2],
         }
-        min[0] = min[0].min(x);
-        min[1] = min[1].min(y);
-        max[0] = max[0].max(x + 1);
-        max[1] = max[1].max(y + 1);
     }
-    (min[0] < max[0] && min[1] < max[1]).then_some(LayerContentBounds {
-        min: [min[0] as f32, min[1] as f32],
-        max: [max[0] as f32, max[1] as f32],
-    })
+
+    fn include_row(&mut self, y: u32, row: &[u8]) {
+        for (x, pixel) in row.as_chunks::<4>().0.iter().enumerate() {
+            if pixel[3] != 0 {
+                let x = x as u32;
+                self.min[0] = self.min[0].min(x);
+                self.min[1] = self.min[1].min(y);
+                self.max[0] = self.max[0].max(x + 1);
+                self.max[1] = self.max[1].max(y + 1);
+            }
+        }
+    }
+
+    fn finish(self) -> Option<LayerContentBounds> {
+        (self.min[0] < self.max[0] && self.min[1] < self.max[1]).then_some(LayerContentBounds {
+            min: self.min.map(|value| value as f32),
+            max: self.max.map(|value| value as f32),
+        })
+    }
+}
+
+#[cfg(test)]
+fn alpha_content_bounds(image: &image::RgbaImage) -> Option<LayerContentBounds> {
+    if image.width() == 0 {
+        return None;
+    }
+    let mut alpha = AlphaBoundsAccumulator::new([image.width(), image.height()]);
+    for (y, row) in image
+        .as_raw()
+        .chunks_exact(image.width() as usize * 4)
+        .enumerate()
+    {
+        alpha.include_row(y as u32, row);
+    }
+    alpha.finish()
 }
 
 #[cfg(test)]

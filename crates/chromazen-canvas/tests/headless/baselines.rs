@@ -20,6 +20,7 @@ pub(super) fn run(device: &wgpu::Device, queue: &wgpu::Queue) {
     sparse_history_captures_only_first_touched_tiles(device, queue);
     tile_readback_is_cropped_frozen_and_budgeted(device, queue);
     streamed_readback_rows_are_padded_and_snapshot_isolated(device, queue);
+    content_bounds_stream_rows_across_partial_edges(device, queue);
     eprintln!("large-canvas raster baselines: {:?}", start.elapsed());
 }
 
@@ -321,6 +322,22 @@ fn clipped_merge_preserves_pixels_and_history(device: &wgpu::Device, queue: &wgp
     assert_eq!(canvas.document_snapshot(), document);
     assert!(canvas.redo());
     assert_pixels(&pixels(&canvas)[0], &merged, 0);
+}
+
+fn content_bounds_stream_rows_across_partial_edges(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let mut canvas = canvas(device, queue);
+    let mut source = RgbaImage::new(SIZE[0], SIZE[1]);
+    source.put_pixel(1029, 770, Rgba([7, 8, 9, 1]));
+    source.put_pixel(1030, 772, Rgba([11, 12, 13, 255]));
+    load(&mut canvas, source);
+    let bounds = canvas.read_selected_layer_content_bounds().unwrap();
+    assert_eq!(bounds.min, [1029.0, 770.0]);
+    assert_eq!(bounds.max, [1031.0, 773.0]);
+    assert_eq!(canvas.memory_usage().readbacks, 0);
+    assert!(canvas.clear_selected_layer());
+    assert_eq!(canvas.read_selected_layer_content_bounds(), None);
+    assert!(canvas.undo());
+    assert_eq!(canvas.read_selected_layer_content_bounds(), Some(bounds));
 }
 
 fn streamed_readback_rows_are_padded_and_snapshot_isolated(
