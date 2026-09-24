@@ -2124,7 +2124,7 @@ impl Canvas {
                             pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
                         }
                         Some(PaintTool::Smudge) | None => {
-                            pass.set_pipeline(&self.resources.merge_pipeline);
+                            pass.set_pipeline(&self.resources.group_merge_pipeline);
                             pass.set_bind_group(0, &base.blit_bind_group, &[]);
                         }
                     }
@@ -2160,7 +2160,7 @@ impl Canvas {
                                 );
                             }
                             Some(PaintTool::Smudge) | None => {
-                                pass.set_pipeline(&self.resources.clipped_layer_merge_pipeline);
+                                pass.set_pipeline(&self.resources.group_clipped_merge_pipeline);
                                 let bind_group = self
                                     .clipped_layer_bind_groups
                                     .get(&layer.id)
@@ -2194,7 +2194,7 @@ impl Canvas {
                         canvas_rect.width,
                         canvas_rect.height,
                     );
-                    pass.set_pipeline(&self.resources.layer_pipeline);
+                    pass.set_pipeline(&self.resources.group_blit_pipeline);
                     pass.set_bind_group(0, self.resources.clipping_group_bind_group(), &[]);
                     pass.draw(0..3, 0..1);
                 } else {

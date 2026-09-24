@@ -84,7 +84,7 @@ fn vs_group(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4f {
 }
 
 fn group_uv(pos: vec4f) -> vec2f {
-  return pos.xy / vec2f(textureDimensions(layerTexture));
+  return paint_uv(pos);
 }
 
 fn preview_brush(uv: vec2f) -> vec4f {

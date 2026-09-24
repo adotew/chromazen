@@ -49,6 +49,17 @@ fn fs_background(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   return view.backgroundColor;
 }
 
+// The clipping group is composed in a surface-sized intermediate, not a
+// document-sized layer texture. The ordinary layer pipeline below remains
+// document-space and is also used for individual storage tiles.
+@fragment
+fn fs_group(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  if (is_outside_canvas(paint_uv(pos))) {
+    return vec4f(0.0);
+  }
+  return textureLoad(paintTex, vec2i(pos.xy), 0) * layer.opacity;
+}
+
 @fragment
 fn fs_layer(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let uv = paint_uv(pos);

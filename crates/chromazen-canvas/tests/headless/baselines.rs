@@ -16,6 +16,7 @@ pub(super) fn run(device: &wgpu::Device, queue: &wgpu::Queue) {
     smudge_matches_sequential_source(device, queue);
     transform_resize_and_duplicate(device, queue);
     clipped_merge_preserves_pixels_and_history(device, queue);
+    clipped_group_display_tracks_orientation_with_surface_scratch(device, queue);
     memory_accounts_for_history_and_readback(device, queue);
     sparse_history_captures_only_first_touched_tiles(device, queue);
     tile_readback_is_cropped_frozen_and_budgeted(device, queue);
@@ -324,6 +325,57 @@ fn clipped_merge_preserves_pixels_and_history(device: &wgpu::Device, queue: &wgp
     assert_pixels(&pixels(&canvas)[0], &merged, 0);
 }
 
+fn clipped_group_display_tracks_orientation_with_surface_scratch(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) {
+    let mut clipped = canvas(device, queue);
+    assert!(clipped.add_layer());
+    let mut document = clipped.document_snapshot();
+    document.layers[1].clipped = true;
+    document.layers[1].opacity = 50;
+    let base = RgbaImage::from_fn(SIZE[0], SIZE[1], |x, y| {
+        if (230..640).contains(&x) && (200..580).contains(&y) {
+            Rgba([128, 0, 0, 128])
+        } else {
+            Rgba([0; 4])
+        }
+    });
+    let top = RgbaImage::from_pixel(SIZE[0], SIZE[1], Rgba([0, 0, 128, 128]));
+    clipped
+        .load_document(&document, vec![base.clone(), top.clone()])
+        .unwrap();
+    let mut merged = canvas(device, queue);
+    merged.load_document(&document, vec![base, top]).unwrap();
+    assert!(merged.merge_layer_down(document.layers[1].id));
+    let verify = |clipped: &mut Canvas, merged: &mut Canvas| {
+        let before = super::render_pixels(device, queue, clipped, None);
+        let after = super::render_pixels(device, queue, merged, None);
+        assert!(before.iter().zip(after).all(|(a, b)| a.abs_diff(b) <= 1));
+    };
+    verify(&mut clipped, &mut merged);
+    for angle in [0.37, 1.1, -0.53] {
+        assert!(clipped.set_canvas_rotation(angle));
+        assert!(merged.set_canvas_rotation(angle));
+        verify(&mut clipped, &mut merged);
+    }
+    clipped.toggle_canvas_flip_horizontal();
+    merged.toggle_canvas_flip_horizontal();
+    clipped.pan_by_window_delta([12.0, -7.0]);
+    merged.pan_by_window_delta([12.0, -7.0]);
+    verify(&mut clipped, &mut merged);
+
+    let initial = clipped.memory_usage().scratch;
+    clipped.resize([128, 96]);
+    let extra_surface_pixels = u64::from(128_u32 * 96 - 64 * 64) * 4;
+    assert_eq!(
+        clipped.memory_usage().scratch,
+        initial + extra_surface_pixels * 2
+    );
+    clipped.resize([64, 64]);
+    assert_eq!(clipped.memory_usage().scratch, initial);
+}
+
 fn content_bounds_stream_rows_across_partial_edges(device: &wgpu::Device, queue: &wgpu::Queue) {
     let mut canvas = canvas(device, queue);
     let mut source = RgbaImage::new(SIZE[0], SIZE[1]);
@@ -487,7 +539,7 @@ fn memory_accounts_for_history_and_readback(device: &wgpu::Device, queue: &wgpu:
     assert_eq!(initial.history, 0);
     assert_eq!(
         initial.scratch,
-        layer_bytes * 2 + layer_bytes / 2 + 64 * 64 * 4
+        layer_bytes + layer_bytes / 2 + 2 * 64 * 64 * 4
     );
     assert_eq!(initial.brush, 4);
     assert_eq!(initial.readbacks, 0);
