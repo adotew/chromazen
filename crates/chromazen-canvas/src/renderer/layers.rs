@@ -48,6 +48,14 @@ pub(crate) struct PaintLayer {
     pub(crate) preview_dirty: bool,
 }
 
+impl PaintLayer {
+    pub(super) fn gpu_payload_bytes(&self) -> u64 {
+        super::diagnostics::texture_bytes(&self.texture)
+            + super::diagnostics::texture_bytes(&self._preview_texture)
+            + self.settings_buffer.size()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LayerInfo {
     pub id: LayerId,

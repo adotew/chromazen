@@ -2,6 +2,9 @@ use std::sync::mpsc;
 
 use chromazen_canvas::{BrushCursor, BrushSpacing, Canvas, PaintTool, StrokePoint};
 
+#[path = "headless/baselines.rs"]
+mod baselines;
+
 const RENDER_SIZE: [u32; 2] = [64, 64];
 
 #[test]
@@ -85,6 +88,7 @@ async fn run() {
     run_brush_cursor_contrast(&device, &queue);
     run_adjustment_preview_over_reference(&device, &queue);
     run_workspace_background_colors(&device, &queue);
+    baselines::run(&device, &queue);
 }
 
 fn center_alpha(canvas: &Canvas) -> u8 {

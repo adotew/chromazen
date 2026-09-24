@@ -1136,6 +1136,38 @@ impl RenderResources {
         })
     }
 
+    pub(super) fn memory_usage(&self) -> super::CanvasMemoryUsage {
+        use super::diagnostics::texture_bytes;
+        super::CanvasMemoryUsage {
+            scratch: [
+                &self.backdrop_texture,
+                &self.smudge_texture,
+                &self._clipping_group_texture,
+                &self._stroke_mask_texture,
+                &self._preview_mask_texture,
+            ]
+            .into_iter()
+            .map(texture_bytes)
+            .sum(),
+            brush: texture_bytes(&self.brush_texture),
+            buffers: [
+                &self.stamp_buffer,
+                &self.preview_stamp_buffer,
+                &self.cursor_buffer,
+                &self.stamp_uniform_buffer,
+                &self.view_uniform_buffer,
+                &self.stroke_uniform_buffer,
+                &self.layer_preview_uniform_buffer,
+                &self.transform_uniform_buffer,
+                &self.clipping_group_settings_buffer,
+            ]
+            .into_iter()
+            .map(wgpu::Buffer::size)
+            .sum(),
+            ..Default::default()
+        }
+    }
+
     pub(crate) fn create_transform_bind_group(
         &self,
         device: &wgpu::Device,

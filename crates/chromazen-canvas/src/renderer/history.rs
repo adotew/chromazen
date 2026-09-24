@@ -220,6 +220,41 @@ impl PaintHistory {
         self.active_stroke = None;
     }
 
+    pub(super) fn gpu_payload_bytes(&self) -> u64 {
+        use super::diagnostics::texture_bytes;
+        // History's eviction charge reserves space for either undo state. Count
+        // actual detached resources here to avoid counting live layers twice.
+        texture_bytes(&self.mirror)
+            + self
+                .actions
+                .iter()
+                .map(|action| match action {
+                    HistoryAction::Stroke(entry) => texture_bytes(&entry.pixels),
+                    HistoryAction::AddLayer { detached, .. }
+                    | HistoryAction::DeleteLayer { detached, .. } => {
+                        detached.as_ref().map_or(0, PaintLayer::gpu_payload_bytes)
+                    }
+                    HistoryAction::CanvasResize {
+                        alternate_layers, ..
+                    } => alternate_layers
+                        .iter()
+                        .map(PaintLayer::gpu_payload_bytes)
+                        .sum(),
+                    HistoryAction::MergeDown {
+                        detached_upper,
+                        detached_lower,
+                        detached_merged,
+                        ..
+                    } => [detached_upper, detached_lower, detached_merged]
+                        .into_iter()
+                        .filter_map(|layer| layer.as_deref())
+                        .map(PaintLayer::gpu_payload_bytes)
+                        .sum(),
+                    _ => 0,
+                })
+                .sum::<u64>()
+    }
+
     pub(crate) fn stroke_active(&self) -> bool {
         self.active_stroke.is_some()
     }

@@ -1,6 +1,11 @@
+use std::sync::Arc;
+
 use futures_channel::oneshot;
 
-use super::layers::{LayerId, PaintLayer};
+use super::{
+    diagnostics::{ReadbackLease, ReadbackTracker},
+    layers::{LayerId, PaintLayer},
+};
 
 const BYTES_PER_PIXEL: u32 = 4;
 
@@ -10,6 +15,7 @@ pub struct LayerReadback {
     size: [u32; 2],
     unpadded_bytes_per_row: usize,
     padded_bytes_per_row: usize,
+    _lease: Arc<ReadbackLease>,
 }
 
 struct PendingLayerReadback {
@@ -86,6 +92,7 @@ pub(super) fn begin_read_layers(
     queue: &wgpu::Queue,
     layers: &[PaintLayer],
     size: [u32; 2],
+    tracker: &Arc<ReadbackTracker>,
 ) -> LayerReadback {
     let unpadded_bytes_per_row = size[0] * BYTES_PER_PIXEL;
     let padded_bytes_per_row = aligned_bytes_per_row(unpadded_bytes_per_row);
@@ -127,14 +134,17 @@ pub(super) fn begin_read_layers(
     }
     queue.submit(std::iter::once(encoder.finish()));
 
+    let lease = tracker.retain(buffer_size * pending.len() as u64);
     let layers = pending
         .into_iter()
         .map(|(id, buffer)| {
             let (sender, completion) = oneshot::channel();
+            let mapping_lease = lease.clone();
             buffer
                 .slice(..)
                 .map_async(wgpu::MapMode::Read, move |result| {
                     let _ = sender.send(result);
+                    drop(mapping_lease);
                 });
             PendingLayerReadback {
                 id,
@@ -150,6 +160,7 @@ pub(super) fn begin_read_layers(
         size,
         unpadded_bytes_per_row: unpadded_bytes_per_row as usize,
         padded_bytes_per_row: padded_bytes_per_row as usize,
+        _lease: lease,
     }
 }
 

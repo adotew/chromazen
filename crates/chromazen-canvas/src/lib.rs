@@ -4,9 +4,10 @@ mod renderer;
 mod smoothing;
 
 pub use renderer::{
-    BrushCursor, Canvas, CanvasDocument, CanvasSizeConstraints, DEFAULT_CANVAS_SIZE,
-    DocumentVersions, DropEdge, LayerContentBounds, LayerId, LayerInfo, LayerReadback,
-    LayerResourceId, LayerSnapshot, LayerTransform, PaintViewSnapshot, merge_down_target_index,
+    BrushCursor, Canvas, CanvasDocument, CanvasMemoryUsage, CanvasSizeConstraints, CanvasWork,
+    DEFAULT_CANVAS_SIZE, DocumentVersions, DropEdge, LayerContentBounds, LayerId, LayerInfo,
+    LayerReadback, LayerResourceId, LayerSnapshot, LayerTransform, PaintViewSnapshot,
+    merge_down_target_index,
 };
 pub use smoothing::{StrokePositionFilter, StrokeSmoother};
 

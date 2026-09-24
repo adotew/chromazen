@@ -1,7 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use bytemuck::{Pod, Zeroable};
 
+mod diagnostics;
 mod history;
 mod layers;
 mod persistence;
@@ -10,6 +14,14 @@ mod sampling;
 mod stamps;
 mod view;
 
+pub use self::{
+    diagnostics::{CanvasMemoryUsage, CanvasWork},
+    layers::{
+        DropEdge, LayerId, LayerInfo, LayerResourceId, LayerSnapshot, merge_down_target_index,
+    },
+    persistence::LayerReadback,
+    view::PaintViewSnapshot,
+};
 use self::{
     history::{HistoryTarget, PaintHistory, StructureEffect, TextureRect},
     layers::{
@@ -20,13 +32,6 @@ use self::{
     sampling::{document_pixel, read_composited_color},
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue, StampRaw},
     view::PaintView,
-};
-pub use self::{
-    layers::{
-        DropEdge, LayerId, LayerInfo, LayerResourceId, LayerSnapshot, merge_down_target_index,
-    },
-    persistence::LayerReadback,
-    view::PaintViewSnapshot,
 };
 use crate::{BrushSpacing, PaintTool, StrokePoint};
 
@@ -334,6 +339,8 @@ pub struct Canvas {
     clipped_layer_bind_groups: HashMap<LayerId, wgpu::BindGroup>,
     clipping_bind_groups_dirty: bool,
     last_view_uniform: Option<ViewUniform>,
+    work: CanvasWork,
+    readbacks: Arc<diagnostics::ReadbackTracker>,
 }
 
 impl Canvas {
@@ -406,6 +413,11 @@ impl Canvas {
             clipped_layer_bind_groups: HashMap::new(),
             clipping_bind_groups_dirty: true,
             last_view_uniform: None,
+            work: CanvasWork {
+                upload_bytes: brush_stamp.as_raw().len() as u64,
+                ..Default::default()
+            },
+            readbacks: Arc::default(),
         };
         renderer.fit_to_screen();
         renderer.clear_selected_layer_and_history();
@@ -446,6 +458,26 @@ impl Canvas {
         self.stamp_queue.has_pending()
     }
 
+    pub fn memory_usage(&self) -> CanvasMemoryUsage {
+        CanvasMemoryUsage {
+            layers: self.layers.iter().map(PaintLayer::gpu_payload_bytes).sum(),
+            history: self.history.gpu_payload_bytes(),
+            stamp_queues: self.stamp_queue.allocated_bytes()
+                + self.pending_preview_stamps.as_ref().map_or(0, |stamps| {
+                    (stamps.capacity() * std::mem::size_of::<StampRaw>()) as u64
+                }),
+            readbacks: self.readbacks.live(),
+            ..self.resources.memory_usage()
+        }
+    }
+
+    pub fn work_counters(&self) -> CanvasWork {
+        CanvasWork {
+            readback_bytes: self.readbacks.submitted(),
+            ..self.work
+        }
+    }
+
     pub fn canvas_size_constraints(&self) -> CanvasSizeConstraints {
         CanvasSizeConstraints {
             max_dimension: self
@@ -474,6 +506,7 @@ impl Canvas {
         validate_brush_stamp(stamp, self.device.limits().max_texture_dimension_2d)?;
         self.resources
             .replace_brush_stamp(&self.device, &self.queue, stamp)?;
+        self.work.upload_bytes += stamp.as_raw().len() as u64;
         self.stamp_queue
             .set_stamp_aspect(stamp.width() as f32 / stamp.height() as f32);
         Ok(true)
@@ -598,6 +631,7 @@ impl Canvas {
             &self.queue,
             std::slice::from_ref(&self.layers[layer_index]),
             self.document_size,
+            &self.readbacks,
         )
         .finish()
         .map_err(|error| log::error!("failed to find layer content bounds: {error}"))
@@ -847,6 +881,7 @@ impl Canvas {
             &self.queue,
             &self.layers,
             self.document_size,
+            &self.readbacks,
         ))
     }
 
@@ -1044,6 +1079,7 @@ impl Canvas {
                     depth_or_array_layers: 1,
                 },
             );
+            self.work.upload_bytes += image.as_raw().len() as u64;
             layers.push(layer);
         }
 
@@ -1674,6 +1710,8 @@ impl Canvas {
             PaintTool::Smudge => None,
         };
         if let Some(commit_pipeline) = commit_pipeline {
+            // The commit and subsequent dirty-mask clear each encode one pass.
+            self.work.paint_passes += 2;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("stroke commit pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2340,7 +2378,14 @@ impl Canvas {
             return;
         }
 
+        self.work.committed_dabs += count as u64;
+        self.work.upload_bytes += (count * std::mem::size_of::<StampRaw>()) as u64;
         let active_stroke = self.active_stroke.expect("stamp requires active stroke");
+        self.work.paint_passes += if active_stroke.render_path() == StrokeRenderPath::DirectSmudge {
+            count as u64
+        } else {
+            1
+        };
         if active_stroke.render_path() == StrokeRenderPath::DirectSmudge {
             for stamp in &mut raw {
                 stamp.scale_source_offset(active_stroke.opacity);
@@ -2395,6 +2440,8 @@ impl Canvas {
             .map(StampRaw::target_rect)
             .reduce(TextureRect::union);
         if next_rect.is_some() {
+            self.work.preview_dabs += stamps.len() as u64;
+            self.work.upload_bytes += (stamps.len() * std::mem::size_of::<StampRaw>()) as u64;
             self.queue.write_buffer(
                 &self.resources.preview_stamp_buffer,
                 0,
@@ -2405,6 +2452,7 @@ impl Canvas {
             return;
         }
         self.rendered_preview_rect = next_rect;
+        self.work.paint_passes += 1;
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("stroke preview pass"),

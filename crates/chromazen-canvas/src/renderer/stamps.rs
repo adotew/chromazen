@@ -88,6 +88,10 @@ impl StampQueue {
         self.dirty_rect = None;
     }
 
+    pub(super) fn allocated_bytes(&self) -> u64 {
+        (self.pending.capacity() * std::mem::size_of::<Stamp>()) as u64
+    }
+
     pub(crate) fn has_pending(&self) -> bool {
         !self.pending.is_empty()
     }
