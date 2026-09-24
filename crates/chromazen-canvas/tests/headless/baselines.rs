@@ -16,6 +16,7 @@ pub(super) fn run(device: &wgpu::Device, queue: &wgpu::Queue) {
     transform_resize_and_duplicate(device, queue);
     clipped_merge_preserves_pixels_and_history(device, queue);
     memory_accounts_for_history_and_readback(device, queue);
+    sparse_history_captures_only_first_touched_tiles(device, queue);
     eprintln!("large-canvas raster baselines: {:?}", start.elapsed());
 }
 
@@ -282,12 +283,51 @@ fn clipped_merge_preserves_pixels_and_history(device: &wgpu::Device, queue: &wgp
     assert_pixels(&pixels(&canvas)[0], &merged, 0);
 }
 
+fn sparse_history_captures_only_first_touched_tiles(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let mut canvas = canvas(device, queue);
+    let near = point(16.0, 16.0, 2.0);
+    let far = point(1028.0, 768.0, 2.0);
+    assert!(canvas.begin_stroke(PaintTool::Brush, near, [1.0, 0.0, 0.0, 1.0], 1.0));
+    assert_eq!(canvas.memory_usage().history, 0);
+    assert!(canvas.queue_stamp(near));
+    super::render_pixels(device, queue, &mut canvas, None);
+    let first_tile_bytes = 512 * 512 * 4;
+    assert_eq!(canvas.memory_usage().history, first_tile_bytes);
+    assert!(canvas.queue_stamp(near));
+    assert!(canvas.queue_stamp(far));
+    super::render_pixels(device, queue, &mut canvas, None);
+    let touched_bytes = first_tile_bytes + 7 * 261 * 4;
+    assert_eq!(canvas.memory_usage().history, touched_bytes);
+    canvas.end_stroke();
+    assert_eq!(canvas.memory_usage().history, touched_bytes);
+    let painted = pixels(&canvas).remove(0);
+    assert!(canvas.undo());
+    assert!(pixels(&canvas)[0].as_raw().iter().all(|&v| v == 0));
+    // Undo/redo swaps every captured tile through one reusable tile, not a
+    // document-sized mirror or a rectangle spanning the two distant dabs.
+    let undo_bytes = touched_bytes + first_tile_bytes;
+    assert_eq!(canvas.memory_usage().history, undo_bytes);
+    assert!(canvas.redo());
+    assert_eq!(canvas.memory_usage().history, undo_bytes);
+    assert_pixels(&pixels(&canvas)[0], &painted, 0);
+    assert!(canvas.undo());
+    stroke(&mut canvas, PaintTool::Brush, &[far], 1.0);
+    assert!(!canvas.can_redo());
+    assert_eq!(
+        canvas.memory_usage().history,
+        first_tile_bytes + 7 * 261 * 4
+    );
+    assert_eq!(pixels(&canvas)[0].get_pixel(16, 16).0, [0; 4]);
+    assert!(canvas.undo());
+    assert!(pixels(&canvas)[0].as_raw().iter().all(|&v| v == 0));
+}
+
 fn memory_accounts_for_history_and_readback(device: &wgpu::Device, queue: &wgpu::Queue) {
     let mut canvas = canvas(device, queue);
     let initial = canvas.memory_usage();
     let layer_bytes = u64::from(SIZE[0]) * u64::from(SIZE[1]) * 4;
     assert_eq!(initial.layers, layer_bytes + 128 * 128 * 4 + 16);
-    assert_eq!(initial.history, layer_bytes);
+    assert_eq!(initial.history, 0);
     assert_eq!(
         initial.scratch,
         layer_bytes * 2 + layer_bytes / 2 + 64 * 64 * 4

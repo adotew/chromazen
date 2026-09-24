@@ -379,7 +379,7 @@ impl Canvas {
             LayerProperties::new("Layer 1".to_owned()),
         );
         let stamp_aspect = brush_stamp.width() as f32 / brush_stamp.height() as f32;
-        let history = PaintHistory::new(&device, document_size);
+        let history = PaintHistory::new(document_size);
         let mut renderer = Self {
             device,
             queue,
@@ -665,15 +665,31 @@ impl Canvas {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("layer transform setup encoder"),
             });
-        self.history.ensure_layer_synced(
+        self.history.capture_rect(
+            &self.device,
             &mut encoder,
             layer_id,
             &self.layers[layer_index].texture,
-            self.document_size,
+            TextureRect {
+                x: 0,
+                y: 0,
+                width: self.document_size[0],
+                height: self.document_size[1],
+            },
+        );
+        // Transforms and smudge are mutually exclusive. Reuse the existing
+        // operation source, rather than coupling transform input to undo state.
+        encoder.copy_texture_to_texture(
+            self.layers[layer_index].texture.as_image_copy(),
+            self.resources.smudge_texture.as_image_copy(),
+            self.layers[layer_index].texture.size(),
         );
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        let source = self.history.mirror_view();
+        let source = self
+            .resources
+            .smudge_texture
+            .create_view(&Default::default());
         let bind_group = self
             .resources
             .create_transform_bind_group(&self.device, &source);
@@ -770,30 +786,7 @@ impl Canvas {
             self.active_transform = Some(active);
             return self.cancel_layer_transform();
         }
-        let layer_index = self
-            .layers
-            .iter()
-            .position(|layer| layer.id == active.layer_id)
-            .expect("transformed layer must exist");
-        let rect = TextureRect {
-            x: 0,
-            y: 0,
-            width: self.document_size[0],
-            height: self.document_size[1],
-        };
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("layer transform commit encoder"),
-            });
-        self.history.commit_stroke(
-            &self.device,
-            &mut encoder,
-            active.layer_id,
-            &self.layers[layer_index].texture,
-            rect,
-        );
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.history.commit_stroke(active.layer_id);
         self.mark_layer_changed(active.layer_id);
         true
     }
@@ -816,12 +809,6 @@ impl Canvas {
             &mut encoder,
             active.layer_id,
             &self.layers[layer_index].texture,
-            TextureRect {
-                x: 0,
-                y: 0,
-                width: self.document_size[0],
-                height: self.document_size[1],
-            },
         );
         self.queue.submit(std::iter::once(encoder.finish()));
         self.layers[layer_index].preview_dirty = true;
@@ -1006,7 +993,7 @@ impl Canvas {
             .max(layer_set_byte_len(size, self.layers.len()));
         self.resources
             .resize_document(&self.device, &self.queue, size);
-        self.history.resize_mirror(&self.device, size);
+        self.history.resize(size);
         self.document_size = size;
         self.history
             .record_canvas_resize(before_size, size, previous_layers, retained_bytes);
@@ -1558,11 +1545,17 @@ impl Canvas {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("clear layer encoder"),
             });
-        self.history.ensure_layer_synced(
+        self.history.capture_rect(
+            &self.device,
             &mut encoder,
             layer_id,
             &self.layers[layer_index].texture,
-            self.document_size,
+            TextureRect {
+                x: 0,
+                y: 0,
+                width: self.document_size[0],
+                height: self.document_size[1],
+            },
         );
         {
             let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1582,19 +1575,7 @@ impl Canvas {
                 multiview_mask: None,
             });
         }
-        let full_rect = TextureRect {
-            x: 0,
-            y: 0,
-            width: self.document_size[0],
-            height: self.document_size[1],
-        };
-        self.history.commit_stroke(
-            &self.device,
-            &mut encoder,
-            layer_id,
-            &self.layers[layer_index].texture,
-            full_rect,
-        );
+        self.history.commit_stroke(layer_id);
         self.queue.submit(std::iter::once(encoder.finish()));
         self.mark_layer_changed(layer_id);
         true
@@ -1639,22 +1620,13 @@ impl Canvas {
                 active_stroke.color,
             );
         }
-        let needs_history_sync = self.history.layer_needs_sync(layer_id);
-        if needs_history_sync || tool == PaintTool::Smudge {
+        if tool == PaintTool::Smudge {
             let mut encoder = self
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("stroke setup encoder"),
                 });
-            if needs_history_sync {
-                self.history.ensure_layer_synced(
-                    &mut encoder,
-                    layer_id,
-                    &self.layers[layer_index].texture,
-                    self.document_size,
-                );
-            }
-            if tool == PaintTool::Smudge {
+            {
                 // Smudge samples this snapshot because the layer cannot be sampled while attached.
                 encoder.copy_texture_to_texture(
                     wgpu::TexelCopyTextureInfo {
@@ -1754,13 +1726,7 @@ impl Canvas {
             pass.set_scissor_rect(rect.x, rect.y, rect.width, rect.height);
             pass.draw(0..3, 0..1);
         }
-        self.history.commit_stroke(
-            &self.device,
-            &mut encoder,
-            active_stroke.layer_id,
-            &self.layers[layer_index].texture,
-            rect,
-        );
+        self.history.commit_stroke(active_stroke.layer_id);
         self.queue.submit(std::iter::once(encoder.finish()));
         self.mark_layer_changed(active_stroke.layer_id);
         self.clear_active_stroke_state();
@@ -1801,14 +1767,11 @@ impl Canvas {
                         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                             label: Some("undo encoder"),
                         });
-                self.history.ensure_layer_synced(
+                self.history.undo_stroke(
+                    &self.device,
                     &mut encoder,
-                    layer_id,
                     &self.layers[layer_index].texture,
-                    self.document_size,
                 );
-                self.history
-                    .undo_stroke(&mut encoder, &self.layers[layer_index].texture);
                 self.queue.submit(std::iter::once(encoder.finish()));
                 self.mark_layer_changed(layer_id);
                 true
@@ -1844,14 +1807,11 @@ impl Canvas {
                         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                             label: Some("redo encoder"),
                         });
-                self.history.ensure_layer_synced(
+                self.history.redo_stroke(
+                    &self.device,
                     &mut encoder,
-                    layer_id,
                     &self.layers[layer_index].texture,
-                    self.document_size,
                 );
-                self.history
-                    .redo_stroke(&mut encoder, &self.layers[layer_index].texture);
                 self.queue.submit(std::iter::once(encoder.finish()));
                 self.mark_layer_changed(layer_id);
                 true
@@ -1952,17 +1912,7 @@ impl Canvas {
                 multiview_mask: None,
             });
         }
-        self.history.sync_layer(
-            &mut encoder,
-            self.layers[layer_index].id,
-            &self.layers[layer_index].texture,
-            TextureRect {
-                x: 0,
-                y: 0,
-                width: self.document_size[0],
-                height: self.document_size[1],
-            },
-        );
+
         self.queue.submit(std::iter::once(encoder.finish()));
         self.mark_layer_changed(self.layers[layer_index].id);
     }
@@ -2399,6 +2349,15 @@ impl Canvas {
             .position(|layer| layer.id == active_stroke.layer_id)
             .expect("active stroke layer must exist");
         self.layers[layer_index].preview_dirty = true;
+        for stamp in &raw {
+            self.history.capture_rect(
+                &self.device,
+                encoder,
+                active_stroke.layer_id,
+                &self.layers[layer_index].texture,
+                stamp.target_rect(),
+            );
+        }
         if active_stroke.render_path() == StrokeRenderPath::DirectSmudge {
             self.flush_smudge_stamps(encoder, layer_index, &raw);
             return;
@@ -2556,7 +2515,7 @@ impl Canvas {
         }
         self.resources
             .resize_document(&self.device, &self.queue, size);
-        self.history = PaintHistory::new(&self.device, size);
+        self.history = PaintHistory::new(size);
         self.pending_preview_stamps = None;
         self.rendered_preview_rect = None;
         self.document_size = size;
@@ -2633,7 +2592,7 @@ impl Canvas {
         if let StructureEffect::CanvasResized { size } = effect {
             self.resources
                 .resize_document(&self.device, &self.queue, size);
-            self.history.resize_mirror(&self.device, size);
+            self.history.resize(size);
             self.document_size = size;
             self.fit_to_screen();
         }

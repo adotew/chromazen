@@ -323,5 +323,11 @@ The module is separate from `renderer` because it contains no GPU/window/platfor
 
 Verification: 98 canvas unit tests (15 new tile-model/request tests), all workspace tests, the expanded headless GPU test, workspace/all-target/all-feature clippy, formatting, and the WASM web-crate compile check pass. No persistence schema, shader layout, existing canvas limits, or UI behavior changed in this phase.
 
-**Next checkpoint: phase 2. Phases 2–7 are not implemented.** Start by choosing the renderer's concrete backing lease type and replacing `PaintLayer` pixels and the history mirror together; do not add a second production renderer or leave whole-document compatibility allocations in the tiled painting path.
+### Phase 2 — In progress
+
+The first production conversion removes the document-sized history mirror. History now captures 512-pixel before-image tiles immediately before the first write, retains only touched tiles (not the bounding rectangle between distant dabs), and swaps undo/redo through one reusable tile. Starting a stroke allocates no history pixels. Transform source pixels no longer depend on history: the mutually exclusive transform/smudge operations share the existing operation-source texture. Transform cancellation, resize undo, layer switching and redo truncation remain covered by the raster tests.
+
+This is an intermediate change, **not the phase-2 acceptance gate**: live layers, masks, clipping scratch, operation sources and whole-image readback remain monolithic. Layer-version sharing and the coupled tiled display/mask conversion are still required. No second renderer or higher document limit has been introduced. A new distant-dab GPU regression checks the sparse history allocation across separate frame submissions, exact undo/redo, and replacement of the redo branch.
+
+Workspace tests, headless GPU tests, clippy and WASM compilation pass for this conversion. Phases 3–7 remain unimplemented. Continue phase 2 before claiming tiled painting or bounded residency.
 

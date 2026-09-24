@@ -1,3 +1,7 @@
+use std::collections::BTreeMap;
+
+use crate::tiles::{DEFAULT_TILE_SIZE, TileCoord, TileGrid};
+
 use super::{
     DOCUMENT_FORMAT,
     layers::{LayerId, PaintLayer},
@@ -54,10 +58,14 @@ impl TextureRect {
     }
 }
 
-struct StrokeEntry {
-    layer_id: LayerId,
+struct CapturedTile {
     rect: TextureRect,
     pixels: wgpu::Texture,
+}
+
+struct StrokeEntry {
+    layer_id: LayerId,
+    tiles: Vec<CapturedTile>,
     bytes: u64,
 }
 
@@ -179,26 +187,29 @@ impl HistoryAction {
 pub(crate) struct PaintHistory {
     actions: Vec<HistoryAction>,
     cursor: usize,
-    mirror: wgpu::Texture,
-    mirrored_layer: Option<LayerId>,
+    grid: TileGrid,
+    // Capture before the first write to each tile, not on layer selection.
+    captured: BTreeMap<TileCoord, CapturedTile>,
+    swap_scratch: Option<wgpu::Texture>,
     active_stroke: Option<LayerId>,
 }
 
 impl PaintHistory {
-    pub(crate) fn new(device: &wgpu::Device, document_size: [u32; 2]) -> Self {
+    pub(crate) fn new(document_size: [u32; 2]) -> Self {
         Self {
             actions: Vec::new(),
             cursor: 0,
-            mirror: create_history_texture(device, "paint history mirror", document_size),
-            mirrored_layer: None,
+            grid: TileGrid::new(document_size, DEFAULT_TILE_SIZE).expect("validated document size"),
+            captured: BTreeMap::new(),
+            swap_scratch: None,
             active_stroke: None,
         }
     }
 
-    pub(crate) fn resize_mirror(&mut self, device: &wgpu::Device, document_size: [u32; 2]) {
-        self.mirror = create_history_texture(device, "paint history mirror", document_size);
-        self.mirrored_layer = None;
-        self.active_stroke = None;
+    pub(crate) fn resize(&mut self, document_size: [u32; 2]) {
+        self.grid =
+            TileGrid::new(document_size, DEFAULT_TILE_SIZE).expect("validated document size");
+        self.end_empty_stroke();
     }
 
     pub(crate) fn begin_stroke(&mut self, layer_id: LayerId) -> bool {
@@ -211,25 +222,35 @@ impl PaintHistory {
 
     pub(crate) fn end_empty_stroke(&mut self) {
         self.active_stroke = None;
+        self.captured.clear();
     }
 
     pub(crate) fn clear(&mut self) {
         self.actions.clear();
         self.cursor = 0;
-        self.mirrored_layer = None;
-        self.active_stroke = None;
+        self.swap_scratch = None;
+        self.end_empty_stroke();
     }
 
     pub(super) fn gpu_payload_bytes(&self) -> u64 {
         use super::diagnostics::texture_bytes;
         // History's eviction charge reserves space for either undo state. Count
         // actual detached resources here to avoid counting live layers twice.
-        texture_bytes(&self.mirror)
+        self.swap_scratch.as_ref().map_or(0, texture_bytes)
+            + self
+                .captured
+                .values()
+                .map(|tile| texture_bytes(&tile.pixels))
+                .sum::<u64>()
             + self
                 .actions
                 .iter()
                 .map(|action| match action {
-                    HistoryAction::Stroke(entry) => texture_bytes(&entry.pixels),
+                    HistoryAction::Stroke(entry) => entry
+                        .tiles
+                        .iter()
+                        .map(|tile| texture_bytes(&tile.pixels))
+                        .sum(),
                     HistoryAction::AddLayer { detached, .. }
                     | HistoryAction::DeleteLayer { detached, .. } => {
                         detached.as_ref().map_or(0, PaintLayer::gpu_payload_bytes)
@@ -259,23 +280,25 @@ impl PaintHistory {
         self.active_stroke.is_some()
     }
 
-    pub(crate) fn mirror_view(&self) -> wgpu::TextureView {
-        self.mirror
-            .create_view(&wgpu::TextureViewDescriptor::default())
-    }
-
     pub(crate) fn restore_active_edit(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         layer_id: LayerId,
         canvas: &wgpu::Texture,
-        rect: TextureRect,
     ) -> bool {
         if self.active_stroke != Some(layer_id) {
             return false;
         }
-        copy_texture_rect(encoder, &self.mirror, rect, canvas, [rect.x, rect.y]);
-        self.active_stroke = None;
+        for tile in self.captured.values() {
+            copy_texture_rect(
+                encoder,
+                &tile.pixels,
+                tile.rect.at_origin(),
+                canvas,
+                [tile.rect.x, tile.rect.y],
+            );
+        }
+        self.end_empty_stroke();
         true
     }
 
@@ -296,45 +319,9 @@ impl PaintHistory {
         self.can_redo().then(|| self.actions[self.cursor].target())
     }
 
-    pub(crate) fn layer_needs_sync(&self, layer_id: LayerId) -> bool {
-        self.mirrored_layer != Some(layer_id)
-    }
-
-    pub(crate) fn ensure_layer_synced(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        layer_id: LayerId,
-        canvas: &wgpu::Texture,
-        document_size: [u32; 2],
-    ) {
-        if !self.layer_needs_sync(layer_id) {
-            return;
-        }
-        self.sync_layer(
-            encoder,
-            layer_id,
-            canvas,
-            TextureRect {
-                x: 0,
-                y: 0,
-                width: document_size[0],
-                height: document_size[1],
-            },
-        );
-    }
-
-    pub(crate) fn sync_layer(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        layer_id: LayerId,
-        canvas: &wgpu::Texture,
-        rect: TextureRect,
-    ) {
-        copy_texture_rect(encoder, canvas, rect, &self.mirror, [rect.x, rect.y]);
-        self.mirrored_layer = Some(layer_id);
-    }
-
-    pub(crate) fn commit_stroke(
+    /// Encode before modifying any covered pixels. Repeated coverage of a tile
+    /// must retain its original before-image, including across frame submissions.
+    pub(crate) fn capture_rect(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
@@ -342,19 +329,43 @@ impl PaintHistory {
         canvas: &wgpu::Texture,
         rect: TextureRect,
     ) {
-        debug_assert_eq!(self.active_stroke, Some(layer_id));
+        assert_eq!(self.active_stroke, Some(layer_id));
+        let min = [i64::from(rect.x), i64::from(rect.y)];
+        let max = [
+            min[0] + i64::from(rect.width),
+            min[1] + i64::from(rect.height),
+        ];
+        for region in self.grid.intersecting(min, max) {
+            self.captured.entry(region.coord).or_insert_with(|| {
+                let [x, y] = self.grid.origin(region.coord).expect("intersected tile");
+                let [width, height] = self.grid.extent(region.coord).expect("intersected tile");
+                let rect = TextureRect {
+                    x,
+                    y,
+                    width,
+                    height,
+                };
+                let pixels =
+                    create_history_texture(device, "history before-image tile", [width, height]);
+                copy_texture_rect(encoder, canvas, rect, &pixels, [0, 0]);
+                CapturedTile { rect, pixels }
+            });
+        }
+    }
+
+    pub(crate) fn commit_stroke(&mut self, layer_id: LayerId) {
+        assert_eq!(self.active_stroke, Some(layer_id));
+        if self.captured.is_empty() {
+            self.end_empty_stroke();
+            return;
+        }
         self.discard_redo();
-
-        let pixels =
-            create_history_texture(device, "paint history entry", [rect.width, rect.height]);
-        copy_texture_rect(encoder, &self.mirror, rect, &pixels, [0, 0]);
-        self.sync_layer(encoder, layer_id, canvas, rect);
-
+        let tiles: Vec<_> = std::mem::take(&mut self.captured).into_values().collect();
+        let bytes = tiles.iter().map(|tile| tile.rect.byte_len()).sum();
         self.actions.push(HistoryAction::Stroke(StrokeEntry {
             layer_id,
-            rect,
-            pixels,
-            bytes: rect.byte_len(),
+            tiles,
+            bytes,
         }));
         self.cursor = self.actions.len();
         self.evict_to_budget();
@@ -512,6 +523,7 @@ impl PaintHistory {
 
     pub(crate) fn undo_stroke(
         &mut self,
+        device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         canvas: &wgpu::Texture,
     ) -> bool {
@@ -522,13 +534,13 @@ impl PaintHistory {
         let HistoryAction::Stroke(entry) = &self.actions[self.cursor] else {
             unreachable!();
         };
-        swap_stroke_history_pixels(encoder, &self.mirror, canvas, entry);
-        self.mirrored_layer = Some(entry.layer_id);
+        swap_stroke_history_pixels(device, encoder, &mut self.swap_scratch, canvas, entry);
         true
     }
 
     pub(crate) fn redo_stroke(
         &mut self,
+        device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         canvas: &wgpu::Texture,
     ) -> bool {
@@ -538,8 +550,7 @@ impl PaintHistory {
         let HistoryAction::Stroke(entry) = &self.actions[self.cursor] else {
             unreachable!();
         };
-        swap_stroke_history_pixels(encoder, &self.mirror, canvas, entry);
-        self.mirrored_layer = Some(entry.layer_id);
+        swap_stroke_history_pixels(device, encoder, &mut self.swap_scratch, canvas, entry);
         self.cursor += 1;
         true
     }
@@ -554,7 +565,6 @@ impl PaintHistory {
             return None;
         }
         self.cursor -= 1;
-        self.mirrored_layer = None;
         let effect = match &mut self.actions[self.cursor] {
             HistoryAction::AddLayer {
                 layer_id,
@@ -663,7 +673,6 @@ impl PaintHistory {
         if self.redo_target() != Some(HistoryTarget::Structure) {
             return None;
         }
-        self.mirrored_layer = None;
         let effect = match &mut self.actions[self.cursor] {
             HistoryAction::AddLayer {
                 index,
@@ -804,26 +813,34 @@ fn move_layer_to_index(layers: &mut Vec<PaintLayer>, id: LayerId, index: usize) 
 }
 
 fn swap_stroke_history_pixels(
+    device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
-    mirror: &wgpu::Texture,
+    scratch: &mut Option<wgpu::Texture>,
     canvas: &wgpu::Texture,
     entry: &StrokeEntry,
 ) {
-    copy_texture_rect(
-        encoder,
-        &entry.pixels,
-        entry.rect.at_origin(),
-        canvas,
-        [entry.rect.x, entry.rect.y],
-    );
-    copy_texture_rect(encoder, mirror, entry.rect, &entry.pixels, [0, 0]);
-    copy_texture_rect(
-        encoder,
-        canvas,
-        entry.rect,
-        mirror,
-        [entry.rect.x, entry.rect.y],
-    );
+    // One reusable tile, independent of the stroke's area and number of tiles.
+    // Copies are ordered in the encoder, so no CPU wait is needed between tiles.
+    let scratch = scratch.get_or_insert_with(|| {
+        create_history_texture(device, "history swap tile", [DEFAULT_TILE_SIZE; 2])
+    });
+    for tile in &entry.tiles {
+        copy_texture_rect(encoder, canvas, tile.rect, scratch, [0, 0]);
+        copy_texture_rect(
+            encoder,
+            &tile.pixels,
+            tile.rect.at_origin(),
+            canvas,
+            [tile.rect.x, tile.rect.y],
+        );
+        copy_texture_rect(
+            encoder,
+            scratch,
+            tile.rect.at_origin(),
+            &tile.pixels,
+            [0, 0],
+        );
+    }
 }
 
 fn eviction_count(

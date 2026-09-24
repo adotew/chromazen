@@ -11,7 +11,7 @@ use std::sync::{
 pub struct CanvasMemoryUsage {
     /// Live layer pixels, thumbnails and settings buffers.
     pub layers: u64,
-    /// Mirror, pixel patches and detached layers retained by undo/redo.
+    /// Before-image tiles, one swap tile and detached undo/redo layers.
     pub history: u64,
     /// Smudge, clipping, stroke/preview masks and window backdrop.
     pub scratch: u64,
