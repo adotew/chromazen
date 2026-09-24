@@ -702,6 +702,22 @@ mod tests {
     }
 
     #[test]
+    fn repeated_saves_prune_unreferenced_revisions_and_weak_pins() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ArtworkStore::from_root(temp.path());
+        let id = ArtworkId::new();
+        for pixel in 0..32 {
+            store
+                .commit_revision(&id, "Study", revision(pixel))
+                .unwrap();
+        }
+        store.scan_catalog();
+        let revisions = store.artwork_path(&id).join("revisions");
+        assert_eq!(fs::read_dir(revisions).unwrap().count(), 1);
+        assert!(store.pins.lock().unwrap().paths.len() <= 1);
+    }
+
+    #[test]
     fn catalog_cannot_remove_an_active_temporary_revision() {
         let temp = tempfile::tempdir().unwrap();
         let store = ArtworkStore::from_root(temp.path());
