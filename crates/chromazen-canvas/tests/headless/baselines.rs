@@ -427,6 +427,7 @@ fn memory_accounts_for_history_and_readback(device: &wgpu::Device, queue: &wgpu:
     );
     let work = canvas.work_counters();
     assert_eq!(work.committed_dabs, 1);
+    assert_eq!(work.tile_fragments, 4);
     assert_eq!(work.paint_passes, 3);
     eprintln!("baseline {:?}; work {work:?}", canvas.memory_usage());
 }

@@ -1,3 +1,5 @@
+use crate::tiles::{TileGrid, TileRegions};
+
 const MIN_ZOOM: f32 = 0.01;
 const MAX_ZOOM: f32 = 32.0;
 const TAU: f32 = std::f32::consts::TAU;
@@ -68,6 +70,31 @@ impl PaintViewSnapshot {
         (
             orient([1.0, 0.0], self.rotation, self.flip),
             orient([0.0, 1.0], self.rotation, self.flip),
+        )
+    }
+
+    /// Lazily enumerate storage regions intersecting the inverse-projected
+    /// viewport. A one-document-pixel border covers bilinear sampling near tile
+    /// edges. Rotation and flips are handled by transforming all four corners;
+    /// the conservative box can include extra tiles but never omit visible ones.
+    pub fn visible_tile_regions(self, surface_size: [u32; 2], grid: TileGrid) -> TileRegions {
+        let corners = [
+            [0.0, 0.0],
+            [surface_size[0] as f32, 0.0],
+            [0.0, surface_size[1] as f32],
+            [surface_size[0] as f32, surface_size[1] as f32],
+        ];
+        let mut min = [f32::INFINITY; 2];
+        let mut max = [f32::NEG_INFINITY; 2];
+        for point in corners.map(|corner| self.window_to_document(corner)) {
+            for axis in 0..2 {
+                min[axis] = min[axis].min(point[axis]);
+                max[axis] = max[axis].max(point[axis]);
+            }
+        }
+        grid.intersecting(
+            min.map(|edge| (edge.floor() as i64).saturating_sub(1)),
+            max.map(|edge| (edge.ceil() as i64).saturating_add(1)),
         )
     }
 
@@ -277,6 +304,48 @@ mod tests {
                 assert!((round_trip[1] - document[1]).abs() < 0.0001);
             }
         }
+    }
+
+    #[test]
+    fn visible_storage_regions_cover_rotated_and_flipped_viewports_without_dense_grid_walks() {
+        use std::collections::BTreeSet;
+        let grid = TileGrid::new([8192, 4097], 512).unwrap();
+        let surface = [800, 600];
+        for rotation in [0.0, 0.37, std::f32::consts::FRAC_PI_2, -2.1] {
+            for flip in [[1.0, 1.0], [-1.0, 1.0], [1.0, -1.0], [-1.0, -1.0]] {
+                let view = PaintViewSnapshot {
+                    zoom: 2.0,
+                    center: [2048.0, 1536.0],
+                    workspace_center: [0.0; 2],
+                    viewport_center: [400.0, 300.0],
+                    rotation,
+                    flip,
+                };
+                let regions: Vec<_> = view.visible_tile_regions(surface, grid).collect();
+                assert!(!regions.is_empty() && regions.len() < 12);
+                let coords: BTreeSet<_> = regions.iter().map(|region| region.coord).collect();
+                for x in (0..surface[0]).step_by(13) {
+                    for y in (0..surface[1]).step_by(11) {
+                        let point = view.window_to_document([x as f32 + 0.5, y as f32 + 0.5]);
+                        if point.iter().all(|value| *value >= 0.0)
+                            && let Some((coord, _)) = grid.locate(point.map(|value| value as u32))
+                        {
+                            assert!(
+                                coords.contains(&coord),
+                                "missing {coord:?} at ({x}, {y}) with {rotation}, {flip:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        let huge = TileGrid::new([u32::MAX; 2], 512).unwrap();
+        assert_eq!(
+            view(0.0, [1.0; 2])
+                .visible_tile_regions(surface, huge)
+                .count(),
+            1
+        );
     }
 
     #[test]
