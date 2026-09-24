@@ -1378,9 +1378,9 @@ fn frosted_row_fill(dark_mode: bool, selected: bool) -> egui::Color32 {
 
 fn brush_slider_fills(dark_mode: bool, frosted: bool) -> [egui::Color32; 5] {
     let shades = if dark_mode {
-        [48, 105, 135, 155, 60]
+        [if frosted { 24 } else { 48 }, 105, 135, 155, 60]
     } else {
-        [230, 65, 45, 30, 130]
+        [if frosted { 195 } else { 230 }, 65, 45, 30, 130]
     };
     shades.map(|shade| {
         if frosted {
@@ -1814,6 +1814,14 @@ mod tests {
 
         assert!(dark_track.r() < dark_fill.r());
         assert!(light_track.r() > light_fill.r());
+        let over_midgray = |color: egui::Color32| {
+            let alpha = u16::from(color.a());
+            (u16::from(color.r()) * alpha + 128 * (255 - alpha)) / 255
+        };
+        for (dark_mode, track) in [(true, dark_track), (false, light_track)] {
+            let panel = surface_fill(dark_mode, SurfaceStyle::Frosted);
+            assert!(over_midgray(track).abs_diff(over_midgray(panel)) >= 16);
+        }
         assert!(
             brush_slider_fills(true, true)
                 .into_iter()
