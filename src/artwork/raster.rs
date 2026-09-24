@@ -48,57 +48,84 @@ impl<'a> CompositeRows<'a> {
     pub(crate) fn row(&self, y: u32, output: &mut [u8]) {
         assert!(y < self.size[1]);
         assert_eq!(output.len(), self.size[0] as usize * 4);
-        for (x, destination) in output.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-            destination.copy_from_slice(&[
-                self.background[0],
-                self.background[1],
-                self.background[2],
-                255,
-            ]);
-            let pixel_index = y as usize * self.size[0] as usize + x;
-            let mut base_index = 0;
-            while base_index < self.layers.len() {
-                if self.layers[base_index].clipped {
-                    base_index += 1;
-                    continue;
-                }
-                let mut group_end = base_index + 1;
-                while group_end < self.layers.len() && self.layers[group_end].clipped {
-                    group_end += 1;
-                }
-                let base = &self.layers[base_index];
-                if base.visible {
-                    let base_pixel = &base.image.as_raw()[pixel_index * 4..pixel_index * 4 + 4];
-                    let base_opacity = u32::from(base.opacity.min(100));
-                    let base_alpha = u32::from(base_pixel[3]) * base_opacity / 100;
-                    let mut group_rgb = [0; 3];
-                    for channel in 0..3 {
-                        group_rgb[channel] = u32::from(base_pixel[channel]) * base_opacity / 100;
-                    }
-                    for layer in self.layers[base_index + 1..group_end]
-                        .iter()
-                        .filter(|layer| layer.visible)
-                    {
-                        let source = &layer.image.as_raw()[pixel_index * 4..pixel_index * 4 + 4];
-                        let opacity = u32::from(layer.opacity.min(100));
-                        let alpha = u32::from(source[3]) * opacity / 100;
-                        let inverse = 255 - alpha;
-                        for channel in 0..3 {
-                            let source =
-                                u32::from(source[channel]) * opacity / 100 * base_alpha / 255;
-                            group_rgb[channel] =
-                                (source + group_rgb[channel] * inverse / 255).min(255);
-                        }
-                    }
-                    let inverse_base = 255 - base_alpha;
-                    for channel in 0..3 {
-                        destination[channel] = (group_rgb[channel]
-                            + u32::from(destination[channel]) * inverse_base / 255)
-                            .min(255) as u8;
-                    }
-                }
-                base_index = group_end;
+        let row_start = y as usize * output.len();
+        let sources: Vec<_> = self
+            .layers
+            .iter()
+            .map(|layer| CompositeRowLayer {
+                pixels: &layer.image.as_raw()[row_start..row_start + output.len()],
+                visible: layer.visible,
+                opacity: layer.opacity,
+                clipped: layer.clipped,
+            })
+            .collect();
+        composite_premultiplied_row(&sources, self.background, output);
+    }
+}
+
+/// Source rows are borrowed: no allocation per decoded layer is needed during
+/// export. Every source must have the same RGBA8 width as `output`.
+pub(crate) struct CompositeRowLayer<'a> {
+    pub(crate) pixels: &'a [u8],
+    pub(crate) visible: bool,
+    pub(crate) opacity: u8,
+    pub(crate) clipped: bool,
+}
+
+pub(crate) fn composite_premultiplied_row(
+    layers: &[CompositeRowLayer<'_>],
+    background: [u8; 3],
+    output: &mut [u8],
+) {
+    assert!(
+        layers
+            .iter()
+            .all(|layer| layer.pixels.len() == output.len())
+    );
+    assert!(output.len().is_multiple_of(4));
+    for (x, destination) in output.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        destination.copy_from_slice(&[background[0], background[1], background[2], 255]);
+        let pixel_index = x * 4;
+        let mut base_index = 0;
+        while base_index < layers.len() {
+            if layers[base_index].clipped {
+                base_index += 1;
+                continue;
             }
+            let mut group_end = base_index + 1;
+            while group_end < layers.len() && layers[group_end].clipped {
+                group_end += 1;
+            }
+            let base = &layers[base_index];
+            if base.visible {
+                let base_pixel = &base.pixels[pixel_index..pixel_index + 4];
+                let base_opacity = u32::from(base.opacity.min(100));
+                let base_alpha = u32::from(base_pixel[3]) * base_opacity / 100;
+                let mut group_rgb = [0; 3];
+                for channel in 0..3 {
+                    group_rgb[channel] = u32::from(base_pixel[channel]) * base_opacity / 100;
+                }
+                for layer in layers[base_index + 1..group_end]
+                    .iter()
+                    .filter(|layer| layer.visible)
+                {
+                    let source = &layer.pixels[pixel_index..pixel_index + 4];
+                    let opacity = u32::from(layer.opacity.min(100));
+                    let alpha = u32::from(source[3]) * opacity / 100;
+                    let inverse = 255 - alpha;
+                    for channel in 0..3 {
+                        let source = u32::from(source[channel]) * opacity / 100 * base_alpha / 255;
+                        group_rgb[channel] = (source + group_rgb[channel] * inverse / 255).min(255);
+                    }
+                }
+                let inverse_base = 255 - base_alpha;
+                for channel in 0..3 {
+                    destination[channel] = (group_rgb[channel]
+                        + u32::from(destination[channel]) * inverse_base / 255)
+                        .min(255) as u8;
+                }
+            }
+            base_index = group_end;
         }
     }
 }

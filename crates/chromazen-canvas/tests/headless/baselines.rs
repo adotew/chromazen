@@ -19,6 +19,7 @@ pub(super) fn run(device: &wgpu::Device, queue: &wgpu::Queue) {
     memory_accounts_for_history_and_readback(device, queue);
     sparse_history_captures_only_first_touched_tiles(device, queue);
     tile_readback_is_cropped_frozen_and_budgeted(device, queue);
+    streamed_readback_rows_are_padded_and_snapshot_isolated(device, queue);
     eprintln!("large-canvas raster baselines: {:?}", start.elapsed());
 }
 
@@ -320,6 +321,42 @@ fn clipped_merge_preserves_pixels_and_history(device: &wgpu::Device, queue: &wgp
     assert_eq!(canvas.document_snapshot(), document);
     assert!(canvas.redo());
     assert_pixels(&pixels(&canvas)[0], &merged, 0);
+}
+
+fn streamed_readback_rows_are_padded_and_snapshot_isolated(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) {
+    let mut canvas = canvas(device, queue);
+    let source = RgbaImage::from_fn(SIZE[0], SIZE[1], |x, y| Rgba([x as u8, y as u8, 42, 255]));
+    load(&mut canvas, source.clone());
+    let frozen = canvas.begin_document_layer_readback().unwrap();
+    assert!(canvas.clear_selected_layer());
+    let layer_id = canvas.document_snapshot().selected_layer;
+    let mut visits = 0;
+    frozen
+        .for_each_row(|y, rows| {
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].0, layer_id);
+            assert_eq!(
+                rows[0].1,
+                &source.as_raw()
+                    [y as usize * SIZE[0] as usize * 4..(y as usize + 1) * SIZE[0] as usize * 4]
+            );
+            visits += 1;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(visits, SIZE[1]);
+    assert_eq!(canvas.memory_usage().readbacks, 0);
+    assert!(
+        canvas
+            .begin_document_layer_readback()
+            .unwrap()
+            .for_each_row(|_, _| Err("stop".to_owned()))
+            .is_err()
+    );
+    assert_eq!(canvas.memory_usage().readbacks, 0);
 }
 
 fn tile_readback_is_cropped_frozen_and_budgeted(device: &wgpu::Device, queue: &wgpu::Queue) {

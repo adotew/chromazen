@@ -48,6 +48,52 @@ impl LayerReadback {
         Ok(images)
     }
 
+    /// Visit snapshot rows without allocating whole decoded layer images. Rows
+    /// remain borrowed from mapped, padded GPU staging buffers for this call;
+    /// the callback must not retain them. Even on callback failure all buffers
+    /// are unmapped and the readback lease is released on return.
+    pub fn for_each_row(
+        mut self,
+        mut visit: impl FnMut(u32, &[(LayerId, &[u8])]) -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|error| format!("failed to wait for layer readback: {error}"))?;
+        for layer in &mut self.layers {
+            layer
+                .completion
+                .try_recv()
+                .map_err(|error| format!("failed to receive layer readback: {error}"))?
+                .ok_or_else(|| "layer readback did not complete".to_owned())?
+                .map_err(|error| format!("failed to map layer readback: {error}"))?;
+        }
+        let mapped: Vec<_> = self
+            .layers
+            .iter()
+            .map(|layer| layer.buffer.slice(..).get_mapped_range())
+            .collect();
+        let result = (|| {
+            let mut rows = Vec::with_capacity(mapped.len());
+            for y in 0..self.size[1] {
+                rows.clear();
+                let start = y as usize * self.padded_bytes_per_row;
+                for (layer, pixels) in self.layers.iter().zip(&mapped) {
+                    rows.push((
+                        layer.id,
+                        &pixels[start..start + self.unpadded_bytes_per_row],
+                    ));
+                }
+                visit(y, &rows)?;
+            }
+            Ok(())
+        })();
+        drop(mapped);
+        for layer in &self.layers {
+            layer.buffer.unmap();
+        }
+        result
+    }
+
     pub async fn finish_async(self) -> Result<Vec<(LayerId, image::RgbaImage)>, String> {
         let _ = self.device.poll(wgpu::PollType::Poll);
         let mut images = Vec::with_capacity(self.layers.len());
