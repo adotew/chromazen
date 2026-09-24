@@ -12,6 +12,7 @@ mod persistence;
 mod resources;
 mod sampling;
 mod stamps;
+mod tiles;
 mod view;
 
 pub use self::{
@@ -869,6 +870,47 @@ impl Canvas {
             &self.layers,
             self.document_size,
             &self.readbacks,
+        ))
+    }
+
+    /// Read one 512-pixel storage region, cropped at the document edge. The
+    /// returned readback contains one `(layer_id, image)`; image coordinates are
+    /// tile-local. This freezes one tile, not a multi-call document snapshot.
+    /// Consumers must retain/version their source when assembling larger jobs.
+    ///
+    /// In-flight staging for this path is capped at 16 MiB. Finish/drop earlier
+    /// readbacks before retrying a budget error. Caller-owned decoded images and
+    /// legacy whole-image readbacks are not a bounded cache.
+    pub fn begin_layer_tile_readback(
+        &self,
+        layer_id: LayerId,
+        coord: crate::tiles::TileCoord,
+    ) -> Result<LayerReadback, String> {
+        use crate::tiles::{DEFAULT_TILE_SIZE, TileGrid};
+        const TRANSFER_BUDGET: u64 = 16 * 1024 * 1024;
+        if !self.document_is_idle() {
+            return Err("the current document is busy".to_owned());
+        }
+        let layer = self
+            .layers
+            .iter()
+            .find(|layer| layer.id == layer_id)
+            .ok_or("readback layer does not exist")?;
+        let grid = TileGrid::new(self.document_size, DEFAULT_TILE_SIZE)?;
+        let origin = grid
+            .origin(coord)
+            .ok_or("readback tile is outside the document")?;
+        let size = grid.extent(coord).expect("validated tile coordinate");
+        let lease = self
+            .readbacks
+            .try_retain(persistence::readback_byte_len(size), TRANSFER_BUDGET)
+            .ok_or("tile readback staging budget is exhausted")?;
+        Ok(persistence::begin_read_regions(
+            &self.device,
+            &self.queue,
+            std::iter::once((layer_id, &layer.texture, origin)),
+            size,
+            lease,
         ))
     }
 

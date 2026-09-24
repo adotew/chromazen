@@ -11,7 +11,7 @@ use std::sync::{
 pub struct CanvasMemoryUsage {
     /// Live layer pixels, thumbnails and settings buffers.
     pub layers: u64,
-    /// Before-image tiles, one swap tile and detached undo/redo layers.
+    /// Resident before-image versions and detached undo/redo layers.
     pub history: u64,
     /// Smudge, clipping, stroke/preview masks and window backdrop.
     pub scratch: u64,
@@ -75,6 +75,23 @@ impl ReadbackTracker {
 
     pub(super) fn retain(self: &Arc<Self>, bytes: u64) -> Arc<ReadbackLease> {
         self.live.fetch_add(bytes, Ordering::Relaxed);
+        self.lease(bytes)
+    }
+
+    pub(super) fn try_retain(
+        self: &Arc<Self>,
+        bytes: u64,
+        budget: u64,
+    ) -> Option<Arc<ReadbackLease>> {
+        self.live
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |live| {
+                live.checked_add(bytes).filter(|total| *total <= budget)
+            })
+            .ok()?;
+        Some(self.lease(bytes))
+    }
+
+    fn lease(self: &Arc<Self>, bytes: u64) -> Arc<ReadbackLease> {
         self.submitted.fetch_add(bytes, Ordering::Relaxed);
         Arc::new(ReadbackLease {
             tracker: self.clone(),
@@ -99,6 +116,26 @@ impl Drop for ReadbackLease {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concurrent_reservations_cannot_exceed_the_readback_budget() {
+        let tracker = Arc::new(ReadbackTracker::default());
+        let workers: Vec<_> = (0..16)
+            .map(|_| {
+                let tracker = tracker.clone();
+                std::thread::spawn(move || tracker.try_retain(64, 64))
+            })
+            .collect();
+        let leases: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect();
+        assert_eq!(leases.iter().filter(|lease| lease.is_some()).count(), 1);
+        assert_eq!(tracker.live(), 64);
+        assert_eq!(tracker.submitted(), 64);
+        drop(leases);
+        assert_eq!(tracker.live(), 0);
+    }
 
     #[test]
     fn readback_bytes_remain_live_until_both_owner_and_callback_release_them() {

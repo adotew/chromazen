@@ -17,6 +17,7 @@ pub(super) fn run(device: &wgpu::Device, queue: &wgpu::Queue) {
     clipped_merge_preserves_pixels_and_history(device, queue);
     memory_accounts_for_history_and_readback(device, queue);
     sparse_history_captures_only_first_touched_tiles(device, queue);
+    tile_readback_is_cropped_frozen_and_budgeted(device, queue);
     eprintln!("large-canvas raster baselines: {:?}", start.elapsed());
 }
 
@@ -283,6 +284,73 @@ fn clipped_merge_preserves_pixels_and_history(device: &wgpu::Device, queue: &wgp
     assert_pixels(&pixels(&canvas)[0], &merged, 0);
 }
 
+fn tile_readback_is_cropped_frozen_and_budgeted(device: &wgpu::Device, queue: &wgpu::Queue) {
+    use chromazen_canvas::{
+        LayerId,
+        tiles::{DEFAULT_TILE_SIZE, TileCoord, TileGrid},
+    };
+    let mut canvas = canvas(device, queue);
+    let source = RgbaImage::from_fn(SIZE[0], SIZE[1], |x, y| Rgba([x as u8, y as u8, 137, 255]));
+    load(&mut canvas, source.clone());
+    let layer = canvas.document_snapshot().selected_layer;
+    let grid = TileGrid::new(SIZE, DEFAULT_TILE_SIZE).unwrap();
+    for region in grid.intersecting([0; 2], SIZE.map(i64::from)) {
+        let readback = canvas
+            .begin_layer_tile_readback(layer, region.coord)
+            .unwrap();
+        let size = grid.extent(region.coord).unwrap();
+        let origin = grid.origin(region.coord).unwrap();
+        assert_eq!(
+            canvas.memory_usage().readbacks,
+            u64::from((size[0] * 4).div_ceil(256) * 256) * u64::from(size[1])
+        );
+        let actual = readback.finish().unwrap();
+        assert_eq!(actual.len(), 1);
+        assert_eq!(actual[0].0, layer);
+        assert_pixels(
+            &actual[0].1,
+            &image::imageops::crop_imm(&source, origin[0], origin[1], size[0], size[1]).to_image(),
+            0,
+        );
+        assert_eq!(canvas.memory_usage().readbacks, 0);
+    }
+    let edge = TileCoord { x: 2, y: 1 };
+    let frozen = canvas.begin_layer_tile_readback(layer, edge).unwrap();
+    assert!(canvas.clear_selected_layer());
+    assert_pixels(
+        &frozen.finish().unwrap()[0].1,
+        &image::imageops::crop_imm(&source, 1024, 512, 7, 261).to_image(),
+        0,
+    );
+    assert!(canvas.undo());
+    assert!(canvas.begin_layer_tile_readback(LayerId(0), edge).is_err());
+    assert!(
+        canvas
+            .begin_layer_tile_readback(layer, TileCoord { x: u32::MAX, y: 0 })
+            .is_err()
+    );
+    assert!(canvas.begin_stroke(PaintTool::Brush, point(10.0, 10.0, 2.0), [1.0; 4], 1.0));
+    assert!(canvas.begin_layer_tile_readback(layer, edge).is_err());
+    canvas.end_stroke();
+    let full = TileCoord { x: 0, y: 0 };
+    let mut held: Vec<_> = (0..16)
+        .map(|_| canvas.begin_layer_tile_readback(layer, full).unwrap())
+        .collect();
+    assert_eq!(canvas.memory_usage().readbacks, 16 * 1024 * 1024);
+    assert!(canvas.begin_layer_tile_readback(layer, full).is_err());
+    held.pop().unwrap().finish().unwrap();
+    assert!(
+        canvas
+            .begin_layer_tile_readback(layer, full)
+            .unwrap()
+            .finish()
+            .is_ok()
+    );
+    drop(held);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    assert_eq!(canvas.memory_usage().readbacks, 0);
+}
+
 fn sparse_history_captures_only_first_touched_tiles(device: &wgpu::Device, queue: &wgpu::Queue) {
     let mut canvas = canvas(device, queue);
     let near = point(16.0, 16.0, 2.0);
@@ -303,9 +371,9 @@ fn sparse_history_captures_only_first_touched_tiles(device: &wgpu::Device, queue
     let painted = pixels(&canvas).remove(0);
     assert!(canvas.undo());
     assert!(pixels(&canvas)[0].as_raw().iter().all(|&v| v == 0));
-    // Undo/redo swaps every captured tile through one reusable tile, not a
+    // The alternate state replaces the retained version, without keeping a
     // document-sized mirror or a rectangle spanning the two distant dabs.
-    let undo_bytes = touched_bytes + first_tile_bytes;
+    let undo_bytes = touched_bytes;
     assert_eq!(canvas.memory_usage().history, undo_bytes);
     assert!(canvas.redo());
     assert_eq!(canvas.memory_usage().history, undo_bytes);
@@ -313,10 +381,7 @@ fn sparse_history_captures_only_first_touched_tiles(device: &wgpu::Device, queue
     assert!(canvas.undo());
     stroke(&mut canvas, PaintTool::Brush, &[far], 1.0);
     assert!(!canvas.can_redo());
-    assert_eq!(
-        canvas.memory_usage().history,
-        first_tile_bytes + 7 * 261 * 4
-    );
+    assert_eq!(canvas.memory_usage().history, 7 * 261 * 4);
     assert_eq!(pixels(&canvas)[0].get_pixel(16, 16).0, [0; 4]);
     assert!(canvas.undo());
     assert!(pixels(&canvas)[0].as_raw().iter().all(|&v| v == 0));

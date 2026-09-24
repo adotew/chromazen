@@ -94,15 +94,39 @@ pub(super) fn begin_read_layers(
     size: [u32; 2],
     tracker: &Arc<ReadbackTracker>,
 ) -> LayerReadback {
+    begin_read_regions(
+        device,
+        queue,
+        layers
+            .iter()
+            .map(|layer| (layer.id, &layer.texture, [0, 0])),
+        size,
+        tracker.retain(readback_byte_len(size) * layers.len() as u64),
+    )
+}
+
+pub(super) fn readback_byte_len(size: [u32; 2]) -> u64 {
+    u64::from(aligned_bytes_per_row(size[0] * BYTES_PER_PIXEL)) * u64::from(size[1])
+}
+
+/// Copies are submitted before returning, freezing the requested pixels even
+/// if the source is edited before mapping completes. All regions have `size`.
+pub(super) fn begin_read_regions<'a>(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    regions: impl ExactSizeIterator<Item = (LayerId, &'a wgpu::Texture, [u32; 2])>,
+    size: [u32; 2],
+    lease: Arc<ReadbackLease>,
+) -> LayerReadback {
     let unpadded_bytes_per_row = size[0] * BYTES_PER_PIXEL;
     let padded_bytes_per_row = aligned_bytes_per_row(unpadded_bytes_per_row);
     let buffer_size = u64::from(padded_bytes_per_row) * u64::from(size[1]);
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("artwork layer readback encoder"),
     });
-    let mut pending = Vec::with_capacity(layers.len());
+    let mut pending = Vec::with_capacity(regions.len());
 
-    for layer in layers {
+    for (id, texture, origin) in regions {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("artwork layer readback buffer"),
             size: buffer_size,
@@ -111,9 +135,13 @@ pub(super) fn begin_read_layers(
         });
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &layer.texture,
+                texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
+                origin: wgpu::Origin3d {
+                    x: origin[0],
+                    y: origin[1],
+                    z: 0,
+                },
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::TexelCopyBufferInfo {
@@ -130,11 +158,10 @@ pub(super) fn begin_read_layers(
                 depth_or_array_layers: 1,
             },
         );
-        pending.push((layer.id, buffer));
+        pending.push((id, buffer));
     }
     queue.submit(std::iter::once(encoder.finish()));
 
-    let lease = tracker.retain(buffer_size * pending.len() as u64);
     let layers = pending
         .into_iter()
         .map(|(id, buffer)| {

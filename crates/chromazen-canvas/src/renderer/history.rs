@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use crate::tiles::{DEFAULT_TILE_SIZE, TileCoord, TileGrid};
 
 use super::{
-    DOCUMENT_FORMAT,
     layers::{LayerId, PaintLayer},
+    tiles::{PixelRef, TileTextures},
 };
 
 const HISTORY_BUDGET_BYTES: u64 = 256 * 1024 * 1024;
@@ -60,7 +60,7 @@ impl TextureRect {
 
 struct CapturedTile {
     rect: TextureRect,
-    pixels: wgpu::Texture,
+    pixels: PixelRef,
 }
 
 struct StrokeEntry {
@@ -190,7 +190,7 @@ pub(crate) struct PaintHistory {
     grid: TileGrid,
     // Capture before the first write to each tile, not on layer selection.
     captured: BTreeMap<TileCoord, CapturedTile>,
-    swap_scratch: Option<wgpu::Texture>,
+    textures: TileTextures,
     active_stroke: Option<LayerId>,
 }
 
@@ -201,7 +201,7 @@ impl PaintHistory {
             cursor: 0,
             grid: TileGrid::new(document_size, DEFAULT_TILE_SIZE).expect("validated document size"),
             captured: BTreeMap::new(),
-            swap_scratch: None,
+            textures: TileTextures::default(),
             active_stroke: None,
         }
     }
@@ -223,34 +223,24 @@ impl PaintHistory {
     pub(crate) fn end_empty_stroke(&mut self) {
         self.active_stroke = None;
         self.captured.clear();
+        self.textures.collect();
     }
 
     pub(crate) fn clear(&mut self) {
         self.actions.clear();
         self.cursor = 0;
-        self.swap_scratch = None;
         self.end_empty_stroke();
     }
 
     pub(super) fn gpu_payload_bytes(&self) -> u64 {
-        use super::diagnostics::texture_bytes;
         // History's eviction charge reserves space for either undo state. Count
         // actual detached resources here to avoid counting live layers twice.
-        self.swap_scratch.as_ref().map_or(0, texture_bytes)
-            + self
-                .captured
-                .values()
-                .map(|tile| texture_bytes(&tile.pixels))
-                .sum::<u64>()
+        self.textures.gpu_payload_bytes()
             + self
                 .actions
                 .iter()
                 .map(|action| match action {
-                    HistoryAction::Stroke(entry) => entry
-                        .tiles
-                        .iter()
-                        .map(|tile| texture_bytes(&tile.pixels))
-                        .sum(),
+                    HistoryAction::Stroke(_) => 0,
                     HistoryAction::AddLayer { detached, .. }
                     | HistoryAction::DeleteLayer { detached, .. } => {
                         detached.as_ref().map_or(0, PaintLayer::gpu_payload_bytes)
@@ -292,7 +282,7 @@ impl PaintHistory {
         for tile in self.captured.values() {
             copy_texture_rect(
                 encoder,
-                &tile.pixels,
+                self.textures.texture(&tile.pixels),
                 tile.rect.at_origin(),
                 canvas,
                 [tile.rect.x, tile.rect.y],
@@ -345,9 +335,14 @@ impl PaintHistory {
                     width,
                     height,
                 };
-                let pixels =
-                    create_history_texture(device, "history before-image tile", [width, height]);
-                copy_texture_rect(encoder, canvas, rect, &pixels, [0, 0]);
+                let pixels = self.textures.allocate(device, [width, height]);
+                copy_texture_rect(
+                    encoder,
+                    canvas,
+                    rect,
+                    self.textures.texture(&pixels),
+                    [0, 0],
+                );
                 CapturedTile { rect, pixels }
             });
         }
@@ -531,10 +526,10 @@ impl PaintHistory {
             return false;
         }
         self.cursor -= 1;
-        let HistoryAction::Stroke(entry) = &self.actions[self.cursor] else {
+        let HistoryAction::Stroke(entry) = &mut self.actions[self.cursor] else {
             unreachable!();
         };
-        swap_stroke_history_pixels(device, encoder, &mut self.swap_scratch, canvas, entry);
+        swap_stroke_history_pixels(device, encoder, &mut self.textures, canvas, entry);
         true
     }
 
@@ -547,10 +542,10 @@ impl PaintHistory {
         if !matches!(self.redo_target(), Some(HistoryTarget::Stroke(_))) {
             return false;
         }
-        let HistoryAction::Stroke(entry) = &self.actions[self.cursor] else {
+        let HistoryAction::Stroke(entry) = &mut self.actions[self.cursor] else {
             unreachable!();
         };
-        swap_stroke_history_pixels(device, encoder, &mut self.swap_scratch, canvas, entry);
+        swap_stroke_history_pixels(device, encoder, &mut self.textures, canvas, entry);
         self.cursor += 1;
         true
     }
@@ -793,6 +788,7 @@ impl PaintHistory {
         );
         self.actions.drain(..count);
         self.cursor -= count;
+        self.textures.collect();
     }
 }
 
@@ -815,32 +811,31 @@ fn move_layer_to_index(layers: &mut Vec<PaintLayer>, id: LayerId, index: usize) 
 fn swap_stroke_history_pixels(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
-    scratch: &mut Option<wgpu::Texture>,
+    textures: &mut TileTextures,
     canvas: &wgpu::Texture,
-    entry: &StrokeEntry,
+    entry: &mut StrokeEntry,
 ) {
-    // One reusable tile, independent of the stroke's area and number of tiles.
-    // Copies are ordered in the encoder, so no CPU wait is needed between tiles.
-    let scratch = scratch.get_or_insert_with(|| {
-        create_history_texture(device, "history swap tile", [DEFAULT_TILE_SIZE; 2])
-    });
-    for tile in &entry.tiles {
-        copy_texture_rect(encoder, canvas, tile.rect, scratch, [0, 0]);
+    for tile in &mut entry.tiles {
+        let alternate = textures.allocate(device, [tile.rect.width, tile.rect.height]);
         copy_texture_rect(
             encoder,
-            &tile.pixels,
+            canvas,
+            tile.rect,
+            textures.texture(&alternate),
+            [0, 0],
+        );
+        copy_texture_rect(
+            encoder,
+            textures.texture(&tile.pixels),
             tile.rect.at_origin(),
             canvas,
             [tile.rect.x, tile.rect.y],
         );
-        copy_texture_rect(
-            encoder,
-            scratch,
-            tile.rect.at_origin(),
-            &tile.pixels,
-            [0, 0],
-        );
+        // Never overwrite published version pixels. Once live layers use the
+        // same tile indexes this becomes a reference swap, with no GPU copies.
+        tile.pixels = alternate;
     }
+    textures.collect();
 }
 
 fn eviction_count(
@@ -858,25 +853,6 @@ fn eviction_count(
         count += 1;
     }
     count
-}
-
-fn create_history_texture(device: &wgpu::Device, label: &str, size: [u32; 2]) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(label),
-        size: wgpu::Extent3d {
-            width: size[0],
-            height: size[1],
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: DOCUMENT_FORMAT,
-        usage: wgpu::TextureUsages::COPY_SRC
-            | wgpu::TextureUsages::COPY_DST
-            | wgpu::TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-    })
 }
 
 fn copy_texture_rect(
