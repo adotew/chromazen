@@ -662,23 +662,47 @@ impl Canvas {
         {
             return bounds;
         }
+        // Scan borrowed mapped rows, never a decoded layer image or an entire
+        // document-sized staging buffer. The layer cannot change while this
+        // synchronous scan borrows the canvas. A future operation controller
+        // must split the scans across ticks before raising document limits.
+        const BAND_BUDGET: u64 = 8 * 1024 * 1024;
+        const TRANSFER_BUDGET: u64 = 16 * 1024 * 1024;
+        let width = self.document_size[0];
+        let band_height = (BAND_BUDGET / persistence::readback_byte_len([width, 1]))
+            .min(u64::from(self.document_size[1])) as u32;
         let mut alpha = AlphaBoundsAccumulator::new(self.document_size);
-        let bounds = persistence::begin_read_layers(
-            &self.device,
-            &self.queue,
-            std::slice::from_ref(&self.layers[layer_index]),
-            self.document_size,
-            &self.readbacks,
-        )
-        .for_each_row(|y, rows| {
-            alpha.include_row(y, rows[0].1);
-            Ok(())
-        })
-        .map_err(|error| log::error!("failed to find layer content bounds: {error}"))
-        .ok()
-        .and_then(|()| alpha.finish());
-        self.content_bounds_cache = Some((layer_id, layer_resource_id, bounds));
-        bounds
+        let result = (|| -> Result<_, String> {
+            for origin_y in (0..self.document_size[1]).step_by(band_height as usize) {
+                let size = [width, band_height.min(self.document_size[1] - origin_y)];
+                let lease = self
+                    .readbacks
+                    .try_retain(persistence::readback_byte_len(size), TRANSFER_BUDGET)
+                    .ok_or("layer bounds readback staging budget is exhausted")?;
+                persistence::begin_read_regions(
+                    &self.device,
+                    &self.queue,
+                    std::iter::once((layer_id, &self.layers[layer_index].texture, [0, origin_y])),
+                    size,
+                    lease,
+                )
+                .for_each_row(|y, rows| {
+                    alpha.include_row(origin_y + y, rows[0].1);
+                    Ok(())
+                })?;
+            }
+            Ok(alpha.finish())
+        })();
+        match result {
+            Ok(bounds) => {
+                self.content_bounds_cache = Some((layer_id, layer_resource_id, bounds));
+                bounds
+            }
+            Err(error) => {
+                log::error!("failed to find layer content bounds: {error}");
+                None
+            }
+        }
     }
 
     fn begin_layer_transform(&mut self) -> bool {

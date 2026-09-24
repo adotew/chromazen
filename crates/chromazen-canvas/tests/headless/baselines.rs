@@ -22,6 +22,7 @@ pub(super) fn run(device: &wgpu::Device, queue: &wgpu::Queue) {
     tile_readback_is_cropped_frozen_and_budgeted(device, queue);
     streamed_readback_rows_are_padded_and_snapshot_isolated(device, queue);
     content_bounds_stream_rows_across_partial_edges(device, queue);
+    content_bounds_read_bands_with_other_transfers_in_flight(device, queue);
     eprintln!("large-canvas raster baselines: {:?}", start.elapsed());
 }
 
@@ -382,6 +383,15 @@ fn content_bounds_stream_rows_across_partial_edges(device: &wgpu::Device, queue:
     source.put_pixel(1029, 770, Rgba([7, 8, 9, 1]));
     source.put_pixel(1030, 772, Rgba([11, 12, 13, 255]));
     load(&mut canvas, source);
+    // Failed reservations must not cache an incorrect empty result. Legacy
+    // readbacks can temporarily consume the entire 16 MiB staging allowance.
+    let held: Vec<_> = (0..5)
+        .map(|_| canvas.begin_document_layer_readback().unwrap())
+        .collect();
+    assert!(canvas.memory_usage().readbacks > 16 * 1024 * 1024);
+    assert!(canvas.read_selected_layer_content_bounds().is_none());
+    drop(held);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     let bounds = canvas.read_selected_layer_content_bounds().unwrap();
     assert_eq!(bounds.min, [1029.0, 770.0]);
     assert_eq!(bounds.max, [1031.0, 773.0]);
@@ -390,6 +400,48 @@ fn content_bounds_stream_rows_across_partial_edges(device: &wgpu::Device, queue:
     assert_eq!(canvas.read_selected_layer_content_bounds(), None);
     assert!(canvas.undo());
     assert_eq!(canvas.read_selected_layer_content_bounds(), Some(bounds));
+}
+
+fn content_bounds_read_bands_with_other_transfers_in_flight(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) {
+    use chromazen_canvas::tiles::TileCoord;
+    let size = [2049, 1025]; // Full padded readback exceeds the 8 MiB band allowance.
+    let brush = RgbaImage::from_pixel(1, 1, Rgba([255; 4]));
+    let mut canvas = Canvas::new(
+        device.clone(),
+        queue.clone(),
+        wgpu::TextureFormat::Rgba8Unorm,
+        super::RENDER_SIZE,
+        size,
+        &brush,
+        [0.16; 3],
+    )
+    .unwrap();
+    let mut source = RgbaImage::new(size[0], size[1]);
+    source.put_pixel(2048, 995, Rgba([0, 0, 1, 1]));
+    source.put_pixel(100, 1024, Rgba([255, 255, 255, 255]));
+    load(&mut canvas, source);
+    let layer = canvas.document_snapshot().selected_layer;
+    // Eight full tiles hold exactly 8 MiB of the 16 MiB staging budget.
+    // A whole-layer bounds readback would fail; successive bands must succeed.
+    let held: Vec<_> = (0..2)
+        .flat_map(|y| (0..4).map(move |x| TileCoord { x, y }))
+        .map(|coord| canvas.begin_layer_tile_readback(layer, coord).unwrap())
+        .collect();
+    assert_eq!(canvas.memory_usage().readbacks, 8 * 1024 * 1024);
+    assert_eq!(
+        canvas.read_selected_layer_content_bounds(),
+        Some(chromazen_canvas::LayerContentBounds {
+            min: [100.0, 995.0],
+            max: [2049.0, 1025.0],
+        })
+    );
+    assert_eq!(canvas.memory_usage().readbacks, 8 * 1024 * 1024);
+    drop(held);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    assert_eq!(canvas.memory_usage().readbacks, 0);
 }
 
 fn streamed_readback_rows_are_padded_and_snapshot_isolated(
