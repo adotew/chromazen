@@ -277,6 +277,186 @@ fn layer_pipeline_samples_only_the_tile_region_in_document_space() {
     assert_eq!(std::mem::size_of::<LayerTileUniform>(), 16);
 }
 
+#[test]
+#[ignore = "requires a wgpu adapter"]
+fn sparse_tile_display_matches_full_layer_under_rotation_and_flip() {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    let document = [64, 64];
+    let surface = [80, 80];
+    let resources = RenderResources::new(
+        &device,
+        &queue,
+        document,
+        surface,
+        DOCUMENT_FORMAT,
+        &image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4])),
+    )
+    .unwrap();
+    let pixels = image::RgbaImage::from_fn(64, 64, |x, y| {
+        if x >= 32 && y >= 32 {
+            image::Rgba([0; 4])
+        } else {
+            image::Rgba([x as u8 * 3, y as u8 * 3, 16, 192])
+        }
+    });
+    let (full, full_view) = create_paint_texture(&device, document);
+    queue.write_texture(
+        full.as_image_copy(),
+        pixels.as_raw(),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(256),
+            rows_per_image: Some(64),
+        },
+        full.size(),
+    );
+    let settings = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("tile comparison opacity"),
+        contents: bytemuck::bytes_of(&LayerSettingsUniform {
+            opacity: 1.0,
+            padding: [0.0; 3],
+        }),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let bind = |view: &wgpu::TextureView, region: &wgpu::Buffer| {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("tile comparison blit"),
+            layout: &resources.blit_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&resources.paint_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: resources.view_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: settings.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: region.as_entire_binding(),
+                },
+            ],
+        })
+    };
+    let full_region = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("full comparison region"),
+        contents: bytemuck::bytes_of(&LayerTileUniform::full_document(document)),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let full_group = bind(&full_view, &full_region);
+    let mut _tiles = Vec::new();
+    let mut groups = Vec::new();
+    for (x, y) in [(0, 0), (32, 0), (0, 32)] {
+        let (tile, tile_view) = create_paint_texture(&device, [32, 32]);
+        let cropped = image::imageops::crop_imm(&pixels, x, y, 32, 32).to_image();
+        queue.write_texture(
+            tile.as_image_copy(),
+            cropped.as_raw(),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(128),
+                rows_per_image: Some(32),
+            },
+            tile.size(),
+        );
+        let region = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("tile comparison region"),
+            contents: bytemuck::bytes_of(&LayerTileUniform {
+                origin: [x as f32, y as f32],
+                extent: [32.0; 2],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        groups.push(bind(&tile_view, &region));
+        _tiles.push((tile, region));
+    }
+    let (whole_output, whole_view) = create_paint_texture(&device, surface);
+    let (tiled_output, tiled_view) = create_paint_texture(&device, surface);
+    let tracker = Arc::new(crate::renderer::diagnostics::ReadbackTracker::default());
+    for (angle, flip) in [(0.0_f32, false), (0.43, false), (-0.89, true)] {
+        let (sin, cos) = angle.sin_cos();
+        let scale = 0.8;
+        let flip = if flip { -1.0 } else { 1.0 };
+        let x_axis = [flip * cos * scale, flip * sin * scale];
+        let y_axis = [-sin * scale, cos * scale];
+        let view = ViewUniform {
+            document_from_window_x: [
+                x_axis[0],
+                x_axis[1],
+                32.0 - 40.0 * (x_axis[0] + x_axis[1]),
+                0.0,
+            ],
+            document_from_window_y: [
+                y_axis[0],
+                y_axis[1],
+                32.0 - 40.0 * (y_axis[0] + y_axis[1]),
+                0.0,
+            ],
+            paint_dims: [64.0; 2],
+            padding: [0.0; 2],
+            background_color: [0.0; 4],
+        };
+        queue.write_buffer(&resources.view_uniform_buffer, 0, bytemuck::bytes_of(&view));
+        let mut encoder = device.create_command_encoder(&Default::default());
+        draw(
+            &mut encoder,
+            &whole_view,
+            &resources.layer_pipeline,
+            &full_group,
+            3,
+        );
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("sparse tile display comparison"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &tiled_view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&resources.layer_pipeline);
+            for group in &groups {
+                pass.set_bind_group(0, group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+        }
+        queue.submit([encoder.finish()]);
+        let readback = persistence::begin_read_regions(
+            &device,
+            &queue,
+            [
+                (LayerId(1), &whole_output, [0; 2]),
+                (LayerId(2), &tiled_output, [0; 2]),
+            ]
+            .into_iter(),
+            surface,
+            tracker.retain(persistence::readback_byte_len(surface) * 2),
+        )
+        .finish()
+        .unwrap();
+        assert_eq!(readback[0].1, readback[1].1, "angle={angle}, flip={flip}");
+    }
+    assert_eq!(tracker.live(), 0);
+}
+
 fn stamp_group(
     device: &wgpu::Device,
     resources: &RenderResources,
