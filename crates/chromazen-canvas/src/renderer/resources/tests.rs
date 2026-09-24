@@ -166,6 +166,117 @@ fn tile_origins_and_independent_smudge_sources_match_document_pixels() {
     assert_eq!(tracker.live(), 0);
 }
 
+#[test]
+#[ignore = "requires a wgpu adapter"]
+fn layer_pipeline_samples_only_the_tile_region_in_document_space() {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    let document = [64, 64];
+    let resources = RenderResources::new(
+        &device,
+        &queue,
+        document,
+        document,
+        DOCUMENT_FORMAT,
+        &image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4])),
+    )
+    .unwrap();
+    let (tile, tile_view) = create_paint_texture(&device, [7, 13]);
+    let pixels = image::RgbaImage::from_fn(7, 13, |x, y| {
+        image::Rgba([x as u8 * 30, y as u8 * 15, 0, 255])
+    });
+    queue.write_texture(
+        tile.as_image_copy(),
+        pixels.as_raw(),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(7 * 4),
+            rows_per_image: Some(13),
+        },
+        tile.size(),
+    );
+    let region = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("immutable tile blit region"),
+        contents: bytemuck::bytes_of(&LayerTileUniform {
+            origin: [25.0, 30.0],
+            extent: [7.0, 13.0],
+        }),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let settings = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("tile blit opacity"),
+        contents: bytemuck::bytes_of(&LayerSettingsUniform {
+            opacity: 1.0,
+            padding: [0.0; 3],
+        }),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("tile blit"),
+        layout: &resources.blit_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Sampler(&resources.paint_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&tile_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: resources.view_uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: settings.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: region.as_entire_binding(),
+            },
+        ],
+    });
+    let (output, view) = create_paint_texture(&device, document);
+    queue.write_buffer(
+        &resources.view_uniform_buffer,
+        0,
+        bytemuck::bytes_of(&ViewUniform {
+            document_from_window_x: [1.0, 0.0, 0.0, 0.0],
+            document_from_window_y: [0.0, 1.0, 0.0, 0.0],
+            paint_dims: [64.0; 2],
+            padding: [0.0; 2],
+            background_color: [0.0; 4],
+        }),
+    );
+    let mut encoder = device.create_command_encoder(&Default::default());
+    draw(&mut encoder, &view, &resources.layer_pipeline, &group, 3);
+    queue.submit([encoder.finish()]);
+    let tracker = Arc::new(crate::renderer::diagnostics::ReadbackTracker::default());
+    let image = persistence::begin_read_regions(
+        &device,
+        &queue,
+        std::iter::once((LayerId(1), &output, [0; 2])),
+        document,
+        tracker.retain(persistence::readback_byte_len(document)),
+    )
+    .finish()
+    .unwrap()
+    .remove(0)
+    .1;
+    for (x, y, pixel) in image.enumerate_pixels() {
+        let expected = if (25..32).contains(&x) && (30..43).contains(&y) {
+            *pixels.get_pixel(x - 25, y - 30)
+        } else {
+            image::Rgba([0; 4])
+        };
+        assert_eq!(*pixel, expected, "({x},{y})");
+    }
+    assert_eq!(tracker.live(), 0);
+    assert_eq!(std::mem::size_of::<LayerTileUniform>(), 16);
+}
+
 fn stamp_group(
     device: &wgpu::Device,
     resources: &RenderResources,

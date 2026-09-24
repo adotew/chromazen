@@ -7,8 +7,8 @@ use super::layers::{LayerId, LayerProperties, LayerResourceId, PaintLayer};
 use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
 use super::{
     CursorRaw, DEFAULT_BACKGROUND_COLOR, DOCUMENT_FORMAT, LAYER_PREVIEW_SIZE, LayerPreviewUniform,
-    LayerSettingsUniform, LayerTransform, PaintUniform, STROKE_MASK_FORMAT, StrokeUniform,
-    ViewUniform,
+    LayerSettingsUniform, LayerTileUniform, LayerTransform, PaintUniform, STROKE_MASK_FORMAT,
+    StrokeUniform, ViewUniform,
 };
 
 pub(crate) struct RenderResources {
@@ -19,6 +19,7 @@ pub(crate) struct RenderResources {
     pub(crate) view_uniform_buffer: wgpu::Buffer,
     stroke_uniform_buffer: wgpu::Buffer,
     layer_preview_uniform_buffer: wgpu::Buffer,
+    layer_tile_uniform_buffer: wgpu::Buffer,
     transform_uniform_buffer: wgpu::Buffer,
     pub(crate) stamp_bind_group: wgpu::BindGroup,
     pub(crate) preview_stamp_bind_group: wgpu::BindGroup,
@@ -114,6 +115,12 @@ impl RenderResources {
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
+        let layer_tile_uniform_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("full-document layer region uniform buffer"),
+                contents: bytemuck::bytes_of(&LayerTileUniform::full_document(document_size)),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
         let stroke_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("stroke uniform buffer"),
             contents: bytemuck::bytes_of(&StrokeUniform { color: [0.0; 4] }),
@@ -308,6 +315,7 @@ impl RenderResources {
                         },
                         count: None,
                     },
+                    uniform_layout_entry(4),
                 ],
             });
         let clipped_layer_bind_group_layout =
@@ -541,6 +549,10 @@ impl RenderResources {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: clipping_group_settings_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: layer_tile_uniform_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -1084,6 +1096,7 @@ impl RenderResources {
             view_uniform_buffer,
             stroke_uniform_buffer,
             layer_preview_uniform_buffer,
+            layer_tile_uniform_buffer,
             transform_uniform_buffer,
             stamp_bind_group,
             preview_stamp_bind_group,
@@ -1159,6 +1172,7 @@ impl RenderResources {
                 &self.view_uniform_buffer,
                 &self.stroke_uniform_buffer,
                 &self.layer_preview_uniform_buffer,
+                &self.layer_tile_uniform_buffer,
                 &self.transform_uniform_buffer,
                 &self.clipping_group_settings_buffer,
             ]
@@ -1309,6 +1323,11 @@ impl RenderResources {
             bytemuck::bytes_of(&PaintUniform::full_document(document_size)),
         );
         queue.write_buffer(
+            &self.layer_tile_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&LayerTileUniform::full_document(document_size)),
+        );
+        queue.write_buffer(
             &self.layer_preview_uniform_buffer,
             0,
             bytemuck::bytes_of(&LayerPreviewUniform {
@@ -1339,6 +1358,10 @@ impl RenderResources {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: self.clipping_group_settings_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.layer_tile_uniform_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -1423,6 +1446,10 @@ impl RenderResources {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: settings_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.layer_tile_uniform_buffer.as_entire_binding(),
                 },
             ],
         });

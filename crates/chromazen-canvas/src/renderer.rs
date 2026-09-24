@@ -109,6 +109,22 @@ struct LayerPreviewUniform {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct LayerTileUniform {
+    origin: [f32; 2],
+    extent: [f32; 2],
+}
+
+impl LayerTileUniform {
+    fn full_document(size: [u32; 2]) -> Self {
+        Self {
+            origin: [0.0; 2],
+            extent: size.map(|value| value as f32),
+        }
+    }
+}
+
+#[repr(C)]
 #[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
 struct ViewUniform {
     document_from_window_x: [f32; 4],

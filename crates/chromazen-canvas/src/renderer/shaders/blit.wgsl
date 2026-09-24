@@ -2,9 +2,15 @@
 @group(0) @binding(1) var paintTex: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> view: View;
 @group(0) @binding(3) var<uniform> layer: LayerSettings;
+@group(0) @binding(4) var<uniform> tile: Tile;
 
 struct LayerSettings {
   opacity: f32,
+};
+
+struct Tile {
+  origin: vec2f,
+  extent: vec2f,
 };
 
 struct View {
@@ -49,6 +55,10 @@ fn fs_layer(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   if (is_outside_canvas(uv)) {
     return vec4f(0.0);
   }
+  let document = uv * view.paintDims;
+  if (any(document < tile.origin) || any(document >= tile.origin + tile.extent)) {
+    return vec4f(0.0);
+  }
   // Paint textures are premultiplied, so opacity scales every channel.
-  return textureSampleLevel(paintTex, paintSampler, uv, 0.0) * layer.opacity;
+  return textureSampleLevel(paintTex, paintSampler, (document - tile.origin) / tile.extent, 0.0) * layer.opacity;
 }
