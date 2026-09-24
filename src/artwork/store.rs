@@ -555,7 +555,7 @@ impl ArtworkStore {
             return;
         };
         let current_name = format!("{current_revision:016}");
-        let pins = self.pins.lock().unwrap();
+        let mut pins = self.pins.lock().unwrap();
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
@@ -568,6 +568,11 @@ impl ArtworkStore {
                 let _ = fs::remove_dir_all(entry.path());
             }
         }
+        // Only weak references remain in the registry; do not accumulate one
+        // metadata entry per revision over the lifetime of a busy gallery.
+        let artwork = self.artwork_path(id);
+        pins.paths
+            .retain(|path, pin| !path.starts_with(&artwork) || pin.strong_count() != 0);
     }
 
     fn artwork_path(&self, id: &ArtworkId) -> PathBuf {
