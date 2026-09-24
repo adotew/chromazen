@@ -78,8 +78,27 @@ impl CanvasSizeConstraints {
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct PaintUniform {
+    // Keep the six vec2 fields synchronized with Paint in stamp/smudge.wgsl.
     dims: [f32; 2],
+    origin: [f32; 2],
+    source_dims: [f32; 2],
+    source_origin: [f32; 2],
+    document_dims: [f32; 2],
     padding: [f32; 2],
+}
+
+impl PaintUniform {
+    fn full_document(size: [u32; 2]) -> Self {
+        let dims = size.map(|value| value as f32);
+        Self {
+            dims,
+            origin: [0.0; 2],
+            source_dims: dims,
+            source_origin: [0.0; 2],
+            document_dims: dims,
+            padding: [0.0; 2],
+        }
+    }
 }
 
 #[repr(C)]

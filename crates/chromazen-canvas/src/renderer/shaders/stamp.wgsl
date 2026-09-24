@@ -5,6 +5,10 @@
 
 struct Paint {
   dims: vec2f,
+  origin: vec2f,
+  sourceDims: vec2f,
+  sourceOrigin: vec2f,
+  documentDims: vec2f,
   padding: vec2f,
 };
 
@@ -43,7 +47,8 @@ fn vs(
 ) -> VertexOut {
   let brush = brushes[instanceIndex];
   let corner = quad_corner(vertexIndex);
-  let paintPos = brush.center + corner * brush.halfSize;
+  // Dabs stay in document coordinates; only the destination projection is local.
+  let paintPos = brush.center + corner * brush.halfSize - paint.origin;
 
   var out: VertexOut;
   out.position = vec4f(

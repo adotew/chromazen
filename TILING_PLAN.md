@@ -265,7 +265,7 @@ Verification commands during implementation:
 ```sh
 cargo fmt --all -- --check
 cargo test --workspace
-cargo test -p chromazen-canvas --test headless -- --ignored
+cargo test -p chromazen-canvas -- --ignored
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo check -p chromazen-web --target wasm32-unknown-unknown
 cd web && npm run wasm && npm run check && npm run build
@@ -330,6 +330,8 @@ The first production conversion removes the document-sized history mirror. Histo
 Before-images now use the phase-1 immutable version identities and a small GPU residency table (`renderer/tiles.rs`). The table holds weak version references, while history holds the strong references; dropping a redo branch or evicting history releases dead GPU entries. Undo captures the alternate pixels in a new version rather than mutating a published one. While live layers remain monolithic this still copies pixels and temporarily retains submitted resources; it is not yet the bounded residency cache from phase 5. Once live layers share these indexes, undo can exchange version references instead.
 
 `Canvas::begin_layer_tile_readback` adds a cropped, snapshot-isolated single-tile transfer path with a 16 MiB staging budget. Budget reservation is atomic, includes row padding and stays live through mapping callbacks and caller ownership. Region copies reuse the existing native/async readback completion path. GPU tests cover all six regions of the partial-edge fixture, exact pixels, invalid requests, edit-after-capture isolation, budget saturation/retry, and abandoned callbacks. A concurrent reservation unit test covers the check/reserve race. This API freezes one tile; multiple calls are not yet a frozen document save snapshot.
+
+Stamp projection now accepts a document-space target origin. Smudge has separate bounded source and pre-dab target bindings, source-region origin/extent, and actual document dimensions for edge clamping. Rust/WGSL `Paint` grew from 16 to 48 bytes; all creation/resize/brush-replacement bindings were updated together. A GPU regression uses independent immutable uniforms for draws encoded in one submission, distant source/target coordinates in a virtual 16K document, and padded source regions crossing both document edges. Actual textures are only 16 × 16. Existing production callers still use the full-document adapter with origin zero; public canvas limits are unchanged. Run **all** ignored canvas tests (`cargo test -p chromazen-canvas -- --ignored`) to include this new colocated GPU test as well as the integration baselines.
 
 These are intermediate changes, **not the phase-2 acceptance gate**: live layers, masks, clipping scratch, operation sources and legacy whole-image readback remain monolithic. Layer-version sharing and the coupled tiled display/mask conversion are still required. No second renderer or higher document limit has been introduced. A new distant-dab GPU regression checks the sparse history allocation across separate frame submissions, exact undo/redo, and replacement of the redo branch.
 

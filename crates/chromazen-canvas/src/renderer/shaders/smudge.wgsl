@@ -6,9 +6,16 @@ const SMUDGE_MAX_ADVECTION: f32 = 0.35;
 @group(0) @binding(2) var<storage, read> brushes: array<Brush>;
 @group(0) @binding(3) var<uniform> paint: Paint;
 @group(0) @binding(4) var sourceTexture: texture_2d<f32>;
+// Stable pre-dab destination pixels, independently bounded from the dragged
+// source. Large source displacement must not require a union-sized texture.
+@group(0) @binding(5) var targetTexture: texture_2d<f32>;
 
 struct Paint {
   dims: vec2f,
+  origin: vec2f,
+  sourceDims: vec2f,
+  sourceOrigin: vec2f,
+  documentDims: vec2f,
   padding: vec2f,
 };
 
@@ -49,7 +56,7 @@ fn vs(
   let brush = brushes[instanceIndex];
   let corner = quad_corner(vertexIndex);
   let offset = corner * brush.halfSize;
-  let paintPos = brush.center + offset;
+  let paintPos = brush.center + offset - paint.origin;
 
   var out: VertexOut;
   out.position = vec4f(
@@ -66,8 +73,9 @@ fn vs(
 
 fn sample_source(pos: vec2f) -> vec4f {
   // Varying paint positions are already at texel centers (n + 0.5).
-  let clampedPos = clamp(pos, vec2f(0.5), paint.dims - vec2f(0.5));
-  return textureSampleLevel(sourceTexture, brushSampler, clampedPos / paint.dims, 0.0);
+  let clampedPos = clamp(pos, vec2f(0.5), paint.documentDims - vec2f(0.5));
+  let sourceUv = (clampedPos - paint.sourceOrigin) / paint.sourceDims;
+  return textureSampleLevel(sourceTexture, brushSampler, sourceUv, 0.0);
 }
 
 @fragment
@@ -75,7 +83,7 @@ fn fs(in: VertexOut) -> @location(0) vec4f {
   let mask = textureSample(brushStamp, brushSampler, in.uv).a;
   let base = clamp(in.strength * mask, 0.0, 1.0);
   let strength = SMUDGE_MAX_ADVECTION * base;
-  let targetColor = textureLoad(sourceTexture, vec2i(in.position.xy), 0);
+  let targetColor = textureLoad(targetTexture, vec2i(in.position.xy), 0);
   let draggedColor = sample_source(in.sourcePos);
   return mix(targetColor, draggedColor, strength);
 }

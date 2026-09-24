@@ -1,5 +1,8 @@
 use wgpu::util::DeviceExt;
 
+#[cfg(test)]
+mod tests;
+
 use super::layers::{LayerId, LayerProperties, LayerResourceId, PaintLayer};
 use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
 use super::{
@@ -97,10 +100,7 @@ impl RenderResources {
         });
         let stamp_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("stamp uniform buffer"),
-            contents: bytemuck::bytes_of(&PaintUniform {
-                dims: [document_size[0] as f32, document_size[1] as f32],
-                padding: [0.0, 0.0],
-            }),
+            contents: bytemuck::bytes_of(&PaintUniform::full_document(document_size)),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let view_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -228,6 +228,7 @@ impl RenderResources {
                         },
                         count: None,
                     },
+                    texture_layout_entry(5),
                 ],
             });
         let [stamp_bind_group, preview_stamp_bind_group] = create_stamp_bind_groups(
@@ -237,7 +238,7 @@ impl RenderResources {
             &brush_texture_view,
             [&stamp_buffer, &preview_stamp_buffer],
             &stamp_uniform_buffer,
-            &smudge_texture_view,
+            [&smudge_texture_view; 2],
         );
         let cursor_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1305,10 +1306,7 @@ impl RenderResources {
         queue.write_buffer(
             &self.stamp_uniform_buffer,
             0,
-            bytemuck::bytes_of(&PaintUniform {
-                dims: [document_size[0] as f32, document_size[1] as f32],
-                padding: [0.0; 2],
-            }),
+            bytemuck::bytes_of(&PaintUniform::full_document(document_size)),
         );
         queue.write_buffer(
             &self.layer_preview_uniform_buffer,
@@ -1357,7 +1355,7 @@ impl RenderResources {
             &self.brush_texture_view,
             [&self.stamp_buffer, &self.preview_stamp_buffer],
             &self.stamp_uniform_buffer,
-            &smudge_texture_view,
+            [&smudge_texture_view; 2],
         );
         let stroke_commit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("stroke commit bind group"),
@@ -1525,7 +1523,7 @@ impl RenderResources {
             &brush_texture_view,
             [&self.stamp_buffer, &self.preview_stamp_buffer],
             &self.stamp_uniform_buffer,
-            &self.smudge_texture_view,
+            [&self.smudge_texture_view; 2],
         );
         let cursor_bind_group = create_cursor_bind_group(
             device,
@@ -1551,7 +1549,7 @@ fn create_stamp_bind_groups(
     brush: &wgpu::TextureView,
     stamp_buffers: [&wgpu::Buffer; 2],
     uniform: &wgpu::Buffer,
-    smudge: &wgpu::TextureView,
+    smudge_sources: [&wgpu::TextureView; 2],
 ) -> [wgpu::BindGroup; 2] {
     stamp_buffers.map(|stamps| {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1576,7 +1574,11 @@ fn create_stamp_bind_groups(
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(smudge),
+                    resource: wgpu::BindingResource::TextureView(smudge_sources[0]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(smudge_sources[1]),
                 },
             ],
         })
