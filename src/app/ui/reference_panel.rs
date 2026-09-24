@@ -54,6 +54,7 @@ impl GuiLayer {
         workspace_rect: egui::Rect,
     ) {
         self.reference_hit_rects.clear();
+        self.selected_reference_resize_rect = None;
         self.pointer_over_reference = false;
         self.pointer_over_selected_reference = false;
         let pointer_position = context.pointer_latest_pos();
@@ -114,7 +115,7 @@ impl GuiLayer {
                     .1
                     .intersect(workspace_rect);
                 if resize_rect.is_positive() {
-                    self.reference_hit_rects.push(resize_rect);
+                    self.selected_reference_resize_rect = Some(resize_rect);
                 }
             }
 
@@ -266,11 +267,13 @@ impl GuiLayer {
 
     pub(crate) fn window_point_over_reference(&self, point: [f32; 2]) -> bool {
         let pixels_per_point = self.context.pixels_per_point();
-        window_point_over_rects(point, pixels_per_point, &self.reference_hit_rects)
-            && self.reference_layer_at(egui::pos2(
-                point[0] / pixels_per_point,
-                point[1] / pixels_per_point,
-            ))
+        let point = egui::pos2(point[0] / pixels_per_point, point[1] / pixels_per_point);
+        reference_hit_at(
+            point,
+            &self.reference_hit_rects,
+            self.selected_reference_resize_rect,
+            self.reference_layer_at(point),
+        )
     }
 
     pub(super) fn clear_reference_selection_on_outside_press(&mut self, context: &egui::Context) {

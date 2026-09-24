@@ -192,6 +192,7 @@ pub struct GuiLayer {
     selected_reference: Option<ReferenceId>,
     reference_transform_edit: Option<ReferenceTransformEdit>,
     reference_hit_rects: Vec<egui::Rect>,
+    selected_reference_resize_rect: Option<egui::Rect>,
     pointer_over_reference: bool,
     pointer_over_selected_reference: bool,
     brush_previews: Vec<(String, egui::TextureHandle)>,
@@ -437,6 +438,7 @@ impl GuiLayer {
             selected_reference: None,
             reference_transform_edit: None,
             reference_hit_rects: Vec::new(),
+            selected_reference_resize_rect: None,
             pointer_over_reference: false,
             pointer_over_selected_reference: false,
             brush_previews: Vec::new(),
@@ -1246,9 +1248,14 @@ fn paint_reference_selection(
     }
 }
 
-fn window_point_over_rects(point: [f32; 2], pixels_per_point: f32, rects: &[egui::Rect]) -> bool {
-    let point = egui::pos2(point[0] / pixels_per_point, point[1] / pixels_per_point);
-    rects.iter().any(|rect| rect.contains(point))
+fn reference_hit_at(
+    point: egui::Pos2,
+    image_rects: &[egui::Rect],
+    resize_rect: Option<egui::Rect>,
+    over_image_layer: bool,
+) -> bool {
+    resize_rect.is_some_and(|rect| rect.contains(point))
+        || (over_image_layer && image_rects.iter().any(|rect| rect.contains(point)))
 }
 
 fn pointer_over_visible_reference(
@@ -1945,14 +1952,31 @@ mod tests {
     }
 
     #[test]
-    fn physical_window_points_hit_cached_reference_rects() {
-        let rects = [egui::Rect::from_min_max(
-            egui::pos2(20.0, 30.0),
-            egui::pos2(120.0, 130.0),
-        )];
+    fn outer_resize_handle_press_is_reference_input_without_image_layer() {
+        let image = egui::Rect::from_min_max(egui::pos2(20.0, 30.0), egui::pos2(120.0, 130.0));
+        let resize = reference_resize_handle_geometry(image).1;
+        let outer_edge = egui::pos2(128.0, 138.0);
 
-        assert!(window_point_over_rects([100.0, 120.0], 2.0, &rects));
-        assert!(!window_point_over_rects([10.0, 10.0], 2.0, &rects));
+        assert!(!image.contains(outer_edge));
+        assert!(reference_hit_at(outer_edge, &[image], Some(resize), false));
+        assert!(!reference_hit_at(
+            egui::pos2(50.0, 50.0),
+            &[image],
+            Some(resize),
+            false,
+        ));
+        assert!(reference_hit_at(
+            egui::pos2(50.0, 50.0),
+            &[image],
+            Some(resize),
+            true,
+        ));
+        assert!(!reference_hit_at(
+            egui::pos2(140.0, 138.0),
+            &[image],
+            Some(resize),
+            false,
+        ));
     }
 
     #[test]
