@@ -4,12 +4,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chromazen_canvas::{Canvas, DocumentVersions, LayerId};
+use chromazen_canvas::{Canvas, CanvasDocument, DocumentVersions, LayerId};
 use image::imageops::FilterType;
 
 use crate::artwork::{
     ArtworkId, ArtworkStore, CompositeLayer, LayerSource, LayerWrite, ReferenceSource,
-    ReferenceWrite, RevisionWrite, encode_png, flatten_premultiplied_layers,
+    ReferenceWrite, RevisionWrite, ThumbnailSource, encode_png, flatten_premultiplied_layers,
 };
 
 use super::references::{ReferenceBoard, ReferenceId, ReferenceVersions};
@@ -34,9 +34,33 @@ struct SaveVersions {
     brush_color: [u8; 4],
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct VisualSignature {
+    size: [u32; 2],
+    background: [u8; 3],
+    // The order and compositing settings affect the gallery thumbnail; the
+    // selected layer, names, references and brush color do not.
+    layers: Vec<(LayerId, bool, u8, bool)>,
+}
+
+impl From<&CanvasDocument> for VisualSignature {
+    fn from(document: &CanvasDocument) -> Self {
+        Self {
+            size: document.size,
+            background: document.background,
+            layers: document
+                .layers
+                .iter()
+                .map(|layer| (layer.id, layer.visible, layer.opacity, layer.clipped))
+                .collect(),
+        }
+    }
+}
+
 struct SaveCompletion {
     artwork_id: ArtworkId,
     versions: SaveVersions,
+    visual: VisualSignature,
     result: Result<(), String>,
 }
 
@@ -44,6 +68,7 @@ struct ArtworkSession {
     id: ArtworkId,
     title: String,
     saved_versions: SaveVersions,
+    saved_visual: Option<VisualSignature>,
     in_flight: Option<SaveVersions>,
     dirty_since: Option<Instant>,
     save_requested: bool,
@@ -91,6 +116,7 @@ impl AutosaveController {
                 },
                 brush_color,
             },
+            saved_visual: None,
             in_flight: None,
             dirty_since: Some(Instant::now()),
             save_requested: false,
@@ -105,6 +131,7 @@ impl AutosaveController {
         versions: DocumentVersions,
         reference_versions: ReferenceVersions,
         brush_color: [u8; 4],
+        document: &CanvasDocument,
     ) {
         self.brush_color = brush_color;
         self.session = Some(ArtworkSession {
@@ -115,6 +142,7 @@ impl AutosaveController {
                 references: reference_versions,
                 brush_color,
             },
+            saved_visual: Some(VisualSignature::from(document)),
             in_flight: None,
             dirty_since: None,
             save_requested: false,
@@ -159,7 +187,9 @@ impl AutosaveController {
         if session.in_flight.is_some() {
             return SaveStatus::Saving;
         }
-        if capture_save_versions(paint, references, self.brush_color) != session.saved_versions {
+        if session.save_requested
+            || capture_save_versions(paint, references, self.brush_color) != session.saved_versions
+        {
             SaveStatus::Waiting
         } else {
             SaveStatus::Clean
@@ -242,11 +272,20 @@ impl AutosaveController {
             .iter()
             .map(|reference| (reference.id, Arc::clone(&reference.png)))
             .collect();
-        let readback = paint.begin_document_layer_readback()?;
         let dirty_layer_ids = changed_layer_ids(&session.saved_versions.paint, &versions.paint);
         let dirty_reference_ids =
             changed_reference_ids(&session.saved_versions.references, &versions.references);
         let first_revision = session.saved_versions.paint.layers.is_empty();
+        let visual = VisualSignature::from(&paint.document_snapshot());
+        let reuse_thumbnail = !first_revision
+            && dirty_layer_ids.is_empty()
+            && session.saved_visual.as_ref() == Some(&visual);
+        // Title, selection, brush color, references and layer renames need no
+        // GPU transfer. A visual change still needs the exact same snapshot
+        // pixels as the layer writes and thumbnail.
+        let readback = (!reuse_thumbnail)
+            .then(|| paint.begin_document_layer_readback())
+            .transpose()?;
         let artwork_id = session.id.clone();
         let title = session.title.clone();
         session.in_flight = Some(versions.clone());
@@ -256,7 +295,7 @@ impl AutosaveController {
         let wake = self.wake.clone();
         std::thread::spawn(move || {
             let result = (|| {
-                let images = readback.finish()?;
+                let images = readback.map(|readback| readback.finish()).transpose()?;
                 let write = build_revision_write(
                     document,
                     images,
@@ -273,6 +312,7 @@ impl AutosaveController {
             let _ = sender.send(SaveCompletion {
                 artwork_id,
                 versions,
+                visual,
                 result,
             });
             wake();
@@ -293,6 +333,7 @@ impl AutosaveController {
             match completion.result {
                 Ok(()) => {
                     session.saved_versions = completion.versions;
+                    session.saved_visual = Some(completion.visual);
                     session.error = None;
                     self.catalog_dirty = true;
                     if capture_save_versions(paint, references, self.brush_color)
@@ -347,16 +388,25 @@ fn changed_reference_ids(
 
 fn build_revision_write(
     document: crate::artwork::DocumentManifest,
-    images: Vec<(LayerId, image::RgbaImage)>,
+    images: Option<Vec<(LayerId, image::RgbaImage)>>,
     dirty_layer_ids: &HashSet<LayerId>,
     reference_images: Vec<(ReferenceId, Arc<Vec<u8>>)>,
     dirty_reference_ids: &HashSet<ReferenceId>,
     first_revision: bool,
 ) -> Result<RevisionWrite, String> {
-    let thumbnail_png = encode_thumbnail(&images, &document)?;
-    let mut layers = Vec::with_capacity(images.len());
-    for (id, image) in images {
+    let thumbnail = match &images {
+        Some(images) => ThumbnailSource::Png(encode_thumbnail(images, &document)?),
+        None if !first_revision && dirty_layer_ids.is_empty() => ThumbnailSource::ReuseCurrent,
+        None => return Err("cannot save changed layers without snapshot pixels".to_owned()),
+    };
+    let mut images: HashMap<_, _> = images.unwrap_or_default().into_iter().collect();
+    let mut layers = Vec::with_capacity(document.layers.len());
+    for layer in &document.layers {
+        let id = LayerId(layer.id);
         let source = if first_revision || dirty_layer_ids.contains(&id) {
+            let image = images
+                .remove(&id)
+                .ok_or_else(|| format!("missing snapshot pixels for layer {}", layer.id))?;
             LayerSource::Png(encode_png(&image)?)
         } else {
             LayerSource::ReuseCurrent
@@ -378,7 +428,7 @@ fn build_revision_write(
         document,
         layers,
         references,
-        thumbnail_png,
+        thumbnail,
     })
 }
 
@@ -456,6 +506,7 @@ fn fit_thumbnail_dimensions(source: (u32, u32), target: u32) -> (u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn thumbnail_document(
         size: (u32, u32),
@@ -520,6 +571,65 @@ mod tests {
     }
 
     #[test]
+    fn nonvisual_metadata_saves_need_no_layer_readback_or_thumbnail_encoding() {
+        let mut document = thumbnail_document((16, 16), [255; 3]);
+        let before = crate::artwork::canvas_document(&document);
+        document.selected_layer = 1;
+        document.layers[0].name = "Renamed".to_owned();
+        document.brush_color = [1, 2, 3, 255];
+        assert_eq!(
+            VisualSignature::from(&before),
+            VisualSignature::from(&crate::artwork::canvas_document(&document))
+        );
+        let write = build_revision_write(
+            document.clone(),
+            None,
+            &HashSet::new(),
+            Vec::new(),
+            &HashSet::new(),
+            false,
+        )
+        .unwrap();
+        assert!(matches!(write.thumbnail, ThumbnailSource::ReuseCurrent));
+        assert!(matches!(write.layers[0].source, LayerSource::ReuseCurrent));
+        assert!(
+            build_revision_write(
+                document.clone(),
+                None,
+                &HashSet::new(),
+                Vec::new(),
+                &HashSet::new(),
+                true
+            )
+            .is_err()
+        );
+        assert!(
+            build_revision_write(
+                document.clone(),
+                None,
+                &HashSet::from([LayerId(1)]),
+                Vec::new(),
+                &HashSet::new(),
+                false
+            )
+            .is_err()
+        );
+
+        let mut changed = before;
+        changed.layers[0].opacity = 50;
+        assert_ne!(
+            VisualSignature::from(&changed),
+            VisualSignature::from(&crate::artwork::canvas_document(&document))
+        );
+        changed.layers[0].opacity = 100;
+        changed.background = [0; 3];
+        assert_ne!(
+            VisualSignature::from(&changed),
+            VisualSignature::from(&crate::artwork::canvas_document(&document))
+        );
+    }
+
+    #[test]
     fn reference_metadata_changes_reuse_assets() {
         let saved = ReferenceVersions {
             generation: 2,
@@ -534,6 +644,57 @@ mod tests {
             changed_reference_ids(&saved, &moved),
             HashSet::from([ReferenceId(2)])
         );
+    }
+
+    #[test]
+    #[ignore = "requires a wgpu adapter"]
+    fn renaming_a_saved_artwork_never_stages_its_layers_again() {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+        let canvas = Canvas::new(
+            device,
+            queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            [16; 2],
+            [16; 2],
+            &image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4])),
+            [0.16; 3],
+        )
+        .unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let store = ArtworkStore::from_root(temp.path());
+        let id = ArtworkId::new();
+        let mut controller = AutosaveController::new(Some(store.clone()), Arc::new(|| {}));
+        let references = ReferenceBoard::default();
+        let wait = |controller: &mut AutosaveController| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                controller.update(&canvas, &references);
+                if controller.is_clean(&canvas, &references) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            panic!(
+                "autosave did not finish: {:?}",
+                controller.status(&canvas, &references)
+            );
+        };
+        controller.begin_new_session(id.clone(), "First".into(), [170, 187, 204, 255]);
+        controller.request_save();
+        wait(&mut controller);
+        let before = canvas.work_counters().readback_bytes;
+        assert!(before > 0);
+        let thumbnail = fs::read(store.load(&id).unwrap().summary.thumbnail_path).unwrap();
+        controller.rename_artwork("Second".into());
+        assert_eq!(controller.status(&canvas, &references), SaveStatus::Waiting);
+        wait(&mut controller);
+        assert_eq!(canvas.work_counters().readback_bytes, before);
+        let saved = store.load(&id).unwrap();
+        assert_eq!(saved.summary.title, "Second");
+        assert_eq!(fs::read(saved.summary.thumbnail_path).unwrap(), thumbnail);
     }
 
     #[test]

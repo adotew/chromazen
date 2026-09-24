@@ -216,6 +216,7 @@ impl App {
                 versions,
                 self.references.versions(),
                 opened.document.brush_color,
+                &canvas_document,
             );
         } else {
             self.pending_reference_load = Some(PendingReferenceLoad {
@@ -223,6 +224,7 @@ impl App {
                 title: opened.title,
                 paint_versions: versions,
                 brush_color: opened.document.brush_color,
+                document: canvas_document,
             });
             self.reference_load
                 .start(opened.id, opened.reference_sources, opened.revision_lease);

@@ -15,7 +15,7 @@ pub(crate) use raster::{
 };
 pub(crate) use store::{
     ArtworkId, ArtworkStore, ArtworkSummary, LayerSource, LayerWrite, ReferenceSource,
-    ReferenceWrite, RevisionLease, RevisionWrite,
+    ReferenceWrite, RevisionLease, RevisionWrite, ThumbnailSource,
 };
 
 pub(crate) fn canvas_document(document: &DocumentManifest) -> CanvasDocument {

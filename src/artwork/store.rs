@@ -109,11 +109,16 @@ pub(crate) struct ReferenceWrite {
     pub(crate) source: ReferenceSource,
 }
 
+pub(crate) enum ThumbnailSource {
+    Png(Vec<u8>),
+    ReuseCurrent,
+}
+
 pub(crate) struct RevisionWrite {
     pub(crate) document: DocumentManifest,
     pub(crate) layers: Vec<LayerWrite>,
     pub(crate) references: Vec<ReferenceWrite>,
-    pub(crate) thumbnail_png: Vec<u8>,
+    pub(crate) thumbnail: ThumbnailSource,
 }
 
 pub(crate) struct LoadedArtwork {
@@ -372,9 +377,20 @@ impl ArtworkStore {
             fs::write(temporary.join(DOCUMENT_FILE), document_source).map_err(|error| {
                 ArtworkError::io("write", &temporary.join(DOCUMENT_FILE), error)
             })?;
-            fs::write(temporary.join(THUMBNAIL_FILE), &write.thumbnail_png).map_err(|error| {
-                ArtworkError::io("write", &temporary.join(THUMBNAIL_FILE), error)
-            })?;
+            let thumbnail = temporary.join(THUMBNAIL_FILE);
+            match &write.thumbnail {
+                ThumbnailSource::Png(png) => fs::write(&thumbnail, png)
+                    .map_err(|error| ArtworkError::io("write", &thumbnail, error))?,
+                ThumbnailSource::ReuseCurrent => {
+                    let source = current_revision
+                        .as_ref()
+                        .ok_or_else(|| {
+                            ArtworkError::new("cannot reuse a thumbnail in the first revision")
+                        })?
+                        .join(THUMBNAIL_FILE);
+                    reuse_file(&source, &thumbnail)?;
+                }
+            }
             fs::rename(&temporary, &final_revision)
                 .map_err(|error| ArtworkError::io("commit revision", &final_revision, error))?;
 
@@ -436,7 +452,7 @@ impl ArtworkStore {
                 document: loaded.document,
                 layers,
                 references,
-                thumbnail_png,
+                thumbnail: ThumbnailSource::Png(thumbnail_png),
             },
         )
     }
@@ -666,7 +682,7 @@ mod tests {
                 source: LayerSource::Png(vec![pixel]),
             }],
             references: Vec::new(),
-            thumbnail_png: vec![pixel],
+            thumbnail: ThumbnailSource::Png(vec![pixel]),
         }
     }
 
@@ -699,6 +715,36 @@ mod tests {
         assert!(current_summary.thumbnail_path.exists());
         drop(current_summary);
         store.delete(&id).unwrap();
+    }
+
+    #[test]
+    fn thumbnail_reuse_is_atomic_and_requires_a_previous_revision() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ArtworkStore::from_root(temp.path());
+        let id = ArtworkId::new();
+        let mut first = revision(1);
+        first.thumbnail = ThumbnailSource::ReuseCurrent;
+        assert!(store.commit_revision(&id, "Study", first).is_err());
+        assert!(!store.artwork_path(&id).join(PROJECT_FILE).exists());
+
+        let first = store.commit_revision(&id, "Study", revision(7)).unwrap();
+        drop(first);
+        let mut second = revision(99);
+        second.layers[0].source = LayerSource::ReuseCurrent;
+        second.thumbnail = ThumbnailSource::ReuseCurrent;
+        let saved = store.commit_revision(&id, "Renamed", second).unwrap();
+        assert_eq!(fs::read(&saved.thumbnail_path).unwrap(), [7]);
+        assert_eq!(
+            fs::read(store.revision_path(&id, 2).join("layers/1.png")).unwrap(),
+            [7]
+        );
+        assert_eq!(saved.title, "Renamed");
+        assert_eq!(
+            fs::read_dir(store.artwork_path(&id).join("revisions"))
+                .unwrap()
+                .count(),
+            1
+        );
     }
 
     #[test]

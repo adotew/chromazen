@@ -98,6 +98,7 @@ struct PendingReferenceLoad {
     title: String,
     paint_versions: DocumentVersions,
     brush_color: [u8; 4],
+    document: chromazen_canvas::CanvasDocument,
 }
 
 struct ImportControllers {

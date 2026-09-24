@@ -128,6 +128,7 @@ impl App {
                 pending.paint_versions,
                 self.references.versions(),
                 pending.brush_color,
+                &pending.document,
             );
             if !completion.warnings.is_empty()
                 && let Some(gui) = self.gui.as_mut()
