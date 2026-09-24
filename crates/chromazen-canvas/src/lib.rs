@@ -2,6 +2,7 @@
 
 mod renderer;
 mod smoothing;
+pub mod tiles;
 
 pub use renderer::{
     BrushCursor, Canvas, CanvasDocument, CanvasMemoryUsage, CanvasSizeConstraints, CanvasWork,

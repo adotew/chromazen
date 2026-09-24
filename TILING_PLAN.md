@@ -309,5 +309,19 @@ Eight dense layers multiply these counts/bytes by eight. This is a footprint cal
 
 Verification on the available Linux wgpu adapter: workspace tests, headless GPU tests, workspace/all-feature clippy, formatting, and `cargo check -p chromazen-web --target wasm32-unknown-unknown` pass. The new raster baselines took about 7.3 seconds in the debug test harness (including repeated pipeline setup/readback; not an interactive performance result). The diagnostic fixture with two layers and one stroke reports 17,818,682 owned GPU payload bytes before readback. Other platforms and native UI flows have not been exercised.
 
-Phases 1–7 remain pending at this checkpoint.
+### Phase 1 — Tile model and host request boundary
+
+Implemented in `crates/chromazen-canvas/src/tiles.rs` and `tiles/{versions,requests}.rs`:
+
+- Checked, lazy tile intersections with explicit document/local coordinates, half-open bounds, valid edge extents, negative-region clipping and overflow handling. Huge empty logical grids allocate no pixel array.
+- Sparse `LayerTiles` indexes with shared metadata snapshots and immutable `TileVersion` identities. Editing detaches the populated map, not pixel data; duplicate/history/save snapshots keep the old versions. Dirty comparison includes removed coordinates. Transparent content is absent; unbacked/nonresident content remains distinct.
+- Validated per-version alpha-bound metadata (`Unknown`, `Empty`, or exact bounds), logical-byte accounting with overflow detection, and one-time host backing publication. Backing is a generic host lease, not a native filesystem path; failed writes cannot turn a version into an evictable backed one.
+- Deduplicated asynchronous read request/completion bookkeeping with byte/count limits and globally non-reused request identities. Cancellation keeps its reservations until old jobs acknowledge completion. Missing files and bad dimensions remain errors, and stale/foreign completions cannot publish into current layer maps.
+- Tests using an in-memory host and 64-byte transfer budget, including backing lease lifetime through snapshots and cancelled work. These are request-budget tests, not GPU/CPU-cache eviction tests; residency and spill remain phase 5.
+
+The module is separate from `renderer` because it contains no GPU/window/platform dependencies. It is deliberately **not yet wired into `Canvas`**: phase 2 must replace the interdependent layer, mask, display and history paths together. No unused native I/O controller skeleton was added; the first production host arrives when the renderer actually issues requests. Hosts must budget decoder scratch separately, validate decoded dimensions before allocation, reuse the request queue across document switches, and transfer completion payloads into a residency budget (or drop them) before scheduling more work.
+
+Verification: 98 canvas unit tests (15 new tile-model/request tests), all workspace tests, the expanded headless GPU test, workspace/all-target/all-feature clippy, formatting, and the WASM web-crate compile check pass. No persistence schema, shader layout, existing canvas limits, or UI behavior changed in this phase.
+
+**Next checkpoint: phase 2. Phases 2–7 are not implemented.** Start by choosing the renderer's concrete backing lease type and replacing `PaintLayer` pixels and the history mirror together; do not add a second production renderer or leave whole-document compatibility allocations in the tiled painting path.
 
