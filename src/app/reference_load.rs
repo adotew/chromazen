@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::artwork::{ArtworkId, ReferenceManifest};
+use crate::artwork::{ArtworkId, ReferenceManifest, RevisionLease};
 
 use super::references::{DecodedReference, decode_stored_reference_file};
 
@@ -40,12 +40,14 @@ impl ReferenceLoadController {
         &mut self,
         artwork_id: ArtworkId,
         sources: Vec<(ReferenceManifest, PathBuf)>,
+        lease: Option<RevisionLease>,
     ) {
         self.active = Some((artwork_id.clone(), Instant::now()));
         let sender = self.completion_sender.clone();
         let wake = self.wake.clone();
         wake();
         std::thread::spawn(move || {
+            let _lease = lease;
             let mut references = Vec::with_capacity(sources.len());
             let mut warnings = Vec::new();
             for (metadata, path) in sources {

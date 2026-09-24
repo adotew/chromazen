@@ -1,8 +1,10 @@
 use std::{
+    collections::HashMap,
     error::Error,
     fmt, fs,
     io::Write,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock, Weak},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -44,6 +46,36 @@ pub(crate) struct ArtworkSummary {
     pub(crate) modified_unix_ms: u64,
     pub(crate) dimensions: [u32; 2],
     pub(crate) thumbnail_path: PathBuf,
+    pub(crate) revision_lease: Option<RevisionLease>,
+}
+
+/// Keeps path-based readers safe across saves and catalog cleanup. Clones of
+/// one store share pins; file-backed tiles must hold this until decoded/spilled.
+#[derive(Clone, Debug)]
+pub(crate) struct RevisionLease {
+    _pin: Arc<()>,
+}
+
+#[derive(Default, Debug)]
+struct RevisionPins {
+    paths: HashMap<PathBuf, Weak<()>>,
+}
+
+static STORE_PINS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<RevisionPins>>>>> = OnceLock::new();
+
+impl RevisionPins {
+    fn pin(&mut self, path: &Path) -> RevisionLease {
+        let weak = self.paths.entry(path.to_owned()).or_default();
+        let lease = weak.upgrade().unwrap_or_else(|| Arc::new(()));
+        *weak = Arc::downgrade(&lease);
+        RevisionLease { _pin: lease }
+    }
+
+    fn is_pinned(&self, path: &Path) -> bool {
+        self.paths
+            .get(path)
+            .is_some_and(|lease| lease.strong_count() != 0)
+    }
 }
 
 #[derive(Default)]
@@ -91,6 +123,7 @@ pub(crate) struct LoadedArtwork {
 #[derive(Clone, Debug)]
 pub(crate) struct ArtworkStore {
     root: PathBuf,
+    pins: Arc<Mutex<RevisionPins>>,
 }
 
 impl ArtworkStore {
@@ -101,7 +134,16 @@ impl ArtworkStore {
     }
 
     pub(crate) fn from_root(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        let root = root.into();
+        let mut stores = STORE_PINS.get_or_init(Mutex::default).lock().unwrap();
+        stores.retain(|_, registry| registry.strong_count() != 0);
+        let pins = stores.entry(root.clone()).or_default();
+        let registry = pins.upgrade().unwrap_or_else(|| Arc::new(Mutex::default()));
+        *pins = Arc::downgrade(&registry);
+        Self {
+            root,
+            pins: registry,
+        }
     }
 
     pub(crate) fn scan_catalog(&self) -> ArtworkCatalog {
@@ -125,7 +167,7 @@ impl ArtworkStore {
             let Ok(id) = ArtworkId::parse(name) else {
                 continue;
             };
-            match self.read_project(&id).and_then(|project| {
+            match self.pin_current(&id).and_then(|(project, lease)| {
                 self.validate_project(&id, &project)?;
                 let revision = self.revision_path(&id, project.current_revision);
                 if !revision.join(DOCUMENT_FILE).is_file()
@@ -152,6 +194,7 @@ impl ArtworkStore {
                     modified_unix_ms: project.modified_unix_ms,
                     dimensions: [document.width, document.height],
                     thumbnail_path: revision.join(THUMBNAIL_FILE),
+                    revision_lease: Some(lease),
                 })
             }) {
                 Ok(summary) => catalog.artworks.push(summary),
@@ -168,7 +211,7 @@ impl ArtworkStore {
     }
 
     pub(crate) fn load(&self, id: &ArtworkId) -> Result<LoadedArtwork, ArtworkError> {
-        let project = self.read_project(id)?;
+        let (project, lease) = self.pin_current(id)?;
         self.validate_project(id, &project)?;
         let revision = self.revision_path(id, project.current_revision);
         let document_path = revision.join(DOCUMENT_FILE);
@@ -211,6 +254,7 @@ impl ArtworkStore {
                 modified_unix_ms: project.modified_unix_ms,
                 dimensions: [document.width, document.height],
                 thumbnail_path: revision.join(THUMBNAIL_FILE),
+                revision_lease: Some(lease),
             },
             document,
             layer_paths,
@@ -233,12 +277,20 @@ impl ArtworkStore {
         fs::create_dir_all(&revisions_dir)
             .map_err(|error| ArtworkError::io("create", &revisions_dir, error))?;
 
-        let previous = self.read_project(id).ok();
+        let (previous, previous_lease) = match self.pin_current(id) {
+            Ok((project, lease)) => (Some(project), Some(lease)),
+            Err(_) => (None, None),
+        };
         let next_revision = previous
             .as_ref()
             .map_or(1, |project| project.current_revision.saturating_add(1));
         let temporary = revisions_dir.join(format!(".tmp-{}", Uuid::new_v4()));
         let final_revision = self.revision_path(id, next_revision);
+        // Catalog cleanup must not remove a revision still being assembled.
+        let _temporary_lease = self.pins.lock().unwrap().pin(&temporary);
+        // Pin the destination *before* rename: a scan can observe it before
+        // the project pointer is updated and would otherwise delete it.
+        let published_lease = self.pins.lock().unwrap().pin(&final_revision);
         let result = (|| {
             fs::create_dir_all(temporary.join("layers"))
                 .map_err(|error| ArtworkError::io("create", &temporary, error))?;
@@ -330,15 +382,15 @@ impl ArtworkStore {
             let _ = fs::remove_dir_all(&temporary);
         }
         let project = result?;
-        if let Some(previous) = previous {
-            let _ = fs::remove_dir_all(self.revision_path(id, previous.current_revision));
-        }
+        drop(previous_lease);
+        self.cleanup_old_revisions(id, project.current_revision);
         Ok(ArtworkSummary {
             id: id.clone(),
             title: project.title,
             modified_unix_ms: project.modified_unix_ms,
             dimensions: [write.document.width, write.document.height],
             thumbnail_path: final_revision.join(THUMBNAIL_FILE),
+            revision_lease: Some(published_lease),
         })
     }
 
@@ -387,9 +439,22 @@ impl ArtworkStore {
 
     pub(crate) fn delete(&self, id: &ArtworkId) -> Result<(), ArtworkError> {
         let source = self.artwork_path(id);
+        // Moving the directory would invalidate paths held by background reads.
+        // Do not destroy their only backing; the UI can retry after they finish.
+        let pins = self.pins.lock().unwrap();
+        if pins
+            .paths
+            .iter()
+            .any(|(path, lease)| path.starts_with(&source) && lease.strong_count() != 0)
+        {
+            return Err(ArtworkError::new(
+                "artwork is still being read; retry deletion after loading finishes",
+            ));
+        }
         let trash = self.root.join(format!(".trash-{}", Uuid::new_v4()));
         fs::rename(&source, &trash)
             .map_err(|error| ArtworkError::io("move for deletion", &source, error))?;
+        drop(pins);
         fs::remove_dir_all(&trash).map_err(|error| ArtworkError::io("delete", &trash, error))
     }
 
@@ -416,6 +481,16 @@ impl ArtworkStore {
             ))
         })?;
         Err(commit_error)
+    }
+
+    fn pin_current(
+        &self,
+        id: &ArtworkId,
+    ) -> Result<(ProjectManifest, RevisionLease), ArtworkError> {
+        let mut pins = self.pins.lock().unwrap();
+        let project = self.read_project(id)?;
+        let lease = pins.pin(&self.revision_path(id, project.current_revision));
+        Ok((project, lease))
     }
 
     fn read_project(&self, id: &ArtworkId) -> Result<ProjectManifest, ArtworkError> {
@@ -463,13 +538,15 @@ impl ArtworkStore {
             return;
         };
         let current_name = format!("{current_revision:016}");
+        let pins = self.pins.lock().unwrap();
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if name.starts_with(".tmp-")
-                || (name.len() == 16
-                    && name.bytes().all(|byte| byte.is_ascii_digit())
-                    && name != current_name)
+            if !pins.is_pinned(&entry.path())
+                && (name.starts_with(".tmp-")
+                    || (name.len() == 16
+                        && name.bytes().all(|byte| byte.is_ascii_digit())
+                        && name != current_name))
             {
                 let _ = fs::remove_dir_all(entry.path());
             }
@@ -569,6 +646,65 @@ mod tests {
             references: Vec::new(),
             thumbnail_png: vec![pixel],
         }
+    }
+
+    #[test]
+    fn old_revision_survives_saves_and_catalog_cleanup_while_readers_hold_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ArtworkStore::from_root(temp.path());
+        let other = ArtworkStore::from_root(temp.path());
+        let id = ArtworkId::new();
+        let original_summary = store.commit_revision(&id, "Study", revision(1)).unwrap();
+        let reader = other.load(&id).unwrap();
+        let old_path = reader.layer_paths[0].clone();
+        let old_thumbnail = original_summary.thumbnail_path.clone();
+        let catalog = store.scan_catalog();
+        let current_summary = other.commit_revision(&id, "Study", revision(2)).unwrap();
+        assert_eq!(fs::read(&old_path).unwrap(), [1]);
+        assert_eq!(fs::read(&old_thumbnail).unwrap(), [1]);
+        store.scan_catalog();
+        assert!(old_path.exists());
+        assert!(store.delete(&id).is_err());
+        drop(reader);
+        drop(original_summary);
+        drop(catalog);
+        store.scan_catalog();
+        assert!(!old_path.exists());
+        assert!(current_summary.thumbnail_path.exists());
+        drop(current_summary);
+        store.delete(&id).unwrap();
+    }
+
+    #[test]
+    fn catalog_cannot_remove_an_active_temporary_revision() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ArtworkStore::from_root(temp.path());
+        let id = ArtworkId::new();
+        store.commit_revision(&id, "Study", revision(1)).unwrap();
+        let temp_revision = store.artwork_path(&id).join("revisions/.tmp-active");
+        fs::create_dir(&temp_revision).unwrap();
+        let pin = store.pins.lock().unwrap().pin(&temp_revision);
+        store.scan_catalog();
+        assert!(temp_revision.exists());
+        drop(pin);
+        store.scan_catalog();
+        assert!(!temp_revision.exists());
+    }
+
+    #[test]
+    fn catalog_keeps_a_pinned_revision_before_pointer_publication() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ArtworkStore::from_root(temp.path());
+        let id = ArtworkId::new();
+        store.commit_revision(&id, "Study", revision(1)).unwrap();
+        let unpublished = store.revision_path(&id, 2);
+        fs::create_dir(&unpublished).unwrap();
+        let pin = store.pins.lock().unwrap().pin(&unpublished);
+        store.scan_catalog();
+        assert!(unpublished.exists());
+        drop(pin);
+        store.scan_catalog();
+        assert!(!unpublished.exists());
     }
 
     #[test]

@@ -225,7 +225,7 @@ impl App {
                 brush_color: opened.document.brush_color,
             });
             self.reference_load
-                .start(opened.id, opened.reference_sources);
+                .start(opened.id, opened.reference_sources, opened.revision_lease);
         }
     }
 }
@@ -257,6 +257,7 @@ mod tests {
             modified_unix_ms: 0,
             dimensions: [1, 1],
             thumbnail_path: std::path::PathBuf::new(),
+            revision_lease: None,
         }
     }
 

@@ -341,5 +341,11 @@ The existing layer-display pipeline now accepts a 16-byte document-origin/extent
 
 These are intermediate changes, **not the phase-2 acceptance gate**: live layers, masks, clipping scratch, operation sources and legacy whole-image readback remain monolithic. Layer-version sharing and the coupled tiled display/mask conversion are still required. No second renderer or higher document limit has been introduced. A new distant-dab GPU regression checks the sparse history allocation across separate frame submissions, exact undo/redo, and replacement of the redo branch.
 
-Workspace tests, headless GPU tests, clippy and WASM compilation pass for this conversion. Phases 3–7 remain unimplemented. Continue phase 2 before claiming tiled painting or bounded residency.
+### Phase-4 prerequisite — Native revision path leases
+
+`ArtworkStore` now shares path leases across store instances for the same root in this process. Loading an artwork pins its revision before reading the document; catalog summaries pin thumbnail paths; background thumbnail and reference decoders carry the pin until they finish. In-progress temporary and published-but-not-yet-pointed-to revisions are pinned across atomic publication. Saves/catalog cleanup skip pinned old revisions, then later scans remove them after the last reader releases its lease. Deletion refuses to invalidate live readers (and the gallery drops its own summary pin before trying). Tests cover held layer/thumbnail paths across saves and scans, shared store handles, deletion, pinned temporary writes, and the rename-to-pointer-publication window.
+
+This is groundwork, **not a v4 tiled save or lazy reader**: existing PNGs are still whole layers, loaded eagerly, and the pointer/store remain single-writer by application convention rather than cross-process locking. Leases protect paths inside this process, not external modifications or another process opening the same root. Native schema 4, incremental tile writes, bounded autosave and explicit host ownership still remain. No artwork schema change was published.
+
+Workspace tests, headless GPU tests, clippy and WASM compilation pass for these intermediate conversions. Phases 3–7 remain unimplemented. Continue phase 2 before claiming tiled painting or bounded residency.
 

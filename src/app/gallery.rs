@@ -7,7 +7,7 @@ use std::{
 use chromazen_canvas::CanvasSizeConstraints;
 
 use crate::artwork::{
-    ArtworkId, ArtworkStore, ArtworkSummary, DocumentManifest, ReferenceManifest,
+    ArtworkId, ArtworkStore, ArtworkSummary, DocumentManifest, ReferenceManifest, RevisionLease,
 };
 
 pub(super) struct OpenedArtwork {
@@ -16,6 +16,7 @@ pub(super) struct OpenedArtwork {
     pub(super) document: DocumentManifest,
     pub(super) layers: Vec<image::RgbaImage>,
     pub(super) reference_sources: Vec<(ReferenceManifest, PathBuf)>,
+    pub(super) revision_lease: Option<RevisionLease>,
 }
 
 pub(super) struct ThumbnailCompletion {
@@ -157,16 +158,26 @@ impl GalleryController {
                         artwork.id == current.0 && artwork.thumbnail_path == current.1
                     })
                 })
-                .map(|artwork| (artwork.id.clone(), artwork.thumbnail_path.clone()))
+                .map(|artwork| {
+                    (
+                        artwork.id.clone(),
+                        artwork.thumbnail_path.clone(),
+                        artwork.revision_lease.clone(),
+                    )
+                })
                 .collect();
         if pending.is_empty() {
             return;
         }
-        self.thumbnail_paths.extend(pending.iter().cloned());
+        self.thumbnail_paths.extend(
+            pending
+                .iter()
+                .map(|(id, path, _)| (id.clone(), path.clone())),
+        );
         let sender = self.thumbnail_sender.clone();
         let wake = self.wake.clone();
         std::thread::spawn(move || {
-            for (id, path) in pending {
+            for (id, path, _lease) in pending {
                 let result = image::open(&path)
                     .map(image::DynamicImage::into_rgba8)
                     .map_err(|error| {
@@ -220,13 +231,17 @@ impl GalleryController {
     }
 
     pub(super) fn delete(&mut self, id: &ArtworkId) -> Result<(), String> {
-        self.store
+        // The gallery no longer needs this thumbnail; background readers keep
+        // their own leases and may still require a retry.
+        self.artworks.retain(|artwork| &artwork.id != id);
+        let result = self
+            .store
             .as_ref()
             .ok_or_else(|| "The artwork data directory is unavailable".to_owned())?
             .delete(id)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string());
         self.refresh();
-        Ok(())
+        result
     }
 }
 
@@ -274,6 +289,7 @@ fn load_artwork(
         document: loaded.document,
         layers,
         reference_sources,
+        revision_lease: loaded.summary.revision_lease,
     })
 }
 

@@ -10,7 +10,7 @@ pub(crate) use format::{
 pub(crate) use raster::{CompositeLayer, encode_png, flatten_premultiplied_layers};
 pub(crate) use store::{
     ArtworkId, ArtworkStore, ArtworkSummary, LayerSource, LayerWrite, ReferenceSource,
-    ReferenceWrite, RevisionWrite,
+    ReferenceWrite, RevisionLease, RevisionWrite,
 };
 
 pub(crate) fn canvas_document(document: &DocumentManifest) -> CanvasDocument {
