@@ -7,7 +7,7 @@ use std::{
 use atomic_write_file::AtomicWriteFile;
 use chromazen_canvas::Canvas;
 
-use crate::artwork::{CompositeLayer, encode_png, flatten_premultiplied_layers};
+use crate::artwork::{CompositeLayer, CompositeRows};
 
 type WakeCallback = Arc<dyn Fn() + Send + Sync>;
 
@@ -69,9 +69,7 @@ impl ExportController {
                         clipped: metadata.clipped,
                     })
                     .collect();
-                let composite =
-                    flatten_premultiplied_layers(&composite_layers, document.background)?;
-                write_png_atomic(&path, &composite)
+                write_png_atomic(&path, &composite_layers, document.background)
             })();
             let _ = sender.send(ExportCompletion { path, result });
             wake();
@@ -142,13 +140,42 @@ fn ensure_png_extension(mut path: PathBuf) -> PathBuf {
     path
 }
 
-fn write_png_atomic(path: &Path, image: &image::RgbaImage) -> Result<(), String> {
-    let contents = encode_png(image)?;
+fn write_png_atomic(
+    path: &Path,
+    layers: &[CompositeLayer<'_>],
+    background: [u8; 3],
+) -> Result<(), String> {
+    let rows = CompositeRows::new(layers, background)?;
+    let [width, height] = rows.size();
     let mut file = AtomicWriteFile::options()
         .open(path)
         .map_err(|error| format!("failed to open {} for export: {error}", path.display()))?;
-    file.write_all(&contents)
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    {
+        let mut encoder = png::Encoder::new(&mut file, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|error| format!("failed to begin PNG export: {error}"))?;
+        {
+            let mut stream = writer
+                .stream_writer_with_size(64 * 1024)
+                .map_err(|error| format!("failed to begin PNG rows: {error}"))?;
+            let mut row = vec![0; width as usize * 4];
+            for y in 0..height {
+                rows.row(y, &mut row);
+                stream
+                    .write_all(&row)
+                    .map_err(|error| format!("failed to write PNG row: {error}"))?;
+            }
+            stream
+                .finish()
+                .map_err(|error| format!("failed to finish PNG rows: {error}"))?;
+        }
+        writer
+            .finish()
+            .map_err(|error| format!("failed to finish PNG export: {error}"))?;
+    }
     file.flush()
         .map_err(|error| format!("failed to flush {}: {error}", path.display()))?;
     file.commit()
@@ -187,11 +214,76 @@ mod tests {
     }
 
     #[test]
+    fn streamed_export_matches_legacy_flattening_across_many_rows_and_clips() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("export.png");
+        let base = image::RgbaImage::from_fn(517, 261, |x, y| {
+            let alpha = ((x + y) % 256) as u8;
+            image::Rgba([alpha / 2, alpha / 3, alpha / 4, alpha])
+        });
+        let clipped = image::RgbaImage::from_fn(517, 261, |x, y| {
+            let alpha = ((x * 7 + y * 3) % 256) as u8;
+            image::Rgba([0, alpha / 2, 0, alpha])
+        });
+        let invisible = image::RgbaImage::from_pixel(517, 261, image::Rgba([255; 4]));
+        let layers = [
+            CompositeLayer {
+                image: &base,
+                visible: true,
+                opacity: 67,
+                clipped: false,
+            },
+            CompositeLayer {
+                image: &clipped,
+                visible: true,
+                opacity: 89,
+                clipped: true,
+            },
+            CompositeLayer {
+                image: &invisible,
+                visible: false,
+                opacity: 100,
+                clipped: false,
+            },
+        ];
+        let expected = crate::artwork::flatten_premultiplied_layers(&layers, [17, 45, 72]).unwrap();
+        write_png_atomic(&path, &layers, [17, 45, 72]).unwrap();
+        assert_eq!(image::open(&path).unwrap().to_rgba8(), expected);
+        let small = image::RgbaImage::new(1, 1);
+        let invalid = [
+            CompositeLayer {
+                image: &base,
+                visible: true,
+                opacity: 100,
+                clipped: false,
+            },
+            CompositeLayer {
+                image: &small,
+                visible: true,
+                opacity: 100,
+                clipped: false,
+            },
+        ];
+        assert!(write_png_atomic(&path, &invalid, [0; 3]).is_err());
+        assert_eq!(image::open(&path).unwrap().to_rgba8(), expected);
+    }
+
+    #[test]
     fn atomic_export_writes_a_decodable_png() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("export.png");
         let image = image::RgbaImage::from_pixel(2, 1, image::Rgba([1, 2, 3, 255]));
-        write_png_atomic(&path, &image).unwrap();
+        write_png_atomic(
+            &path,
+            &[CompositeLayer {
+                image: &image,
+                visible: true,
+                opacity: 100,
+                clipped: false,
+            }],
+            [0; 3],
+        )
+        .unwrap();
         assert_eq!(image::open(path).unwrap().to_rgba8(), image);
     }
 }

@@ -7,7 +7,7 @@ use chromazen_canvas::{CanvasDocument, LayerId, LayerInfo};
 pub(crate) use format::{
     DOCUMENT_SCHEMA_VERSION, DocumentManifest, LayerManifest, ReferenceManifest,
 };
-pub(crate) use raster::{CompositeLayer, encode_png, flatten_premultiplied_layers};
+pub(crate) use raster::{CompositeLayer, CompositeRows, encode_png, flatten_premultiplied_layers};
 pub(crate) use store::{
     ArtworkId, ArtworkStore, ArtworkSummary, LayerSource, LayerWrite, ReferenceSource,
     ReferenceWrite, RevisionLease, RevisionWrite,
