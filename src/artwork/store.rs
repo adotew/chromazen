@@ -54,6 +54,9 @@ pub(crate) struct ArtworkSummary {
 #[derive(Clone, Debug)]
 pub(crate) struct RevisionLease {
     _pin: Arc<()>,
+    // Keep the registry discoverable if every store handle is dropped while a
+    // decoder/snapshot still owns paths from this revision.
+    _registry: Arc<Mutex<RevisionPins>>,
 }
 
 #[derive(Default, Debug)]
@@ -64,11 +67,11 @@ struct RevisionPins {
 static STORE_PINS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<RevisionPins>>>>> = OnceLock::new();
 
 impl RevisionPins {
-    fn pin(&mut self, path: &Path) -> RevisionLease {
+    fn pin(&mut self, path: &Path) -> Arc<()> {
         let weak = self.paths.entry(path.to_owned()).or_default();
         let lease = weak.upgrade().unwrap_or_else(|| Arc::new(()));
         *weak = Arc::downgrade(&lease);
-        RevisionLease { _pin: lease }
+        lease
     }
 
     fn is_pinned(&self, path: &Path) -> bool {
@@ -143,6 +146,14 @@ impl ArtworkStore {
         Self {
             root,
             pins: registry,
+        }
+    }
+
+    fn pin(&self, path: &Path) -> RevisionLease {
+        let pin = self.pins.lock().unwrap().pin(path);
+        RevisionLease {
+            _pin: pin,
+            _registry: self.pins.clone(),
         }
     }
 
@@ -287,10 +298,10 @@ impl ArtworkStore {
         let temporary = revisions_dir.join(format!(".tmp-{}", Uuid::new_v4()));
         let final_revision = self.revision_path(id, next_revision);
         // Catalog cleanup must not remove a revision still being assembled.
-        let _temporary_lease = self.pins.lock().unwrap().pin(&temporary);
+        let _temporary_lease = self.pin(&temporary);
         // Pin the destination *before* rename: a scan can observe it before
         // the project pointer is updated and would otherwise delete it.
-        let published_lease = self.pins.lock().unwrap().pin(&final_revision);
+        let published_lease = self.pin(&final_revision);
         let result = (|| {
             fs::create_dir_all(temporary.join("layers"))
                 .map_err(|error| ArtworkError::io("create", &temporary, error))?;
@@ -489,8 +500,14 @@ impl ArtworkStore {
     ) -> Result<(ProjectManifest, RevisionLease), ArtworkError> {
         let mut pins = self.pins.lock().unwrap();
         let project = self.read_project(id)?;
-        let lease = pins.pin(&self.revision_path(id, project.current_revision));
-        Ok((project, lease))
+        let pin = pins.pin(&self.revision_path(id, project.current_revision));
+        Ok((
+            project,
+            RevisionLease {
+                _pin: pin,
+                _registry: self.pins.clone(),
+            },
+        ))
     }
 
     fn read_project(&self, id: &ArtworkId) -> Result<ProjectManifest, ArtworkError> {
@@ -662,6 +679,10 @@ mod tests {
         let current_summary = other.commit_revision(&id, "Study", revision(2)).unwrap();
         assert_eq!(fs::read(&old_path).unwrap(), [1]);
         assert_eq!(fs::read(&old_thumbnail).unwrap(), [1]);
+        drop(store);
+        drop(other);
+        // Leases, not store handles, keep the shared cleanup registry alive.
+        let store = ArtworkStore::from_root(temp.path());
         store.scan_catalog();
         assert!(old_path.exists());
         assert!(store.delete(&id).is_err());
@@ -683,7 +704,7 @@ mod tests {
         store.commit_revision(&id, "Study", revision(1)).unwrap();
         let temp_revision = store.artwork_path(&id).join("revisions/.tmp-active");
         fs::create_dir(&temp_revision).unwrap();
-        let pin = store.pins.lock().unwrap().pin(&temp_revision);
+        let pin = store.pin(&temp_revision);
         store.scan_catalog();
         assert!(temp_revision.exists());
         drop(pin);
@@ -699,7 +720,7 @@ mod tests {
         store.commit_revision(&id, "Study", revision(1)).unwrap();
         let unpublished = store.revision_path(&id, 2);
         fs::create_dir(&unpublished).unwrap();
-        let pin = store.pins.lock().unwrap().pin(&unpublished);
+        let pin = store.pin(&unpublished);
         store.scan_catalog();
         assert!(unpublished.exists());
         drop(pin);
