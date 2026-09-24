@@ -2830,12 +2830,26 @@ fn visible_canvas_rect(
     document_size: [u32; 2],
     surface_size: [u32; 2],
 ) -> Option<TextureRect> {
-    let [width, height] = document_size.map(|dimension| dimension as f32);
+    visible_document_region_rect(view, [0, 0], document_size, surface_size)
+}
+
+/// Conservative physical-pixel scissor for a document-space region. Its
+/// rotated bounding box may include pixels outside the tile; the layer shader
+/// rejects those using its own document-space origin/extent uniform.
+fn visible_document_region_rect(
+    view: PaintViewSnapshot,
+    origin: [u32; 2],
+    extent: [u32; 2],
+    surface_size: [u32; 2],
+) -> Option<TextureRect> {
+    let [left, top] = origin.map(|value| value as f32);
+    let [right, bottom] =
+        std::array::from_fn(|axis| (u64::from(origin[axis]) + u64::from(extent[axis])) as f32);
     let corners = [
-        view.document_to_window([0.0, 0.0]),
-        view.document_to_window([width, 0.0]),
-        view.document_to_window([0.0, height]),
-        view.document_to_window([width, height]),
+        view.document_to_window([left, top]),
+        view.document_to_window([right, top]),
+        view.document_to_window([left, bottom]),
+        view.document_to_window([right, bottom]),
     ];
     if corners.iter().flatten().any(|value| !value.is_finite()) {
         return None;
@@ -2854,7 +2868,7 @@ fn visible_canvas_rect(
     let right = max[0].ceil().clamp(0.0, surface_width) as u32;
     let bottom = max[1].ceil().clamp(0.0, surface_height) as u32;
 
-    (right > left && bottom > top).then_some(TextureRect {
+    (extent[0] > 0 && extent[1] > 0 && right > left && bottom > top).then_some(TextureRect {
         x: left,
         y: top,
         width: right - left,
@@ -3045,6 +3059,35 @@ mod tests {
                 width: 50,
                 height: 100,
             })
+        );
+    }
+
+    #[test]
+    fn tile_scissor_clips_rotated_partial_edges_in_physical_pixels() {
+        let view = PaintViewSnapshot {
+            zoom: 2.0,
+            center: [516.0, 520.0],
+            workspace_center: [516.0, 520.0],
+            viewport_center: [100.0, 100.0],
+            rotation: std::f32::consts::FRAC_PI_2,
+            flip: [1.0, 1.0],
+        };
+        assert_eq!(
+            visible_document_region_rect(view, [512, 512], [7, 13], [100, 100]),
+            Some(TextureRect {
+                x: 90,
+                y: 92,
+                width: 10,
+                height: 8
+            })
+        );
+        assert_eq!(
+            visible_document_region_rect(view, [512, 512], [0, 13], [100, 100]),
+            None
+        );
+        assert_eq!(
+            visible_document_region_rect(view, [1024, 768], [7, 5], [100, 100]),
+            None
         );
     }
 

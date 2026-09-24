@@ -111,7 +111,9 @@ impl StampQueue {
     }
 
     pub(super) fn allocated_bytes(&self) -> u64 {
-        (self.pending.capacity() * std::mem::size_of::<Stamp>()) as u64
+        (self.pending.capacity() * std::mem::size_of::<Stamp>()
+            + usize::from(self.tile_cursor.is_some()) * std::mem::size_of::<TileCursor>())
+            as u64
     }
 
     pub(crate) fn has_pending(&self) -> bool {
@@ -568,6 +570,28 @@ mod tests {
                 height: 15,
             }
         );
+    }
+
+    #[test]
+    fn long_preview_is_bounded_and_keeps_the_latest_endpoint() {
+        let mut queue = StampQueue::default();
+        queue.begin_stroke(point(10.0, 20.0));
+        for _ in 0..5000 {
+            assert!(queue.queue_point(point(10.0, 20.0), [1.0; 4], 1_000_010, 100));
+        }
+        let bytes = queue.allocated_bytes();
+        let preview = queue.preview_stamps(
+            point(10.0, 20.0),
+            [point(1_000_000.0, 20.0)],
+            [1.0; 4],
+            BrushSpacing::default(),
+            1_000_010,
+            100,
+        );
+        assert_eq!(preview.len(), MAX_STAMPS_PER_FRAME);
+        assert_eq!(preview.last().unwrap().center, [1_000_000.0, 20.0]);
+        assert_eq!(queue.allocated_bytes(), bytes);
+        assert!(queue.has_pending());
     }
 
     #[test]
