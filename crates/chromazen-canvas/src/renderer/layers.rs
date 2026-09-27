@@ -1,3 +1,5 @@
+use super::{LAYER_PREVIEW_SIZE, tiles::TileSet};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LayerId(pub u64);
 
@@ -38,14 +40,19 @@ pub(crate) struct PaintLayer {
     pub(crate) opacity: u8,
     pub(crate) clipped: bool,
     pub(crate) settings_buffer: wgpu::Buffer,
-    pub(crate) texture: wgpu::Texture,
-    pub(crate) view: wgpu::TextureView,
+    pub(crate) tiles: TileSet,
     pub(crate) blit_bind_group: wgpu::BindGroup,
     // Keep the allocation alongside its view so history owns the complete preview resource.
     pub(crate) _preview_texture: wgpu::Texture,
     pub(crate) preview_view: wgpu::TextureView,
-    pub(crate) preview_bind_group: wgpu::BindGroup,
     pub(crate) preview_dirty: bool,
+}
+
+impl PaintLayer {
+    pub(crate) fn byte_len(&self) -> u64 {
+        let preview = u64::from(LAYER_PREVIEW_SIZE) * u64::from(LAYER_PREVIEW_SIZE) * 4;
+        self.tiles.byte_len() + preview
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -1,7 +1,10 @@
-@group(0) @binding(0) var paintSampler: sampler;
-@group(0) @binding(1) var paintTex: texture_2d<f32>;
-@group(0) @binding(2) var<uniform> view: View;
-@group(0) @binding(3) var<uniform> layer: LayerSettings;
+@group(0) @binding(0) var<uniform> view: View;
+@group(0) @binding(1) var<uniform> layer: LayerSettings;
+@group(1) @binding(0) var tileTexture: texture_2d<f32>;
+@group(1) @binding(1) var<uniform> tile: Tile;
+
+// Must match `tiles::TILE_SIZE`.
+const TILE_SIZE: i32 = 512;
 
 struct LayerSettings {
   opacity: f32,
@@ -15,6 +18,11 @@ struct View {
   backgroundColor: vec4f,
 };
 
+struct Tile {
+  origin: vec2f,
+  padding: vec2f,
+};
+
 @vertex
 fn vs(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4f {
   let x = f32(idx % 2u) * 4.0 - 1.0;
@@ -22,22 +30,22 @@ fn vs(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4f {
   return vec4f(x, y, 0.0, 1.0);
 }
 
-fn paint_uv(pos: vec4f) -> vec2f {
+fn document_position(pos: vec4f) -> vec2f {
   let window = vec3f(pos.xy, 1.0);
-  let document = vec2f(
+  return vec2f(
     dot(view.documentFromWindowX.xyz, window),
     dot(view.documentFromWindowY.xyz, window),
   );
-  return document / view.paintDims;
 }
 
-fn is_outside_canvas(uv: vec2f) -> bool {
+fn is_outside_canvas(document: vec2f) -> bool {
+  let uv = document / view.paintDims;
   return uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0;
 }
 
 @fragment
 fn fs_background(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  if (is_outside_canvas(paint_uv(pos))) {
+  if (is_outside_canvas(document_position(pos))) {
     return vec4f(0.0);
   }
   return view.backgroundColor;
@@ -45,10 +53,15 @@ fn fs_background(@builtin(position) pos: vec4f) -> @location(0) vec4f {
 
 @fragment
 fn fs_layer(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let uv = paint_uv(pos);
-  if (is_outside_canvas(uv)) {
+  let document = document_position(pos);
+  if (is_outside_canvas(document)) {
+    return vec4f(0.0);
+  }
+  // Scissor rects of neighboring tiles overlap, so each tile draws only its own texels.
+  let texel = vec2i(floor(document)) - vec2i(tile.origin);
+  if (any(texel < vec2i(0)) || any(texel >= vec2i(TILE_SIZE))) {
     return vec4f(0.0);
   }
   // Paint textures are premultiplied, so opacity scales every channel.
-  return textureSampleLevel(paintTex, paintSampler, uv, 0.0) * layer.opacity;
+  return textureLoad(tileTexture, texel, 0) * layer.opacity;
 }

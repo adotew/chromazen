@@ -1,6 +1,9 @@
 use futures_channel::oneshot;
 
-use super::layers::{LayerId, PaintLayer};
+use super::{
+    layers::{LayerId, PaintLayer},
+    tiles::tile_document_rect,
+};
 
 const BYTES_PER_PIXEL: u32 = 4;
 
@@ -96,33 +99,42 @@ pub(super) fn begin_read_layers(
     let mut pending = Vec::with_capacity(layers.len());
 
     for layer in layers {
+        // New buffers are zero-filled, so coordinates without a tile read back as transparent.
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("artwork layer readback buffer"),
             size: buffer_size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &layer.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded_bytes_per_row),
-                    rows_per_image: Some(size[1]),
+        for (coord, tile) in layer.tiles.iter() {
+            let rect = tile_document_rect(coord, size);
+            if rect.width == 0 || rect.height == 0 {
+                continue;
+            }
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &tile.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
                 },
-            },
-            wgpu::Extent3d {
-                width: size[0],
-                height: size[1],
-                depth_or_array_layers: 1,
-            },
-        );
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        // Offsets stay texel aligned and rows keep the padded image stride.
+                        offset: u64::from(rect.y) * u64::from(padded_bytes_per_row)
+                            + u64::from(rect.x * BYTES_PER_PIXEL),
+                        bytes_per_row: Some(padded_bytes_per_row),
+                        rows_per_image: Some(rect.height),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: rect.width,
+                    height: rect.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
         pending.push((layer.id, buffer));
     }
     queue.submit(std::iter::once(encoder.finish()));

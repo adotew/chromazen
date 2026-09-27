@@ -98,6 +98,11 @@ impl StampQueue {
         self.dirty_rect = None;
     }
 
+    /// Document pixels touched by stamps queued since the stroke began.
+    pub(crate) fn dirty_rect(&self) -> Option<TextureRect> {
+        self.dirty_rect
+    }
+
     pub(crate) fn end_stroke(&mut self) -> Option<TextureRect> {
         self.distance_since_last_stamp = 0.0;
         self.last_generated_center = None;

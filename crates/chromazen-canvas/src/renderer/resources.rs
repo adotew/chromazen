@@ -2,11 +2,22 @@ use wgpu::util::DeviceExt;
 
 use super::layers::{LayerId, LayerProperties, LayerResourceId, PaintLayer};
 use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
+use super::tiles::{MAX_TILE_GRID, TILE_SIZE, Tile, TileCoord, TileSet};
 use super::{
     CursorRaw, DEFAULT_BACKGROUND_COLOR, DOCUMENT_FORMAT, LAYER_PREVIEW_SIZE, LayerPreviewUniform,
     LayerSettingsUniform, LayerTransform, PaintUniform, STROKE_MASK_FORMAT, StrokeUniform,
-    ViewUniform,
+    TileUniform, ViewUniform,
 };
+
+/// Resources shared by every tile at one grid coordinate. Tile origins depend only on the
+/// coordinate, so layers of any document size reuse the same uniform.
+pub(crate) struct TileSlot {
+    origin_buffer: wgpu::Buffer,
+    pub(crate) target_bind_group: wgpu::BindGroup,
+    /// Binds a transparent texture where a layer has no tile but a stroke preview may draw.
+    pub(crate) empty_bind_group: wgpu::BindGroup,
+    pub(crate) scratch_bind_group: wgpu::BindGroup,
+}
 
 pub(crate) struct RenderResources {
     pub(crate) stamp_buffer: wgpu::Buffer,
@@ -23,11 +34,14 @@ pub(crate) struct RenderResources {
     pub(crate) backdrop_texture: wgpu::Texture,
     pub(crate) backdrop_view: wgpu::TextureView,
     pub(crate) smudge_texture: wgpu::Texture,
-    smudge_texture_view: wgpu::TextureView,
-    _clipping_group_texture: wgpu::Texture,
-    pub(crate) clipping_group_view: wgpu::TextureView,
-    clipping_group_settings_buffer: wgpu::Buffer,
+    pub(crate) smudge_texture_view: wgpu::TextureView,
+    // Clipping groups are composed here one tile at a time before being drawn to the canvas.
+    _scratch_tile_texture: wgpu::Texture,
+    pub(crate) scratch_tile_view: wgpu::TextureView,
+    _empty_tile_texture: wgpu::Texture,
+    tile_slots: Vec<TileSlot>,
     clipping_group_bind_group: wgpu::BindGroup,
+    pub(crate) thumbnail_bind_group: wgpu::BindGroup,
     _stroke_mask_texture: wgpu::Texture,
     pub(crate) stroke_mask_view: wgpu::TextureView,
     _preview_mask_texture: wgpu::Texture,
@@ -36,14 +50,13 @@ pub(crate) struct RenderResources {
     brush_texture_view: wgpu::TextureView,
     brush_sampler: wgpu::Sampler,
     paint_sampler: wgpu::Sampler,
-    preview_sampler: wgpu::Sampler,
     stamp_bind_group_layout: wgpu::BindGroupLayout,
     cursor_bind_group_layout: wgpu::BindGroupLayout,
     blit_bind_group_layout: wgpu::BindGroupLayout,
+    tile_bind_group_layout: wgpu::BindGroupLayout,
     clipped_layer_bind_group_layout: wgpu::BindGroupLayout,
     stroke_preview_bind_group_layout: wgpu::BindGroupLayout,
     stroke_preview_bind_group: Option<wgpu::BindGroup>,
-    layer_preview_bind_group_layout: wgpu::BindGroupLayout,
     stroke_commit_bind_group_layout: wgpu::BindGroupLayout,
     transform_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) stroke_commit_bind_group: wgpu::BindGroup,
@@ -160,8 +173,26 @@ impl RenderResources {
         let (backdrop_texture, backdrop_view) =
             create_backdrop_texture(device, surface_size, surface_format);
         let (smudge_texture, smudge_texture_view) = create_paint_texture(device, document_size);
-        let (clipping_group_texture, clipping_group_view) =
-            create_paint_texture(device, document_size);
+        let (scratch_tile_texture, scratch_tile_view) =
+            create_tile_texture(device, "clipping group scratch tile");
+        let empty_tile_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("empty tile texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DOCUMENT_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        // Shaders load tile texels by integer coordinate. Out-of-bounds loads from this
+        // zero-initialized texture return transparent texels on every backend.
+        let empty_tile_view =
+            empty_tile_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let clipping_group_settings_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("clipping group settings uniform buffer"),
@@ -270,199 +301,47 @@ impl RenderResources {
         let blit_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("blit bind group layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
+                entries: &[uniform_layout_entry(0), uniform_layout_entry(1)],
+            });
+        let tile_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("tile bind group layout"),
+                entries: &[texture_layout_entry(0), uniform_layout_entry(1)],
+            });
+        // Group 1 of every pass that renders into a layer tile. The binding number matches the
+        // tile uniform in `tile_bind_group_layout`, so shaders declare it once.
+        let tile_target_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("tile target bind group layout"),
+                entries: &[uniform_layout_entry(1)],
             });
         let clipped_layer_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("clipped layer bind group layout"),
-                entries: &[
-                    sampler_layout_entry(0),
-                    texture_layout_entry(1),
-                    texture_layout_entry(2),
-                    uniform_layout_entry(3),
-                    uniform_layout_entry(4),
-                    uniform_layout_entry(5),
-                ],
+                entries: &[uniform_layout_entry(0), uniform_layout_entry(1)],
             });
         let stroke_preview_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("stroke preview bind group layout"),
                 entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 5,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
+                    sampler_layout_entry(0),
+                    texture_layout_entry(1),
+                    uniform_layout_entry(2),
+                    uniform_layout_entry(3),
+                    uniform_layout_entry(4),
+                    uniform_layout_entry(5),
                     texture_layout_entry(6),
-                    uniform_layout_entry(7),
-                    texture_layout_entry(8),
                 ],
             });
         let layer_preview_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("layer preview bind group layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
+                entries: &[sampler_layout_entry(0), uniform_layout_entry(1)],
             });
         let stroke_commit_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("stroke commit bind group layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
+                entries: &[texture_layout_entry(1), uniform_layout_entry(3)],
             });
         let transform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -490,20 +369,64 @@ impl RenderResources {
                     },
                 ],
             });
-        let stroke_commit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("stroke commit bind group"),
-            layout: &stroke_commit_bind_group_layout,
+        let stroke_commit_bind_group = create_stroke_commit_bind_group(
+            device,
+            &stroke_commit_bind_group_layout,
+            &stroke_mask_view,
+            &stroke_uniform_buffer,
+        );
+        let thumbnail_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("layer thumbnail bind group"),
+            layout: &layer_preview_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&stroke_mask_view),
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&preview_sampler),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: stroke_uniform_buffer.as_entire_binding(),
+                    binding: 1,
+                    resource: layer_preview_uniform_buffer.as_entire_binding(),
                 },
             ],
         });
+        let tile_slots = (0..MAX_TILE_GRID)
+            .flat_map(|y| (0..MAX_TILE_GRID).map(move |x| TileCoord { x, y }))
+            .map(|coord| {
+                let [x, y] = coord.origin();
+                let origin_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("tile origin uniform buffer"),
+                    contents: bytemuck::bytes_of(&TileUniform {
+                        origin: [x as f32, y as f32],
+                        padding: [0.0; 2],
+                    }),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                let target_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("tile target bind group"),
+                    layout: &tile_target_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: origin_buffer.as_entire_binding(),
+                    }],
+                });
+                TileSlot {
+                    target_bind_group,
+                    empty_bind_group: create_tile_bind_group(
+                        device,
+                        &tile_bind_group_layout,
+                        &empty_tile_view,
+                        &origin_buffer,
+                    ),
+                    scratch_bind_group: create_tile_bind_group(
+                        device,
+                        &tile_bind_group_layout,
+                        &scratch_tile_view,
+                        &origin_buffer,
+                    ),
+                    origin_buffer,
+                }
+            })
+            .collect();
         let stamp_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("stamp pipeline layout"),
@@ -516,61 +439,77 @@ impl RenderResources {
                 bind_group_layouts: &[Some(&cursor_bind_group_layout)],
                 immediate_size: 0,
             });
+        let smudge_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("smudge pipeline layout"),
+                bind_group_layouts: &[
+                    Some(&stamp_bind_group_layout),
+                    Some(&tile_target_bind_group_layout),
+                ],
+                immediate_size: 0,
+            });
+        let background_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("background pipeline layout"),
+                bind_group_layouts: &[Some(&blit_bind_group_layout)],
+                immediate_size: 0,
+            });
         let blit_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("blit pipeline layout"),
-            bind_group_layouts: &[Some(&blit_bind_group_layout)],
+            bind_group_layouts: &[Some(&blit_bind_group_layout), Some(&tile_bind_group_layout)],
             immediate_size: 0,
         });
-        let clipping_group_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("clipping group blit bind group"),
-            layout: &blit_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&paint_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&clipping_group_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: view_uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: clipping_group_settings_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let clipping_group_bind_group = create_blit_bind_group(
+            device,
+            &blit_bind_group_layout,
+            &view_uniform_buffer,
+            &clipping_group_settings_buffer,
+        );
         let clipped_layer_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("clipped layer pipeline layout"),
-                bind_group_layouts: &[Some(&clipped_layer_bind_group_layout)],
+                bind_group_layouts: &[
+                    Some(&clipped_layer_bind_group_layout),
+                    Some(&tile_bind_group_layout),
+                    Some(&tile_bind_group_layout),
+                ],
                 immediate_size: 0,
             });
         let stroke_preview_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("stroke preview pipeline layout"),
-                bind_group_layouts: &[Some(&stroke_preview_bind_group_layout)],
+                bind_group_layouts: &[
+                    Some(&stroke_preview_bind_group_layout),
+                    Some(&tile_bind_group_layout),
+                    Some(&tile_bind_group_layout),
+                ],
                 immediate_size: 0,
             });
         let layer_preview_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("layer preview pipeline layout"),
-                bind_group_layouts: &[Some(&layer_preview_bind_group_layout)],
+                bind_group_layouts: &[
+                    Some(&layer_preview_bind_group_layout),
+                    Some(&tile_bind_group_layout),
+                ],
                 immediate_size: 0,
             });
         let stroke_commit_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("stroke commit pipeline layout"),
-                bind_group_layouts: &[Some(&stroke_commit_bind_group_layout)],
+                bind_group_layouts: &[
+                    Some(&stroke_commit_bind_group_layout),
+                    Some(&tile_target_bind_group_layout),
+                ],
                 immediate_size: 0,
             });
         let transform_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("layer transform pipeline layout"),
-                bind_group_layouts: &[Some(&transform_bind_group_layout)],
+                bind_group_layouts: &[
+                    Some(&transform_bind_group_layout),
+                    Some(&tile_target_bind_group_layout),
+                ],
                 immediate_size: 0,
             });
         let stamp_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -618,7 +557,7 @@ impl RenderResources {
             |label, shader: &wgpu::ShaderModule, source_factor: Option<wgpu::BlendFactor>| {
                 device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some(label),
-                    layout: Some(&stamp_pipeline_layout),
+                    layout: Some(&smudge_pipeline_layout),
                     vertex: wgpu::VertexState {
                         module: shader,
                         entry_point: Some("vs"),
@@ -780,10 +719,10 @@ impl RenderResources {
             multiview_mask: None,
             cache: None,
         });
-        let create_blit_pipeline = |label, entry_point| {
+        let create_blit_pipeline = |label, layout, entry_point| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
-                layout: Some(&blit_pipeline_layout),
+                layout: Some(layout),
                 vertex: wgpu::VertexState {
                     module: &blit_shader,
                     entry_point: Some("vs"),
@@ -810,8 +749,13 @@ impl RenderResources {
                 cache: None,
             })
         };
-        let background_pipeline = create_blit_pipeline("background pipeline", "fs_background");
-        let layer_pipeline = create_blit_pipeline("layer pipeline", "fs_layer");
+        let background_pipeline = create_blit_pipeline(
+            "background pipeline",
+            &background_pipeline_layout,
+            "fs_background",
+        );
+        let layer_pipeline =
+            create_blit_pipeline("layer pipeline", &blit_pipeline_layout, "fs_layer");
         let clipping_group_blend = wgpu::BlendState {
             color: wgpu::BlendComponent {
                 operation: wgpu::BlendOperation::Add,
@@ -1091,10 +1035,12 @@ impl RenderResources {
             backdrop_view,
             smudge_texture,
             smudge_texture_view,
-            _clipping_group_texture: clipping_group_texture,
-            clipping_group_view,
-            clipping_group_settings_buffer,
+            _scratch_tile_texture: scratch_tile_texture,
+            scratch_tile_view,
+            _empty_tile_texture: empty_tile_texture,
+            tile_slots,
             clipping_group_bind_group,
+            thumbnail_bind_group,
             _stroke_mask_texture: stroke_mask_texture,
             stroke_mask_view,
             _preview_mask_texture: preview_mask_texture,
@@ -1103,14 +1049,13 @@ impl RenderResources {
             brush_texture_view,
             brush_sampler,
             paint_sampler,
-            preview_sampler,
             stamp_bind_group_layout,
             cursor_bind_group_layout,
             blit_bind_group_layout,
+            tile_bind_group_layout,
             clipped_layer_bind_group_layout,
             stroke_preview_bind_group_layout,
             stroke_preview_bind_group: None,
-            layer_preview_bind_group_layout,
             stroke_commit_bind_group_layout,
             transform_bind_group_layout,
             stroke_commit_bind_group,
@@ -1162,11 +1107,15 @@ impl RenderResources {
         queue: &wgpu::Queue,
         transform: LayerTransform,
         pivot: [f32; 2],
+        source_origin: [u32; 2],
     ) {
+        let mut uniform = transform.uniform(pivot);
+        uniform.source_from_destination_x[2] -= source_origin[0] as f32;
+        uniform.source_from_destination_y[2] -= source_origin[1] as f32;
         queue.write_buffer(
             &self.transform_uniform_buffer,
             0,
-            bytemuck::bytes_of(&transform.uniform(pivot)),
+            bytemuck::bytes_of(&uniform),
         );
     }
 
@@ -1174,9 +1123,8 @@ impl RenderResources {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        layer_view: &wgpu::TextureView,
         layer_settings_buffer: &wgpu::Buffer,
-        clipping_base: Option<(&wgpu::TextureView, &wgpu::Buffer)>,
+        clipping_base_settings_buffer: Option<&wgpu::Buffer>,
         color: [f32; 4],
     ) {
         queue.write_buffer(
@@ -1184,8 +1132,7 @@ impl RenderResources {
             0,
             bytemuck::bytes_of(&StrokeUniform { color }),
         );
-        let (base_view, base_settings_buffer) =
-            clipping_base.unwrap_or((layer_view, layer_settings_buffer));
+        let base_settings_buffer = clipping_base_settings_buffer.unwrap_or(layer_settings_buffer);
         self.stroke_preview_bind_group =
             Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("stroke preview bind group"),
@@ -1197,34 +1144,26 @@ impl RenderResources {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(layer_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
                         resource: wgpu::BindingResource::TextureView(&self.stroke_mask_view),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 3,
+                        binding: 2,
                         resource: self.view_uniform_buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 4,
+                        binding: 3,
                         resource: self.stroke_uniform_buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 5,
+                        binding: 4,
                         resource: layer_settings_buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 6,
-                        resource: wgpu::BindingResource::TextureView(base_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 7,
+                        binding: 5,
                         resource: base_settings_buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 8,
+                        binding: 6,
                         resource: wgpu::BindingResource::TextureView(&self.preview_mask_view),
                     },
                 ],
@@ -1235,10 +1174,6 @@ impl RenderResources {
         self.stroke_preview_bind_group
             .as_ref()
             .expect("brush and eraser strokes require a preview bind group")
-    }
-
-    pub(crate) fn clipping_group_bind_group(&self) -> &wgpu::BindGroup {
-        &self.clipping_group_bind_group
     }
 
     pub(crate) fn clear_stroke_preview(&mut self) {
@@ -1288,30 +1223,6 @@ impl RenderResources {
         );
 
         let (smudge_texture, smudge_texture_view) = create_paint_texture(device, document_size);
-        let (clipping_group_texture, clipping_group_view) =
-            create_paint_texture(device, document_size);
-        let clipping_group_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("clipping group blit bind group"),
-            layout: &self.blit_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&self.paint_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&clipping_group_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.view_uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.clipping_group_settings_buffer.as_entire_binding(),
-                },
-            ],
-        });
         let (stroke_mask_texture, stroke_mask_view) =
             create_stroke_mask_texture(device, document_size);
         let (preview_mask_texture, preview_mask_view) =
@@ -1327,26 +1238,15 @@ impl RenderResources {
             &self.stamp_uniform_buffer,
             &smudge_texture_view,
         );
-        let stroke_commit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("stroke commit bind group"),
-            layout: &self.stroke_commit_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&stroke_mask_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: self.stroke_uniform_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let stroke_commit_bind_group = create_stroke_commit_bind_group(
+            device,
+            &self.stroke_commit_bind_group_layout,
+            &stroke_mask_view,
+            &self.stroke_uniform_buffer,
+        );
 
         self.smudge_texture = smudge_texture;
         self.smudge_texture_view = smudge_texture_view;
-        self._clipping_group_texture = clipping_group_texture;
-        self.clipping_group_view = clipping_group_view;
-        self.clipping_group_bind_group = clipping_group_bind_group;
         self._stroke_mask_texture = stroke_mask_texture;
         self.stroke_mask_view = stroke_mask_view;
         self._preview_mask_texture = preview_mask_texture;
@@ -1360,12 +1260,10 @@ impl RenderResources {
     pub(crate) fn create_paint_layer(
         &self,
         device: &wgpu::Device,
-        size: [u32; 2],
         id: LayerId,
         resource_id: LayerResourceId,
         properties: LayerProperties,
     ) -> PaintLayer {
-        let (texture, view) = create_paint_texture(device, size);
         let settings_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("layer settings uniform buffer"),
             contents: bytemuck::bytes_of(&LayerSettingsUniform {
@@ -1374,55 +1272,13 @@ impl RenderResources {
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let blit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("layer blit bind group"),
-            layout: &self.blit_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&self.paint_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.view_uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: settings_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let blit_bind_group = create_blit_bind_group(
+            device,
+            &self.blit_bind_group_layout,
+            &self.view_uniform_buffer,
+            &settings_buffer,
+        );
         let (preview_texture, preview_view) = create_layer_preview_texture(device);
-        let preview_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("layer preview bind group"),
-            layout: &self.layer_preview_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&self.preview_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&self.stroke_mask_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.stroke_uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: self.layer_preview_uniform_buffer.as_entire_binding(),
-                },
-            ],
-        });
         PaintLayer {
             id,
             resource_id,
@@ -1431,14 +1287,35 @@ impl RenderResources {
             opacity: properties.opacity,
             clipped: properties.clipped,
             settings_buffer,
-            texture,
-            view,
+            tiles: TileSet::default(),
             blit_bind_group,
             _preview_texture: preview_texture,
             preview_view,
-            preview_bind_group,
             preview_dirty: true,
         }
+    }
+
+    pub(crate) fn create_tile(&self, device: &wgpu::Device, coord: TileCoord) -> Tile {
+        let (texture, view) = create_tile_texture(device, "layer tile texture");
+        let bind_group = create_tile_bind_group(
+            device,
+            &self.tile_bind_group_layout,
+            &view,
+            &self.tile_slot(coord).origin_buffer,
+        );
+        Tile {
+            texture,
+            view,
+            bind_group,
+        }
+    }
+
+    pub(crate) fn tile_slot(&self, coord: TileCoord) -> &TileSlot {
+        &self.tile_slots[(coord.y * MAX_TILE_GRID + coord.x) as usize]
+    }
+
+    pub(crate) fn clipping_group_bind_group(&self) -> &wgpu::BindGroup {
+        &self.clipping_group_bind_group
     }
 
     pub(crate) fn create_clipped_layer_bind_group(
@@ -1453,26 +1330,10 @@ impl RenderResources {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&self.paint_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&layer.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&base.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.view_uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
                     resource: layer.settings_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 5,
+                    binding: 1,
                     resource: base.settings_buffer.as_entire_binding(),
                 },
             ],
@@ -1548,6 +1409,72 @@ fn create_stamp_bind_groups(
                 },
             ],
         })
+    })
+}
+
+fn create_blit_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    view_uniform: &wgpu::Buffer,
+    settings: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("layer blit bind group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: view_uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: settings.as_entire_binding(),
+            },
+        ],
+    })
+}
+
+fn create_tile_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    view: &wgpu::TextureView,
+    origin: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("tile bind group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: origin.as_entire_binding(),
+            },
+        ],
+    })
+}
+
+fn create_stroke_commit_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    stroke_mask: &wgpu::TextureView,
+    stroke_uniform: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("stroke commit bind group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(stroke_mask),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: stroke_uniform.as_entire_binding(),
+            },
+        ],
     })
 }
 
@@ -1746,6 +1673,28 @@ fn create_layer_preview_texture(device: &wgpu::Device) -> (wgpu::Texture, wgpu::
         dimension: wgpu::TextureDimension::D2,
         format: DOCUMENT_FORMAT,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
+}
+
+fn create_tile_texture(device: &wgpu::Device, label: &str) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: TILE_SIZE,
+            height: TILE_SIZE,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DOCUMENT_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());

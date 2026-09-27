@@ -1,16 +1,19 @@
 @group(0) @binding(0) var previewSampler: sampler;
-@group(0) @binding(1) var layerTexture: texture_2d<f32>;
-@group(0) @binding(2) var strokeMask: texture_2d<f32>;
-@group(0) @binding(3) var<uniform> stroke: Stroke;
-@group(0) @binding(4) var<uniform> preview: Preview;
+@group(0) @binding(1) var<uniform> preview: Preview;
+@group(1) @binding(0) var tileTexture: texture_2d<f32>;
+@group(1) @binding(1) var<uniform> tile: Tile;
 
-struct Stroke {
-  color: vec4f,
-};
+// Must match `tiles::TILE_SIZE`.
+const TILE_SIZE: f32 = 512.0;
 
 struct Preview {
   previewDims: vec2f,
   documentDims: vec2f,
+};
+
+struct Tile {
+  origin: vec2f,
+  padding: vec2f,
 };
 
 @vertex
@@ -34,34 +37,17 @@ fn is_outside_document(uv: vec2f) -> bool {
   return any(uv < vec2f(0.0)) || any(uv > vec2f(1.0));
 }
 
+// Each tile is drawn separately into a cleared thumbnail, so pixels owned by other tiles are
+// discarded rather than overwritten.
 @fragment
 fn fs_layer(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let uv = preview_uv(pos);
   if is_outside_document(uv) {
-    return vec4f(0.0);
+    discard;
   }
-  return textureSampleLevel(layerTexture, previewSampler, uv, 0.0);
-}
-
-@fragment
-fn fs_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let uv = preview_uv(pos);
-  if is_outside_document(uv) {
-    return vec4f(0.0);
+  let local = uv * preview.documentDims - tile.origin;
+  if any(local < vec2f(0.0)) || any(local >= vec2f(TILE_SIZE)) {
+    discard;
   }
-  let base = textureSampleLevel(layerTexture, previewSampler, uv, 0.0);
-  let mask = textureSampleLevel(strokeMask, previewSampler, uv, 0.0).r;
-  let source = stroke.color * mask;
-  return source + base * (1.0 - source.a);
-}
-
-@fragment
-fn fs_eraser(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let uv = preview_uv(pos);
-  if is_outside_document(uv) {
-    return vec4f(0.0);
-  }
-  let base = textureSampleLevel(layerTexture, previewSampler, uv, 0.0);
-  let mask = textureSampleLevel(strokeMask, previewSampler, uv, 0.0).r;
-  return base * (1.0 - mask);
+  return textureSampleLevel(tileTexture, previewSampler, local / TILE_SIZE, 0.0);
 }

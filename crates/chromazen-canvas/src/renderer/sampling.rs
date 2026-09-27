@@ -1,6 +1,9 @@
 use std::sync::mpsc;
 
-use super::PaintLayer;
+use super::{
+    PaintLayer,
+    tiles::{TILE_SIZE, TileCoord},
+};
 
 const BYTES_PER_PIXEL: u64 = 4;
 
@@ -38,14 +41,22 @@ pub(super) fn read_composited_color(
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("eyedropper readback encoder"),
     });
+    let coord = TileCoord {
+        x: pixel[0] / TILE_SIZE,
+        y: pixel[1] / TILE_SIZE,
+    };
+    // The buffer starts zero-filled, so layers without a tile here sample as transparent.
     for (index, layer) in layers.iter().enumerate() {
+        let Some(tile) = layer.tiles.get(coord) else {
+            continue;
+        };
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &layer.texture,
+                texture: &tile.texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d {
-                    x: pixel[0],
-                    y: pixel[1],
+                    x: pixel[0] % TILE_SIZE,
+                    y: pixel[1] % TILE_SIZE,
                     z: 0,
                 },
                 aspect: wgpu::TextureAspect::All,

@@ -1,6 +1,5 @@
-@group(0) @binding(0) var paintSampler: sampler;
-@group(0) @binding(1) var paintTexture: texture_2d<f32>;
-@group(0) @binding(3) var<uniform> layer: LayerSettings;
+@group(0) @binding(1) var<uniform> layer: LayerSettings;
+@group(1) @binding(0) var tileTexture: texture_2d<f32>;
 
 struct LayerSettings {
   opacity: f32,
@@ -13,10 +12,9 @@ fn vs(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec4f {
   return vec4f(x, y, 0.0, 1.0);
 }
 
+// Renders into a tile at the same coordinate as the source tile.
 @fragment
 fn fs(@builtin(position) position: vec4f) -> @location(0) vec4f {
-  let dimensions = vec2f(textureDimensions(paintTexture));
-  let uv = position.xy / dimensions;
   // Layer textures are premultiplied, so opacity scales every channel.
-  return textureSampleLevel(paintTexture, paintSampler, uv, 0.0) * layer.opacity;
+  return textureLoad(tileTexture, vec2i(position.xy), 0) * layer.opacity;
 }

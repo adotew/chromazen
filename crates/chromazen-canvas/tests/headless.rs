@@ -1,6 +1,8 @@
 use std::sync::mpsc;
 
-use chromazen_canvas::{BrushCursor, BrushSpacing, Canvas, PaintTool, StrokePoint};
+use chromazen_canvas::{
+    BrushCursor, BrushSpacing, Canvas, CanvasDocument, LayerId, LayerInfo, PaintTool, StrokePoint,
+};
 
 const RENDER_SIZE: [u32; 2] = [64, 64];
 
@@ -81,6 +83,10 @@ async fn run() {
     assert!(canvas.redo());
     assert!(center_alpha(&canvas) > 0);
 
+    strokes_across_tile_edges_undo_and_redo(&device, &queue);
+    sparse_documents_round_trip_through_tiles(&device, &queue);
+    unaligned_canvas_resize_shifts_tiled_content(&device, &queue);
+    smudge_drags_color_into_an_empty_tile(&device, &queue);
     preview_is_visible_but_not_committed(&device, &queue);
     run_brush_cursor_contrast(&device, &queue);
     run_adjustment_preview_over_reference(&device, &queue);
@@ -95,6 +101,164 @@ fn center_alpha(canvas: &Canvas) -> u8 {
         .expect("pixels")[0]
         .1
         .get_pixel(16, 16)[3]
+}
+
+// Wider and taller than one 512 px tile, with partial edge tiles.
+const TILED_SIZE: [u32; 2] = [1100, 700];
+
+fn tiled_canvas(device: &wgpu::Device, queue: &wgpu::Queue) -> Canvas {
+    let brush = image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4]));
+    Canvas::new(
+        device.clone(),
+        queue.clone(),
+        wgpu::TextureFormat::Rgba8Unorm,
+        RENDER_SIZE,
+        TILED_SIZE,
+        &brush,
+        [0.16; 3],
+    )
+    .expect("tiled canvas")
+}
+
+fn read_layers(canvas: &Canvas) -> Vec<image::RgbaImage> {
+    canvas
+        .begin_document_layer_readback()
+        .expect("readback")
+        .finish()
+        .expect("pixels")
+        .into_iter()
+        .map(|(_, image)| image)
+        .collect()
+}
+
+fn load_single_layer(canvas: &mut Canvas, image: image::RgbaImage) {
+    canvas
+        .load_document(
+            &CanvasDocument {
+                size: [image.width(), image.height()],
+                background: [255; 3],
+                selected_layer: LayerId(1),
+                layers: vec![LayerInfo {
+                    id: LayerId(1),
+                    name: "Layer 1".to_owned(),
+                    visible: true,
+                    opacity: 100,
+                    clipped: false,
+                }],
+            },
+            vec![image],
+        )
+        .expect("load document");
+}
+
+/// Sparse content with pixels on tile and document edges and fully transparent tiles.
+fn sparse_pattern() -> image::RgbaImage {
+    image::RgbaImage::from_fn(TILED_SIZE[0], TILED_SIZE[1], |x, y| {
+        let on_edge = [0, 511, 512, 1023, 1024, 1099].contains(&x) && y < 600;
+        if (x < 512 && y < 512 && (x + y) % 7 == 0) || on_edge || (x, y) == (1099, 699) {
+            image::Rgba([(x % 256) as u8, (y % 256) as u8, 90, 255])
+        } else {
+            image::Rgba([0; 4])
+        }
+    })
+}
+
+fn strokes_across_tile_edges_undo_and_redo(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let mut canvas = tiled_canvas(device, queue);
+    let from = StrokePoint {
+        x: 490.0,
+        y: 510.0,
+        radius: 6.0,
+        opacity: 1.0,
+    };
+    let to = StrokePoint { x: 540.0, ..from };
+    assert!(canvas.begin_stroke(PaintTool::Brush, from, [0.0, 0.0, 0.0, 1.0], 1.0));
+    assert!(canvas.queue_stamp(from));
+    canvas.stamp_line(from, to, BrushSpacing::default());
+    canvas.end_stroke();
+
+    // One sample in each of the four tiles around the corner at (512, 512).
+    let samples = [[500, 506], [530, 506], [500, 514], [530, 514]];
+    let painted = |canvas: &Canvas| {
+        let layer = &read_layers(canvas)[0];
+        samples.map(|[x, y]| layer.get_pixel(x, y)[3] > 0)
+    };
+    assert_eq!(painted(&canvas), [true; 4]);
+    assert!(canvas.undo());
+    assert_eq!(painted(&canvas), [false; 4]);
+    assert!(canvas.redo());
+    assert_eq!(painted(&canvas), [true; 4]);
+
+    // Erasing across the same edge only changes existing tiles and undoes cleanly.
+    assert!(canvas.begin_stroke(PaintTool::Eraser, from, [0.0; 4], 1.0));
+    assert!(canvas.queue_stamp(from));
+    canvas.stamp_line(from, to, BrushSpacing::default());
+    canvas.end_stroke();
+    assert_eq!(painted(&canvas), [false; 4]);
+    assert!(canvas.undo());
+    assert_eq!(painted(&canvas), [true; 4]);
+}
+
+fn sparse_documents_round_trip_through_tiles(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let mut canvas = tiled_canvas(device, queue);
+    let image = sparse_pattern();
+    load_single_layer(&mut canvas, image.clone());
+    assert!(read_layers(&canvas)[0] == image);
+}
+
+fn unaligned_canvas_resize_shifts_tiled_content(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let mut canvas = tiled_canvas(device, queue);
+    let image = sparse_pattern();
+    load_single_layer(&mut canvas, image.clone());
+
+    let size = [900, 800];
+    let origin = [-37_i32, 101];
+    assert!(canvas.resize_canvas(size, origin).expect("resize"));
+    let expected = image::RgbaImage::from_fn(size[0], size[1], |x, y| {
+        let source = [x as i32 + origin[0], y as i32 + origin[1]];
+        if source.iter().all(|&value| value >= 0)
+            && (source[0] as u32) < image.width()
+            && (source[1] as u32) < image.height()
+        {
+            *image.get_pixel(source[0] as u32, source[1] as u32)
+        } else {
+            image::Rgba([0; 4])
+        }
+    });
+    assert!(read_layers(&canvas)[0] == expected);
+
+    assert!(canvas.undo());
+    assert_eq!(canvas.document_size(), TILED_SIZE);
+    assert!(read_layers(&canvas)[0] == image);
+}
+
+fn smudge_drags_color_into_an_empty_tile(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let mut canvas = tiled_canvas(device, queue);
+    // Only the first tile column has paint.
+    let image = image::RgbaImage::from_fn(TILED_SIZE[0], TILED_SIZE[1], |x, _| {
+        if x < 512 {
+            image::Rgba([255, 0, 0, 255])
+        } else {
+            image::Rgba([0; 4])
+        }
+    });
+    load_single_layer(&mut canvas, image);
+    let from = StrokePoint {
+        x: 490.0,
+        y: 300.0,
+        radius: 12.0,
+        opacity: 1.0,
+    };
+    let to = StrokePoint { x: 560.0, ..from };
+    assert!(canvas.begin_stroke(PaintTool::Smudge, from, [0.0; 4], 1.0));
+    assert!(canvas.queue_stamp(from));
+    canvas.stamp_line(from, to, BrushSpacing::default());
+    canvas.end_stroke();
+
+    let smudged = read_layers(&canvas)[0].get_pixel(530, 300).0;
+    assert!(smudged[3] > 0 && smudged[0] > 0 && smudged[1] == 0);
+    assert!(canvas.undo());
+    assert_eq!(read_layers(&canvas)[0].get_pixel(530, 300)[3], 0);
 }
 
 fn preview_is_visible_but_not_committed(device: &wgpu::Device, queue: &wgpu::Queue) {

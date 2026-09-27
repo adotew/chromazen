@@ -1,9 +1,17 @@
 @group(0) @binding(0) var sourceTex: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> transform: Transform;
+@group(1) @binding(1) var<uniform> tile: Tile;
 
+// Maps destination document pixels to source texture pixels. The source texture holds only the
+// layer's content bounds, and the translation accounts for its document origin.
 struct Transform {
   sourceFromDestinationX: vec4f,
   sourceFromDestinationY: vec4f,
+};
+
+struct Tile {
+  origin: vec2f,
+  padding: vec2f,
 };
 
 @vertex
@@ -23,14 +31,14 @@ fn load_or_transparent(point: vec2i) -> vec4f {
 
 @fragment
 fn fs(@builtin(position) position: vec4f) -> @location(0) vec4f {
-  let destination = vec3f(position.xy, 1.0);
+  let destination = vec3f(position.xy + tile.origin, 1.0);
   let source = vec2f(
     dot(transform.sourceFromDestinationX.xyz, destination),
     dot(transform.sourceFromDestinationY.xyz, destination),
   );
 
   // Pixel centers are at n + 0.5. Manual bilinear filtering keeps pixels beyond
-  // the source canvas transparent instead of extending edge colors.
+  // the source content transparent instead of extending edge colors.
   let samplePosition = source - vec2f(0.5);
   let base = vec2i(floor(samplePosition));
   let fraction = fract(samplePosition);

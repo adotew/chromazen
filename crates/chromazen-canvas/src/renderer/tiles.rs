@@ -1,7 +1,10 @@
-use super::history::TextureRect;
+use std::collections::BTreeMap;
 
-/// occupies 1 MiB, and a fully painted 4000x4000 layer uses an 8x8 grid.
+use super::{MAX_CANVAS_DIMENSION, history::TextureRect};
+
 pub(crate) const TILE_SIZE: u32 = 512;
+pub(crate) const TILE_BYTES: u64 = TILE_SIZE as u64 * TILE_SIZE as u64 * 4;
+pub(crate) const MAX_TILE_GRID: u32 = MAX_CANVAS_DIMENSION.div_ceil(TILE_SIZE);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct TileCoord {
@@ -13,16 +16,63 @@ impl TileCoord {
     pub(crate) fn origin(self) -> [u32; 2] {
         [self.x * TILE_SIZE, self.y * TILE_SIZE]
     }
+}
 
-    /// The document rectangle covered by this tile, including pixels beyond the document edge.
-    pub(crate) fn rect(self) -> TextureRect {
-        let [x, y] = self.origin();
-        TextureRect {
-            x,
-            y,
-            width: TILE_SIZE,
-            height: TILE_SIZE,
-        }
+/// Texels beyond the document edge stay transparent because every write is clipped to the
+/// document.
+pub(crate) struct Tile {
+    pub(crate) texture: wgpu::Texture,
+    pub(crate) view: wgpu::TextureView,
+    pub(crate) bind_group: wgpu::BindGroup,
+}
+
+/// Sparse layer storage. A coordinate without a tile is fully transparent.
+#[derive(Default)]
+pub(crate) struct TileSet {
+    tiles: BTreeMap<TileCoord, Tile>,
+}
+
+impl TileSet {
+    pub(crate) fn get(&self, coord: TileCoord) -> Option<&Tile> {
+        self.tiles.get(&coord)
+    }
+
+    pub(crate) fn contains(&self, coord: TileCoord) -> bool {
+        self.tiles.contains_key(&coord)
+    }
+
+    pub(crate) fn insert(&mut self, coord: TileCoord, tile: Tile) -> Option<Tile> {
+        self.tiles.insert(coord, tile)
+    }
+
+    pub(crate) fn remove(&mut self, coord: TileCoord) -> Option<Tile> {
+        self.tiles.remove(&coord)
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (TileCoord, &Tile)> {
+        self.tiles.iter().map(|(coord, tile)| (*coord, tile))
+    }
+
+    pub(crate) fn coords(&self) -> impl Iterator<Item = TileCoord> + '_ {
+        self.tiles.keys().copied()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.tiles.is_empty()
+    }
+
+    pub(crate) fn byte_len(&self) -> u64 {
+        self.tiles.len() as u64 * TILE_BYTES
+    }
+
+    pub(crate) fn take_all(&mut self) -> BTreeMap<TileCoord, Tile> {
+        std::mem::take(&mut self.tiles)
+    }
+}
+
+impl From<BTreeMap<TileCoord, Tile>> for TileSet {
+    fn from(tiles: BTreeMap<TileCoord, Tile>) -> Self {
+        Self { tiles }
     }
 }
 
@@ -35,12 +85,17 @@ pub(crate) struct TileSpan {
 
 impl TileSpan {
     pub(crate) fn local(self) -> TextureRect {
-        let [x, y] = self.coord.origin();
-        TextureRect {
-            x: self.document.x - x,
-            y: self.document.y - y,
-            ..self.document
-        }
+        tile_local_rect(self.coord, self.document)
+    }
+}
+
+/// Converts a document rectangle inside `coord`'s tile to tile texture coordinates.
+pub(crate) fn tile_local_rect(coord: TileCoord, rect: TextureRect) -> TextureRect {
+    let [x, y] = coord.origin();
+    TextureRect {
+        x: rect.x - x,
+        y: rect.y - y,
+        ..rect
     }
 }
 
@@ -94,6 +149,48 @@ pub(crate) fn tile_document_rect(coord: TileCoord, document_size: [u32; 2]) -> T
         width: document_size[0].saturating_sub(x).min(TILE_SIZE),
         height: document_size[1].saturating_sub(y).min(TILE_SIZE),
     }
+}
+
+pub(crate) fn region_has_alpha(image: &image::RgbaImage, rect: TextureRect) -> bool {
+    (rect.y..rect.y + rect.height)
+        .any(|y| (rect.x..rect.x + rect.width).any(|x| image.get_pixel(x, y)[3] != 0))
+}
+
+pub(crate) fn copy_texture_region(
+    encoder: &mut wgpu::CommandEncoder,
+    source: &wgpu::Texture,
+    source_origin: [u32; 2],
+    destination: &wgpu::Texture,
+    destination_origin: [u32; 2],
+    size: [u32; 2],
+) {
+    encoder.copy_texture_to_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: source,
+            mip_level: 0,
+            origin: wgpu::Origin3d {
+                x: source_origin[0],
+                y: source_origin[1],
+                z: 0,
+            },
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyTextureInfo {
+            texture: destination,
+            mip_level: 0,
+            origin: wgpu::Origin3d {
+                x: destination_origin[0],
+                y: destination_origin[1],
+                z: 0,
+            },
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::Extent3d {
+            width: size[0],
+            height: size[1],
+            depth_or_array_layers: 1,
+        },
+    );
 }
 
 #[cfg(test)]
@@ -176,6 +273,31 @@ mod tests {
     }
 
     #[test]
+    fn transparent_regions_are_detected() {
+        let mut image = image::RgbaImage::new(600, 600);
+        image.put_pixel(520, 3, image::Rgba([0, 0, 0, 1]));
+        assert!(!region_has_alpha(&image, rect(0, 0, 512, 512)));
+        assert!(region_has_alpha(&image, rect(512, 0, 88, 512)));
+        assert!(!region_has_alpha(&image, rect(512, 4, 88, 512 - 4)));
+    }
+
+    #[test]
+    fn shaders_share_the_tile_size() {
+        for source in [
+            include_str!("shaders/blit.wgsl"),
+            include_str!("shaders/stroke_composite.wgsl"),
+        ] {
+            assert!(source.contains(&format!("const TILE_SIZE: i32 = {TILE_SIZE};")));
+        }
+        for source in [
+            include_str!("shaders/layer_preview.wgsl"),
+            include_str!("shaders/smudge.wgsl"),
+        ] {
+            assert!(source.contains(&format!("const TILE_SIZE: f32 = {TILE_SIZE}.0;")));
+        }
+    }
+
+    #[test]
     fn edge_tiles_are_clipped_to_the_document() {
         assert_eq!(
             tile_document_rect(TileCoord { x: 2, y: 1 }, [1100, 700]),
@@ -185,6 +307,5 @@ mod tests {
             tile_document_rect(TileCoord { x: 0, y: 0 }, [1100, 700]),
             rect(0, 0, 512, 512)
         );
-        assert_eq!(TileCoord { x: 2, y: 1 }.rect(), rect(1024, 512, 512, 512));
     }
 }

@@ -5,10 +5,20 @@ const SMUDGE_MAX_ADVECTION: f32 = 0.35;
 @group(0) @binding(1) var brushStamp: texture_2d<f32>;
 @group(0) @binding(2) var<storage, read> brushes: array<Brush>;
 @group(0) @binding(3) var<uniform> paint: Paint;
+// A document-sized snapshot of the smudged layer.
 @group(0) @binding(4) var sourceTexture: texture_2d<f32>;
+@group(1) @binding(1) var<uniform> tile: Tile;
+
+// Must match `tiles::TILE_SIZE`.
+const TILE_SIZE: f32 = 512.0;
 
 struct Paint {
   dims: vec2f,
+  padding: vec2f,
+};
+
+struct Tile {
+  origin: vec2f,
   padding: vec2f,
 };
 
@@ -50,11 +60,12 @@ fn vs(
   let corner = quad_corner(vertexIndex);
   let offset = corner * brush.halfSize;
   let paintPos = brush.center + offset;
+  let tilePos = paintPos - tile.origin;
 
   var out: VertexOut;
   out.position = vec4f(
-    paintPos.x / paint.dims.x * 2.0 - 1.0,
-    1.0 - paintPos.y / paint.dims.y * 2.0,
+    tilePos.x / TILE_SIZE * 2.0 - 1.0,
+    1.0 - tilePos.y / TILE_SIZE * 2.0,
     0.0,
     1.0,
   );
@@ -75,7 +86,7 @@ fn fs(in: VertexOut) -> @location(0) vec4f {
   let mask = textureSample(brushStamp, brushSampler, in.uv).a;
   let base = clamp(in.strength * mask, 0.0, 1.0);
   let strength = SMUDGE_MAX_ADVECTION * base;
-  let targetColor = textureLoad(sourceTexture, vec2i(in.position.xy), 0);
+  let targetColor = textureLoad(sourceTexture, vec2i(in.position.xy + tile.origin), 0);
   let draggedColor = sample_source(in.sourcePos);
   return mix(targetColor, draggedColor, strength);
 }
