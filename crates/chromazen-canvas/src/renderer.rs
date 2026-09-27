@@ -8,6 +8,9 @@ mod persistence;
 mod resources;
 mod sampling;
 mod stamps;
+// Layer storage adopts these primitives in the following change.
+#[allow(dead_code)]
+mod tiles;
 mod view;
 
 use self::{
