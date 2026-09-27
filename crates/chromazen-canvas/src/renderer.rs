@@ -1614,35 +1614,22 @@ impl Canvas {
         }
         if tool == PaintTool::Smudge {
             // Smudge samples this snapshot because a tile cannot be sampled while it is
-            // rendered.
+            // rendered. The new texture starts transparent, so only stored tiles are copied.
             let mut encoder = self
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("stroke setup encoder"),
                 });
-            drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("smudge snapshot clear pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.resources.smudge_texture_view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            }));
+            let smudge = self
+                .resources
+                .begin_smudge(&self.device, self.document_size);
             for (coord, tile) in self.layers[layer_index].tiles.iter() {
                 let rect = tile_document_rect(coord, self.document_size);
                 copy_texture_region(
                     &mut encoder,
                     &tile.texture,
                     [0, 0],
-                    &self.resources.smudge_texture,
+                    &smudge.texture,
                     [rect.x, rect.y],
                     [rect.width, rect.height],
                 );
@@ -2511,7 +2498,7 @@ impl Canvas {
                     multiview_mask: None,
                 });
                 pass.set_pipeline(&self.resources.smudge_pipeline);
-                pass.set_bind_group(0, &self.resources.stamp_bind_group, &[]);
+                pass.set_bind_group(0, &self.resources.smudge().bind_group, &[]);
                 pass.set_bind_group(
                     1,
                     &self.resources.tile_slot(span.coord).target_bind_group,
@@ -2532,7 +2519,7 @@ impl Canvas {
                     encoder,
                     &tile.texture,
                     [local.x, local.y],
-                    &self.resources.smudge_texture,
+                    &self.resources.smudge().texture,
                     [span.document.x, span.document.y],
                     [local.width, local.height],
                 );
@@ -2542,6 +2529,7 @@ impl Canvas {
 
     fn clear_active_stroke_state(&mut self) {
         self.active_stroke = None;
+        self.resources.end_smudge();
         self.pending_preview_stamps = self.rendered_preview_rect.is_some().then(Vec::new);
         self.resources.clear_stroke_preview();
     }

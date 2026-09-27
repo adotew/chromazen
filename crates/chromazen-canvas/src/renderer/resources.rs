@@ -9,6 +9,13 @@ use super::{
     TileUniform, ViewUniform,
 };
 
+/// A document-sized copy of the layer that a smudge stroke samples. It exists only while a
+/// smudge stroke is active because it is as large as an untiled layer.
+pub(crate) struct SmudgeSnapshot {
+    pub(crate) texture: wgpu::Texture,
+    pub(crate) bind_group: wgpu::BindGroup,
+}
+
 /// Resources shared by every tile at one grid coordinate. Tile origins depend only on the
 /// coordinate, so layers of any document size reuse the same uniform.
 pub(crate) struct TileSlot {
@@ -33,12 +40,12 @@ pub(crate) struct RenderResources {
     pub(crate) cursor_bind_group: wgpu::BindGroup,
     pub(crate) backdrop_texture: wgpu::Texture,
     pub(crate) backdrop_view: wgpu::TextureView,
-    pub(crate) smudge_texture: wgpu::Texture,
-    pub(crate) smudge_texture_view: wgpu::TextureView,
+    smudge: Option<SmudgeSnapshot>,
     // Clipping groups are composed here one tile at a time before being drawn to the canvas.
     _scratch_tile_texture: wgpu::Texture,
     pub(crate) scratch_tile_view: wgpu::TextureView,
     _empty_tile_texture: wgpu::Texture,
+    empty_tile_view: wgpu::TextureView,
     tile_slots: Vec<TileSlot>,
     clipping_group_bind_group: wgpu::BindGroup,
     pub(crate) thumbnail_bind_group: wgpu::BindGroup,
@@ -172,7 +179,6 @@ impl RenderResources {
         });
         let (backdrop_texture, backdrop_view) =
             create_backdrop_texture(device, surface_size, surface_format);
-        let (smudge_texture, smudge_texture_view) = create_paint_texture(device, document_size);
         let (scratch_tile_texture, scratch_tile_view) =
             create_tile_texture(device, "clipping group scratch tile");
         let empty_tile_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -268,7 +274,8 @@ impl RenderResources {
             &brush_texture_view,
             [&stamp_buffer, &preview_stamp_buffer],
             &stamp_uniform_buffer,
-            &smudge_texture_view,
+            // Mask strokes do not read the smudge source.
+            &empty_tile_view,
         );
         let cursor_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1033,11 +1040,11 @@ impl RenderResources {
             cursor_bind_group,
             backdrop_texture,
             backdrop_view,
-            smudge_texture,
-            smudge_texture_view,
+            smudge: None,
             _scratch_tile_texture: scratch_tile_texture,
             scratch_tile_view,
             _empty_tile_texture: empty_tile_texture,
+            empty_tile_view,
             tile_slots,
             clipping_group_bind_group,
             thumbnail_bind_group,
@@ -1222,22 +1229,12 @@ impl RenderResources {
             }),
         );
 
-        let (smudge_texture, smudge_texture_view) = create_paint_texture(device, document_size);
         let (stroke_mask_texture, stroke_mask_view) =
             create_stroke_mask_texture(device, document_size);
         let (preview_mask_texture, preview_mask_view) =
             create_stroke_mask_texture(device, document_size);
         clear_stroke_mask(device, queue, &stroke_mask_view);
         clear_stroke_mask(device, queue, &preview_mask_view);
-        let [stamp_bind_group, preview_stamp_bind_group] = create_stamp_bind_groups(
-            device,
-            &self.stamp_bind_group_layout,
-            &self.brush_sampler,
-            &self.brush_texture_view,
-            [&self.stamp_buffer, &self.preview_stamp_buffer],
-            &self.stamp_uniform_buffer,
-            &smudge_texture_view,
-        );
         let stroke_commit_bind_group = create_stroke_commit_bind_group(
             device,
             &self.stroke_commit_bind_group_layout,
@@ -1245,14 +1242,11 @@ impl RenderResources {
             &self.stroke_uniform_buffer,
         );
 
-        self.smudge_texture = smudge_texture;
-        self.smudge_texture_view = smudge_texture_view;
+        self.smudge = None;
         self._stroke_mask_texture = stroke_mask_texture;
         self.stroke_mask_view = stroke_mask_view;
         self._preview_mask_texture = preview_mask_texture;
         self.preview_mask_view = preview_mask_view;
-        self.stamp_bind_group = stamp_bind_group;
-        self.preview_stamp_bind_group = preview_stamp_bind_group;
         self.stroke_commit_bind_group = stroke_commit_bind_group;
         self.stroke_preview_bind_group = None;
     }
@@ -1340,6 +1334,38 @@ impl RenderResources {
         })
     }
 
+    /// The caller fills the snapshot before the first dab.
+    pub(crate) fn begin_smudge(
+        &mut self,
+        device: &wgpu::Device,
+        document_size: [u32; 2],
+    ) -> &SmudgeSnapshot {
+        let (texture, view) = create_paint_texture(device, document_size);
+        let bind_group = create_stamp_bind_group(
+            device,
+            &self.stamp_bind_group_layout,
+            &self.brush_sampler,
+            &self.brush_texture_view,
+            &self.stamp_buffer,
+            &self.stamp_uniform_buffer,
+            &view,
+        );
+        self.smudge.insert(SmudgeSnapshot {
+            texture,
+            bind_group,
+        })
+    }
+
+    pub(crate) fn smudge(&self) -> &SmudgeSnapshot {
+        self.smudge
+            .as_ref()
+            .expect("smudge strokes require a smudge snapshot")
+    }
+
+    pub(crate) fn end_smudge(&mut self) {
+        self.smudge = None;
+    }
+
     pub(crate) fn replace_brush_stamp(
         &mut self,
         device: &wgpu::Device,
@@ -1354,7 +1380,7 @@ impl RenderResources {
             &brush_texture_view,
             [&self.stamp_buffer, &self.preview_stamp_buffer],
             &self.stamp_uniform_buffer,
-            &self.smudge_texture_view,
+            &self.empty_tile_view,
         );
         let cursor_bind_group = create_cursor_bind_group(
             device,
@@ -1383,32 +1409,44 @@ fn create_stamp_bind_groups(
     smudge: &wgpu::TextureView,
 ) -> [wgpu::BindGroup; 2] {
     stamp_buffers.map(|stamps| {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("stamp bind group"),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(brush),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: stamps.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: uniform.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(smudge),
-                },
-            ],
-        })
+        create_stamp_bind_group(device, layout, sampler, brush, stamps, uniform, smudge)
+    })
+}
+
+fn create_stamp_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    brush: &wgpu::TextureView,
+    stamps: &wgpu::Buffer,
+    uniform: &wgpu::Buffer,
+    smudge: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("stamp bind group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(brush),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: stamps.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::TextureView(smudge),
+            },
+        ],
     })
 }
 
