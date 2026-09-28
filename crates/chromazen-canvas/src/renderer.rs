@@ -1646,7 +1646,7 @@ impl Canvas {
             return;
         };
         self.flush_all_stamps();
-        let Some(rect) = self.stamp_queue.end_stroke() else {
+        let Some((rect, touched_tiles)) = self.stamp_queue.end_stroke() else {
             self.history.end_empty_stroke();
             self.clear_active_stroke_state();
             return;
@@ -1663,11 +1663,13 @@ impl Canvas {
             .position(|layer| layer.id == active_stroke.layer_id)
             .expect("active stroke layer must exist");
         if active_stroke.render_path() == StrokeRenderPath::Mask {
-            // Erasing cannot change a coordinate without a tile.
+            // Tiles inside the bounds that no stamp touched have no mask coverage. Erasing
+            // cannot change a coordinate without a tile.
             let spans: Vec<_> = tile_spans(rect)
                 .filter(|span| {
-                    active_stroke.tool == PaintTool::Brush
-                        || self.layers[layer_index].tiles.contains(span.coord)
+                    touched_tiles.contains(&span.coord)
+                        && (active_stroke.tool == PaintTool::Brush
+                            || self.layers[layer_index].tiles.contains(span.coord))
                 })
                 .collect();
             for span in &spans {

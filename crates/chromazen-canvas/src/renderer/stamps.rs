@@ -1,10 +1,13 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::{BrushSpacing, StrokePoint};
 
-use super::history::TextureRect;
+use super::{
+    history::TextureRect,
+    tiles::{TileCoord, tile_spans},
+};
 
 pub(crate) const MAX_STAMPS_PER_FRAME: usize = 1024;
 
@@ -53,6 +56,7 @@ pub(crate) struct StampQueue {
     last_generated_center: Option<[f32; 2]>,
     stamp_aspect: f32,
     dirty_rect: Option<TextureRect>,
+    dirty_tiles: BTreeSet<TileCoord>,
 }
 
 impl Default for StampQueue {
@@ -69,6 +73,7 @@ impl StampQueue {
             last_generated_center: None,
             stamp_aspect,
             dirty_rect: None,
+            dirty_tiles: BTreeSet::new(),
         }
     }
 
@@ -86,6 +91,7 @@ impl StampQueue {
         self.distance_since_last_stamp = 0.0;
         self.last_generated_center = None;
         self.dirty_rect = None;
+        self.dirty_tiles.clear();
     }
 
     pub(crate) fn has_pending(&self) -> bool {
@@ -96,6 +102,7 @@ impl StampQueue {
         self.distance_since_last_stamp = 0.0;
         self.last_generated_center = Some([origin.x, origin.y]);
         self.dirty_rect = None;
+        self.dirty_tiles.clear();
     }
 
     /// Document pixels touched by stamps queued since the stroke began.
@@ -103,10 +110,13 @@ impl StampQueue {
         self.dirty_rect
     }
 
-    pub(crate) fn end_stroke(&mut self) -> Option<TextureRect> {
+    /// Returns the stroke's dirty bounds and the tiles its stamps touched, which can be far
+    /// fewer than the tiles inside the bounds.
+    pub(crate) fn end_stroke(&mut self) -> Option<(TextureRect, BTreeSet<TileCoord>)> {
         self.distance_since_last_stamp = 0.0;
         self.last_generated_center = None;
-        self.dirty_rect.take()
+        let tiles = std::mem::take(&mut self.dirty_tiles);
+        self.dirty_rect.take().map(|rect| (rect, tiles))
     }
 
     pub(crate) fn queue_point(
@@ -160,6 +170,8 @@ impl StampQueue {
             bounds.max_y as u32,
         );
         self.dirty_rect = Some(self.dirty_rect.map_or(rect, |dirty| dirty.union(rect)));
+        self.dirty_tiles
+            .extend(tile_spans(rect).map(|span| span.coord));
         self.pending.push_back(stamp);
         true
     }
@@ -233,6 +245,7 @@ impl StampQueue {
         let mut preview_queue = self.clone();
         preview_queue.pending.clear();
         preview_queue.dirty_rect = None;
+        preview_queue.dirty_tiles.clear();
         let mut previous = committed_tip;
         let mut endpoint = None;
         for point in preview_points {
@@ -469,7 +482,7 @@ mod tests {
         assert!(queue.queue_point(point(5.0, 5.0), [0.0; 4], 100, 100));
         assert!(queue.queue_point(point(95.0, 95.0), [0.0; 4], 100, 100));
         assert_eq!(
-            queue.end_stroke(),
+            queue.end_stroke().map(|(rect, _)| rect),
             Some(TextureRect {
                 x: 0,
                 y: 0,
@@ -478,6 +491,34 @@ mod tests {
             })
         );
         assert_eq!(queue.end_stroke(), None);
+    }
+
+    #[test]
+    fn diagonal_stamps_dirty_only_the_tiles_they_touch() {
+        let mut queue = StampQueue::default();
+        queue.begin_stroke(point(100.0, 100.0));
+        assert!(queue.queue_point(point(100.0, 100.0), [0.0; 4], 1024, 1024));
+        assert!(queue.queue_point(point(900.0, 900.0), [0.0; 4], 1024, 1024));
+
+        let (rect, tiles) = queue.end_stroke().expect("stroke dirtied the document");
+        assert_eq!(tile_spans(rect).count(), 4);
+        assert_eq!(
+            tiles.into_iter().collect::<Vec<_>>(),
+            [TileCoord { x: 0, y: 0 }, TileCoord { x: 1, y: 1 }]
+        );
+    }
+
+    #[test]
+    fn stamp_across_a_tile_edge_dirties_both_tiles() {
+        let mut queue = StampQueue::default();
+        queue.begin_stroke(point(512.0, 100.0));
+        assert!(queue.queue_point(point(512.0, 100.0), [0.0; 4], 1024, 1024));
+
+        let (_, tiles) = queue.end_stroke().expect("stroke dirtied the document");
+        assert_eq!(
+            tiles.into_iter().collect::<Vec<_>>(),
+            [TileCoord { x: 0, y: 0 }, TileCoord { x: 1, y: 0 }]
+        );
     }
 
     #[test]
@@ -520,7 +561,7 @@ mod tests {
         assert_eq!(queue.pending[0].source_center, [90.0, 90.0]);
         assert_eq!(queue.pending[1].source_center, [10.0, 10.0]);
         assert_eq!(
-            queue.end_stroke(),
+            queue.end_stroke().map(|(rect, _)| rect),
             Some(TextureRect {
                 x: 0,
                 y: 0,
