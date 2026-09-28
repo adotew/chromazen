@@ -184,8 +184,8 @@ impl RenderResources {
         let empty_tile_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("empty tile texture"),
             size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
+                width: TILE_SIZE,
+                height: TILE_SIZE,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -195,8 +195,8 @@ impl RenderResources {
             usage: wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        // Shaders load tile texels by integer coordinate. Out-of-bounds loads from this
-        // zero-initialized texture return transparent texels on every backend.
+        // Shaders load tile texels by integer coordinate without bounds checks, so this stand-in
+        // for a missing tile matches a tile's size. wgpu zero-initializes it, which is transparent.
         let empty_tile_view =
             empty_tile_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let clipping_group_settings_buffer =
