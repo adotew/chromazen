@@ -45,7 +45,7 @@ struct StrokeEntry {
 }
 
 impl StrokeEntry {
-    fn bytes(&self) -> u64 {
+    fn byte_len(&self) -> u64 {
         self.tiles.iter().filter(|(_, tile)| tile.is_some()).count() as u64 * TILE_BYTES
     }
 
@@ -139,9 +139,9 @@ pub(crate) enum StructureEffect {
 
 impl HistoryAction {
     /// Live layers are not counted.
-    fn bytes(&self) -> u64 {
+    fn byte_len(&self) -> u64 {
         match self {
-            Self::Stroke(entry) => entry.bytes(),
+            Self::Stroke(entry) => entry.byte_len(),
             Self::AddLayer { detached, .. } | Self::DeleteLayer { detached, .. } => {
                 detached.as_ref().map_or(0, PaintLayer::byte_len)
             }
@@ -649,12 +649,12 @@ impl PaintHistory {
     }
 
     fn evict_to_budget(&mut self) {
-        let used_bytes = self.actions.iter().map(HistoryAction::bytes).sum();
+        let used_bytes = self.actions.iter().map(HistoryAction::byte_len).sum();
         let count = eviction_count(
             used_bytes,
             HISTORY_BUDGET_BYTES,
             self.actions.len(),
-            self.actions.iter().map(HistoryAction::bytes),
+            self.actions.iter().map(HistoryAction::byte_len),
         );
         self.actions.drain(..count);
         self.cursor -= count;
@@ -776,7 +776,7 @@ mod tests {
         ];
         for action in actions {
             assert_eq!(action.target(), HistoryTarget::Structure);
-            assert_eq!(action.bytes(), 0);
+            assert_eq!(action.byte_len(), 0);
         }
     }
 }

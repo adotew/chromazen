@@ -75,7 +75,7 @@ fn preview_eraser(layer: vec4f, uv: vec2f) -> vec4f {
 }
 
 // Window-space previews draw one tile under a scissor rect that may overlap its neighbors.
-fn window_tile_texel(document: vec2f) -> vec2i {
+fn tile_texel(document: vec2f) -> vec2i {
   return vec2i(floor(document)) - vec2i(tile.origin);
 }
 
@@ -87,7 +87,7 @@ fn is_outside_tile(texel: vec2i) -> bool {
 fn fs_preview_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let document = document_position(pos);
   let uv = document / view.paintDims;
-  let texel = window_tile_texel(document);
+  let texel = tile_texel(document);
   if (is_outside_canvas(uv) || is_outside_tile(texel)) {
     return vec4f(0.0);
   }
@@ -98,7 +98,7 @@ fn fs_preview_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
 fn fs_preview_eraser(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let document = document_position(pos);
   let uv = document / view.paintDims;
-  let texel = window_tile_texel(document);
+  let texel = tile_texel(document);
   if (is_outside_canvas(uv) || is_outside_tile(texel)) {
     return vec4f(0.0);
   }
@@ -117,7 +117,7 @@ fn group_uv(pos: vec4f) -> vec2f {
   return (pos.xy + tile.origin) / view.paintDims;
 }
 
-fn clipped_group_source(source: vec4f, texel: vec2i) -> vec4f {
+fn clip_to_base(source: vec4f, texel: vec2i) -> vec4f {
   let baseAlpha = textureLoad(clippingBaseTile, texel, 0).a * clippingBaseSettings.opacity;
   return vec4f(source.rgb * baseAlpha, source.a);
 }
@@ -136,14 +136,14 @@ fn fs_group_preview_eraser(@builtin(position) pos: vec4f) -> @location(0) vec4f 
 fn fs_group_preview_clipped_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let texel = vec2i(pos.xy);
   let source = preview_brush(textureLoad(layerTile, texel, 0), group_uv(pos));
-  return clipped_group_source(source, texel);
+  return clip_to_base(source, texel);
 }
 
 @fragment
 fn fs_group_preview_clipped_eraser(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let texel = vec2i(pos.xy);
   let source = preview_eraser(textureLoad(layerTile, texel, 0), group_uv(pos));
-  return clipped_group_source(source, texel);
+  return clip_to_base(source, texel);
 }
 
 @vertex

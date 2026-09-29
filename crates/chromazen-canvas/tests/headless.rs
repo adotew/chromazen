@@ -104,7 +104,7 @@ fn center_alpha(canvas: &Canvas) -> u8 {
 }
 
 // Wider and taller than one 512 px tile, with partial edge tiles.
-const TILED_SIZE: [u32; 2] = [1100, 700];
+const TILED_DOCUMENT_SIZE: [u32; 2] = [1100, 700];
 
 fn tiled_canvas(device: &wgpu::Device, queue: &wgpu::Queue) -> Canvas {
     let brush = image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4]));
@@ -113,7 +113,7 @@ fn tiled_canvas(device: &wgpu::Device, queue: &wgpu::Queue) -> Canvas {
         queue.clone(),
         wgpu::TextureFormat::Rgba8Unorm,
         RENDER_SIZE,
-        TILED_SIZE,
+        TILED_DOCUMENT_SIZE,
         &brush,
         [0.16; 3],
     )
@@ -153,7 +153,7 @@ fn load_single_layer(canvas: &mut Canvas, image: image::RgbaImage) {
 
 /// Sparse content with pixels on tile and document edges and fully transparent tiles.
 fn sparse_pattern() -> image::RgbaImage {
-    image::RgbaImage::from_fn(TILED_SIZE[0], TILED_SIZE[1], |x, y| {
+    image::RgbaImage::from_fn(TILED_DOCUMENT_SIZE[0], TILED_DOCUMENT_SIZE[1], |x, y| {
         let on_edge = [0, 511, 512, 1023, 1024, 1099].contains(&x) && y < 600;
         if (x < 512 && y < 512 && (x + y) % 7 == 0) || on_edge || (x, y) == (1099, 699) {
             image::Rgba([(x % 256) as u8, (y % 256) as u8, 90, 255])
@@ -228,20 +228,21 @@ fn unaligned_canvas_resize_shifts_tiled_content(device: &wgpu::Device, queue: &w
     assert!(read_layers(&canvas)[0] == expected);
 
     assert!(canvas.undo());
-    assert_eq!(canvas.document_size(), TILED_SIZE);
+    assert_eq!(canvas.document_size(), TILED_DOCUMENT_SIZE);
     assert!(read_layers(&canvas)[0] == image);
 }
 
 fn smudge_drags_color_into_an_empty_tile(device: &wgpu::Device, queue: &wgpu::Queue) {
     let mut canvas = tiled_canvas(device, queue);
     // Only the first tile column has paint.
-    let image = image::RgbaImage::from_fn(TILED_SIZE[0], TILED_SIZE[1], |x, _| {
-        if x < 512 {
-            image::Rgba([255, 0, 0, 255])
-        } else {
-            image::Rgba([0; 4])
-        }
-    });
+    let image =
+        image::RgbaImage::from_fn(TILED_DOCUMENT_SIZE[0], TILED_DOCUMENT_SIZE[1], |x, _| {
+            if x < 512 {
+                image::Rgba([255, 0, 0, 255])
+            } else {
+                image::Rgba([0; 4])
+            }
+        });
     load_single_layer(&mut canvas, image);
     let from = StrokePoint {
         x: 490.0,

@@ -80,12 +80,12 @@ impl From<BTreeMap<TileCoord, Tile>> for TileSet {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TileSpan {
     pub(crate) coord: TileCoord,
-    pub(crate) document: TextureRect,
+    pub(crate) document_rect: TextureRect,
 }
 
 impl TileSpan {
-    pub(crate) fn local(self) -> TextureRect {
-        tile_local_rect(self.coord, self.document)
+    pub(crate) fn local_rect(self) -> TextureRect {
+        tile_local_rect(self.coord, self.document_rect)
     }
 }
 
@@ -99,12 +99,12 @@ pub(crate) fn tile_local_rect(coord: TileCoord, rect: TextureRect) -> TextureRec
     }
 }
 
-pub(crate) fn grid_size(document_size: [u32; 2]) -> [u32; 2] {
+pub(crate) fn tile_grid_size(document_size: [u32; 2]) -> [u32; 2] {
     document_size.map(|dimension| dimension.div_ceil(TILE_SIZE))
 }
 
-pub(crate) fn all_tiles(document_size: [u32; 2]) -> impl Iterator<Item = TileCoord> {
-    let [columns, rows] = grid_size(document_size);
+pub(crate) fn all_tile_coords(document_size: [u32; 2]) -> impl Iterator<Item = TileCoord> {
+    let [columns, rows] = tile_grid_size(document_size);
     (0..rows).flat_map(move |y| (0..columns).map(move |x| TileCoord { x, y }))
 }
 
@@ -129,7 +129,7 @@ pub(crate) fn tile_spans(rect: TextureRect) -> impl Iterator<Item = TileSpan> {
             let bottom = end_y.min(tile_y + TILE_SIZE);
             TileSpan {
                 coord,
-                document: TextureRect {
+                document_rect: TextureRect {
                     x: left,
                     y: top,
                     width: right - left,
@@ -208,14 +208,14 @@ mod tests {
 
     #[test]
     fn grid_rounds_partial_tiles_up() {
-        assert_eq!(grid_size([4000, 4000]), [8, 8]);
-        assert_eq!(grid_size([512, 513]), [1, 2]);
-        assert_eq!(grid_size([1, 1]), [1, 1]);
+        assert_eq!(tile_grid_size([4000, 4000]), [8, 8]);
+        assert_eq!(tile_grid_size([512, 513]), [1, 2]);
+        assert_eq!(tile_grid_size([1, 1]), [1, 1]);
     }
 
     #[test]
     fn all_tiles_are_listed_row_by_row() {
-        let coords: Vec<_> = all_tiles([1100, 600]).collect();
+        let coords: Vec<_> = all_tile_coords([1100, 600]).collect();
         assert_eq!(coords.len(), 6);
         assert_eq!(coords[0], TileCoord { x: 0, y: 0 });
         assert_eq!(coords[2], TileCoord { x: 2, y: 0 });
@@ -229,10 +229,10 @@ mod tests {
             spans,
             vec![TileSpan {
                 coord: TileCoord { x: 1, y: 0 },
-                document: rect(600, 10, 20, 30),
+                document_rect: rect(600, 10, 20, 30),
             }]
         );
-        assert_eq!(spans[0].local(), rect(88, 10, 20, 30));
+        assert_eq!(spans[0].local_rect(), rect(88, 10, 20, 30));
     }
 
     #[test]
@@ -241,7 +241,7 @@ mod tests {
         assert_eq!(
             spans
                 .iter()
-                .map(|span| (span.coord, span.document))
+                .map(|span| (span.coord, span.document_rect))
                 .collect::<Vec<_>>(),
             vec![
                 (TileCoord { x: 0, y: 0 }, rect(500, 490, 12, 22)),
@@ -250,10 +250,10 @@ mod tests {
                 (TileCoord { x: 1, y: 1 }, rect(512, 512, 18, 18)),
             ]
         );
-        assert_eq!(spans[3].local(), rect(0, 0, 18, 18));
+        assert_eq!(spans[3].local_rect(), rect(0, 0, 18, 18));
         let area: u32 = spans
             .iter()
-            .map(|span| span.document.width * span.document.height)
+            .map(|span| span.document_rect.width * span.document_rect.height)
             .sum();
         assert_eq!(area, 30 * 40);
     }
@@ -263,7 +263,7 @@ mod tests {
         let spans: Vec<_> = tile_spans(rect(512, 1024, 512, 512)).collect();
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].coord, TileCoord { x: 1, y: 2 });
-        assert_eq!(spans[0].local(), rect(0, 0, 512, 512));
+        assert_eq!(spans[0].local_rect(), rect(0, 0, 512, 512));
     }
 
     #[test]

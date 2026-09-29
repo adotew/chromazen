@@ -20,10 +20,10 @@ pub(crate) struct SmudgeSnapshot {
 /// coordinate, so layers of any document size reuse the same uniform.
 pub(crate) struct TileSlot {
     origin_buffer: wgpu::Buffer,
-    pub(crate) target_bind_group: wgpu::BindGroup,
+    pub(crate) origin_bind_group: wgpu::BindGroup,
     /// Binds a transparent texture where a layer has no tile but a stroke preview may draw.
-    pub(crate) empty_bind_group: wgpu::BindGroup,
-    pub(crate) scratch_bind_group: wgpu::BindGroup,
+    pub(crate) empty_tile_bind_group: wgpu::BindGroup,
+    pub(crate) scratch_tile_bind_group: wgpu::BindGroup,
 }
 
 pub(crate) struct RenderResources {
@@ -408,7 +408,7 @@ impl RenderResources {
                     }),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
-                let target_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let origin_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("tile target bind group"),
                     layout: &tile_target_bind_group_layout,
                     entries: &[wgpu::BindGroupEntry {
@@ -417,14 +417,14 @@ impl RenderResources {
                     }],
                 });
                 TileSlot {
-                    target_bind_group,
-                    empty_bind_group: create_tile_bind_group(
+                    origin_bind_group,
+                    empty_tile_bind_group: create_tile_bind_group(
                         device,
                         &tile_bind_group_layout,
                         &empty_tile_view,
                         &origin_buffer,
                     ),
-                    scratch_bind_group: create_tile_bind_group(
+                    scratch_tile_bind_group: create_tile_bind_group(
                         device,
                         &tile_bind_group_layout,
                         &scratch_tile_view,
@@ -1356,7 +1356,7 @@ impl RenderResources {
         })
     }
 
-    pub(crate) fn smudge(&self) -> &SmudgeSnapshot {
+    pub(crate) fn smudge_snapshot(&self) -> &SmudgeSnapshot {
         self.smudge
             .as_ref()
             .expect("smudge strokes require a smudge snapshot")

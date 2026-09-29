@@ -21,8 +21,8 @@ use self::{
     sampling::{document_pixel, read_composited_color},
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue, StampRaw},
     tiles::{
-        TILE_SIZE, Tile, TileCoord, TileSet, all_tiles, copy_texture_region, region_has_alpha,
-        tile_document_rect, tile_local_rect, tile_spans,
+        TILE_SIZE, Tile, TileCoord, TileSet, all_tile_coords, copy_texture_region,
+        region_has_alpha, tile_document_rect, tile_local_rect, tile_spans,
     },
     view::PaintView,
 };
@@ -218,7 +218,7 @@ impl LayerTransform {
     }
 
     /// Maps a source point to its transformed destination, the inverse of [`Self::uniform`].
-    fn apply(self, pivot: [f32; 2], point: [f32; 2]) -> [f32; 2] {
+    fn map_point(self, pivot: [f32; 2], point: [f32; 2]) -> [f32; 2] {
         let (sin, cos) = self.rotation.sin_cos();
         let local = [
             (point[0] - pivot[0]) * self.scale[0],
@@ -363,7 +363,7 @@ pub struct Canvas {
     rendered_preview_rect: Option<TextureRect>,
     active_stroke: Option<ActiveStroke>,
     /// Tiles replaced by copy-on-write during the active stroke, keyed by coordinate.
-    stroke_tiles: BTreeMap<TileCoord, Option<Tile>>,
+    stroke_original_tiles: BTreeMap<TileCoord, Option<Tile>>,
     active_transform: Option<ActiveLayerTransform>,
     content_bounds_cache: Option<(LayerId, LayerResourceId, Option<LayerContentBounds>)>,
     history: PaintHistory,
@@ -435,7 +435,7 @@ impl Canvas {
             pending_preview_stamps: None,
             rendered_preview_rect: None,
             active_stroke: None,
-            stroke_tiles: BTreeMap::new(),
+            stroke_original_tiles: BTreeMap::new(),
             active_transform: None,
             content_bounds_cache: None,
             history,
@@ -692,15 +692,15 @@ impl Canvas {
             });
         for span in tile_spans(source_rect) {
             if let Some(tile) = self.layers[layer_index].tiles.get(span.coord) {
-                let local = span.local();
+                let local = span.local_rect();
                 copy_texture_region(
                     &mut encoder,
                     &tile.texture,
                     [local.x, local.y],
                     &source,
                     [
-                        span.document.x - source_rect.x,
-                        span.document.y - source_rect.y,
+                        span.document_rect.x - source_rect.x,
+                        span.document_rect.y - source_rect.y,
                     ],
                     [local.width, local.height],
                 );
@@ -765,19 +765,19 @@ impl Canvas {
             [active.bounds.min[0], active.bounds.max[1]],
             [active.bounds.max[0], active.bounds.max[1]],
         ]
-        .map(|corner| transform.apply(pivot, corner));
+        .map(|corner| transform.map_point(pivot, corner));
         let destination = document_rect_from_points(&corners, 1.0, self.document_size);
         let coords: BTreeSet<_> = destination
             .into_iter()
             .flat_map(tile_spans)
             .map(|span| span.coord)
             .collect();
-        let stale: Vec<_> = self.layers[layer_index]
+        let uncovered: Vec<_> = self.layers[layer_index]
             .tiles
             .coords()
             .filter(|coord| !coords.contains(coord))
             .collect();
-        for coord in stale {
+        for coord in uncovered {
             self.layers[layer_index].tiles.remove(coord);
         }
         for &coord in &coords {
@@ -818,11 +818,17 @@ impl Canvas {
                 multiview_mask: None,
             });
             // Texels beyond the document edge must stay transparent.
-            let inside = tile_local_rect(coord, tile_document_rect(coord, self.document_size));
-            pass.set_scissor_rect(inside.x, inside.y, inside.width, inside.height);
+            let document_area =
+                tile_local_rect(coord, tile_document_rect(coord, self.document_size));
+            pass.set_scissor_rect(
+                document_area.x,
+                document_area.y,
+                document_area.width,
+                document_area.height,
+            );
             pass.set_pipeline(&self.resources.transform_pipeline);
             pass.set_bind_group(0, &active.bind_group, &[]);
-            pass.set_bind_group(1, &self.resources.tile_slot(coord).target_bind_group, &[]);
+            pass.set_bind_group(1, &self.resources.tile_slot(coord).origin_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -1027,9 +1033,9 @@ impl Canvas {
             };
             let [source_tile_x, source_tile_y] = source_span.coord.origin();
             let shifted = TextureRect {
-                x: source_span.document.x - copy.source.x + copy.destination[0],
-                y: source_span.document.y - copy.source.y + copy.destination[1],
-                ..source_span.document
+                x: source_span.document_rect.x - copy.source.x + copy.destination[0],
+                y: source_span.document_rect.y - copy.source.y + copy.destination[1],
+                ..source_span.document_rect
             };
             for destination_span in tile_spans(shifted) {
                 if !destination.contains(destination_span.coord) {
@@ -1041,9 +1047,11 @@ impl Canvas {
                 let destination_tile = destination
                     .get(destination_span.coord)
                     .expect("destination tile was allocated");
-                let local = destination_span.local();
-                let source_x = destination_span.document.x - copy.destination[0] + copy.source.x;
-                let source_y = destination_span.document.y - copy.destination[1] + copy.source.y;
+                let local = destination_span.local_rect();
+                let source_x =
+                    destination_span.document_rect.x - copy.destination[0] + copy.source.x;
+                let source_y =
+                    destination_span.document_rect.y - copy.destination[1] + copy.source.y;
                 copy_texture_region(
                     encoder,
                     &source_tile.texture,
@@ -1099,7 +1107,7 @@ impl Canvas {
                     clipped: metadata.clipped,
                 },
             );
-            for coord in all_tiles(document_size) {
+            for coord in all_tile_coords(document_size) {
                 let rect = tile_document_rect(coord, document_size);
                 if !region_has_alpha(&image, rect) {
                     continue;
@@ -1701,12 +1709,12 @@ impl Canvas {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-                let local = span.local();
+                let local = span.local_rect();
                 pass.set_pipeline(commit_pipeline);
                 pass.set_bind_group(0, &self.resources.stroke_commit_bind_group, &[]);
                 pass.set_bind_group(
                     1,
-                    &self.resources.tile_slot(span.coord).target_bind_group,
+                    &self.resources.tile_slot(span.coord).origin_bind_group,
                     &[],
                 );
                 pass.set_scissor_rect(local.x, local.y, local.width, local.height);
@@ -1733,7 +1741,9 @@ impl Canvas {
             pass.set_scissor_rect(rect.x, rect.y, rect.width, rect.height);
             pass.draw(0..3, 0..1);
         }
-        let replaced = std::mem::take(&mut self.stroke_tiles).into_iter().collect();
+        let replaced = std::mem::take(&mut self.stroke_original_tiles)
+            .into_iter()
+            .collect();
         self.history.commit_stroke(active_stroke.layer_id, replaced);
         self.queue.submit(std::iter::once(encoder.finish()));
         self.mark_layer_changed(active_stroke.layer_id);
@@ -1748,7 +1758,7 @@ impl Canvas {
         layer_index: usize,
         coord: TileCoord,
     ) {
-        if self.stroke_tiles.contains_key(&coord) {
+        if self.stroke_original_tiles.contains_key(&coord) {
             return;
         }
         let tile = self.resources.create_tile(&self.device, coord);
@@ -1764,7 +1774,7 @@ impl Canvas {
             );
         }
         self.layers[layer_index].tiles.insert(coord, tile);
-        self.stroke_tiles.insert(coord, original);
+        self.stroke_original_tiles.insert(coord, original);
     }
 
     pub fn can_undo(&self) -> bool {
@@ -2002,7 +2012,7 @@ impl Canvas {
                 )
             };
             let window_tile_rect = |coord: TileCoord| {
-                window_rect(
+                document_rect_in_window(
                     view,
                     tile_document_rect(coord, self.document_size),
                     surface_size,
@@ -2149,7 +2159,7 @@ impl Canvas {
                         pass.set_bind_group(0, self.resources.clipping_group_bind_group(), &[]);
                         pass.set_bind_group(
                             1,
-                            &self.resources.tile_slot(coord).scratch_bind_group,
+                            &self.resources.tile_slot(coord).scratch_tile_bind_group,
                             &[],
                         );
                         pass.draw(0..3, 0..1);
@@ -2482,7 +2492,7 @@ impl Canvas {
                     .tiles
                     .get(span.coord)
                     .expect("smudged tile was prepared");
-                let local = span.local();
+                let local = span.local_rect();
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("smudge pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2500,10 +2510,10 @@ impl Canvas {
                     multiview_mask: None,
                 });
                 pass.set_pipeline(&self.resources.smudge_pipeline);
-                pass.set_bind_group(0, &self.resources.smudge().bind_group, &[]);
+                pass.set_bind_group(0, &self.resources.smudge_snapshot().bind_group, &[]);
                 pass.set_bind_group(
                     1,
-                    &self.resources.tile_slot(span.coord).target_bind_group,
+                    &self.resources.tile_slot(span.coord).origin_bind_group,
                     &[],
                 );
                 pass.set_scissor_rect(local.x, local.y, local.width, local.height);
@@ -2516,13 +2526,13 @@ impl Canvas {
                     .tiles
                     .get(span.coord)
                     .expect("smudged tile was prepared");
-                let local = span.local();
+                let local = span.local_rect();
                 copy_texture_region(
                     encoder,
                     &tile.texture,
                     [local.x, local.y],
-                    &self.resources.smudge().texture,
-                    [span.document.x, span.document.y],
+                    &self.resources.smudge_snapshot().texture,
+                    [span.document_rect.x, span.document_rect.y],
                     [local.width, local.height],
                 );
             }
@@ -2737,7 +2747,7 @@ fn visible_canvas_rect(
     document_size: [u32; 2],
     surface_size: [u32; 2],
 ) -> Option<TextureRect> {
-    window_rect(
+    document_rect_in_window(
         view,
         TextureRect {
             x: 0,
@@ -2750,7 +2760,7 @@ fn visible_canvas_rect(
 }
 
 /// The surface pixels covered by a document rectangle, clipped to the surface.
-fn window_rect(
+fn document_rect_in_window(
     view: PaintViewSnapshot,
     rect: TextureRect,
     surface_size: [u32; 2],
@@ -2857,11 +2867,11 @@ fn layer_tile_bind_group<'a>(
     resources: &'a RenderResources,
     layer: &'a PaintLayer,
     coord: TileCoord,
-    previewing: bool,
+    empty_when_missing: bool,
 ) -> Option<&'a wgpu::BindGroup> {
     match layer.tiles.get(coord) {
         Some(tile) => Some(&tile.bind_group),
-        None => previewing.then(|| &resources.tile_slot(coord).empty_bind_group),
+        None => empty_when_missing.then(|| &resources.tile_slot(coord).empty_tile_bind_group),
     }
 }
 
@@ -3207,7 +3217,7 @@ mod tests {
         let pivot = [200.0, 150.0];
         let uniform = transform.uniform(pivot);
         for point in [[0.0, 0.0], [640.0, 20.0], [205.5, 149.0]] {
-            let destination = transform.apply(pivot, point);
+            let destination = transform.map_point(pivot, point);
             let source = [
                 uniform.source_from_destination_x[0] * destination[0]
                     + uniform.source_from_destination_x[1] * destination[1]
