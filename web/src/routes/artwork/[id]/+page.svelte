@@ -272,7 +272,8 @@
     }
     if (event.code !== 'Space' || activePointer !== undefined) return
     const target = event.target
-    if (target instanceof Element && target.closest('button, input, a')) return
+    // Mouse-clicked controls keep focus; only let Space activate keyboard-focused ones.
+    if (target instanceof Element && target.matches(':focus-visible')) return
     event.preventDefault()
     spacePressed = true
   }
