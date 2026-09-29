@@ -17,11 +17,11 @@ use self::{
         LayerProperties, PaintLayer, insertion_index, layer_name, normalized_layer_name,
         relative_insertion_index, replacement_index_after_delete,
     },
-    resources::RenderResources,
+    resources::{RenderResources, create_paint_texture},
     sampling::{document_pixel, read_composited_color},
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue, StampRaw},
     tiles::{
-        TILE_SIZE, Tile, TileCoord, TileSet, all_tile_coords, copy_texture_region,
+        Tile, TileCoord, TileSet, all_tile_coords, copy_texture_region, copy_tile,
         region_has_alpha, tile_document_rect, tile_local_rect, tile_spans,
     },
     view::PaintView,
@@ -153,6 +153,15 @@ impl LayerContentBounds {
         [
             (self.min[0] + self.max[0]) * 0.5,
             (self.min[1] + self.max[1]) * 0.5,
+        ]
+    }
+
+    fn corners(self) -> [[f32; 2]; 4] {
+        [
+            self.min,
+            [self.max[0], self.min[1]],
+            [self.min[0], self.max[1]],
+            self.max,
         ]
     }
 
@@ -671,20 +680,8 @@ impl Canvas {
         // The transform samples arbitrary source positions, so the content is gathered into one
         // texture that covers only its bounds.
         let source_rect = bounds.pixel_rect();
-        let source = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("layer transform source texture"),
-            size: wgpu::Extent3d {
-                width: source_rect.width,
-                height: source_rect.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DOCUMENT_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+        let (source, source_view) =
+            create_paint_texture(&self.device, [source_rect.width, source_rect.height]);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -708,7 +705,6 @@ impl Canvas {
         }
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        let source_view = source.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = self
             .resources
             .create_transform_bind_group(&self.device, &source_view);
@@ -759,64 +755,33 @@ impl Canvas {
 
         // Render every tile the transformed bounds can reach; bilinear filtering may touch one
         // extra pixel on each side.
-        let corners = [
-            [active.bounds.min[0], active.bounds.min[1]],
-            [active.bounds.max[0], active.bounds.min[1]],
-            [active.bounds.min[0], active.bounds.max[1]],
-            [active.bounds.max[0], active.bounds.max[1]],
-        ]
-        .map(|corner| transform.map_point(pivot, corner));
-        let destination = document_rect_from_points(&corners, 1.0, self.document_size);
+        let corners = active
+            .bounds
+            .corners()
+            .map(|corner| transform.map_point(pivot, corner));
+        let destination = pixel_rect_covering(&corners, 1.0, self.document_size);
         let coords: BTreeSet<_> = destination
             .into_iter()
             .flat_map(tile_spans)
             .map(|span| span.coord)
             .collect();
-        let uncovered: Vec<_> = self.layers[layer_index]
-            .tiles
-            .coords()
-            .filter(|coord| !coords.contains(coord))
-            .collect();
-        for coord in uncovered {
-            self.layers[layer_index].tiles.remove(coord);
-        }
-        for &coord in &coords {
-            if !self.layers[layer_index].tiles.contains(coord) {
-                let tile = self.resources.create_tile(&self.device, coord);
-                self.layers[layer_index].tiles.insert(coord, tile);
-            }
-        }
 
-        let active = self
-            .active_transform
-            .as_ref()
-            .expect("transform session must exist");
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("layer transform preview encoder"),
             });
+        let tiles = &mut self.layers[layer_index].tiles;
+        tiles.retain(|coord| coords.contains(&coord));
         for coord in coords {
-            let tile = self.layers[layer_index]
-                .tiles
-                .get(coord)
-                .expect("transform tile was allocated");
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("layer transform preview pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &tile.view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+            let tile =
+                tiles.get_or_insert_with(coord, || self.resources.create_tile(&self.device, coord));
+            let mut pass = begin_color_pass(
+                &mut encoder,
+                "layer transform preview pass",
+                &tile.view,
+                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+            );
             // Texels beyond the document edge must stay transparent.
             let document_area =
                 tile_local_rect(coord, tile_document_rect(coord, self.document_size));
@@ -1038,15 +1003,11 @@ impl Canvas {
                 ..source_span.document_rect
             };
             for destination_span in tile_spans(shifted) {
-                if !destination.contains(destination_span.coord) {
-                    let tile = self
-                        .resources
-                        .create_tile(&self.device, destination_span.coord);
-                    destination.insert(destination_span.coord, tile);
-                }
-                let destination_tile = destination
-                    .get(destination_span.coord)
-                    .expect("destination tile was allocated");
+                let destination_tile =
+                    destination.get_or_insert_with(destination_span.coord, || {
+                        self.resources
+                            .create_tile(&self.device, destination_span.coord)
+                    });
                 let local = destination_span.local_rect();
                 let source_x =
                     destination_span.document_rect.x - copy.destination[0] + copy.source.x;
@@ -1062,6 +1023,36 @@ impl Canvas {
                 );
             }
         }
+    }
+
+    /// Uploads the part of `image` inside the tile at `coord`. Fully transparent tiles stay
+    /// unallocated.
+    fn create_tile_from_image(&self, image: &image::RgbaImage, coord: TileCoord) -> Option<Tile> {
+        let rect = tile_document_rect(coord, [image.width(), image.height()]);
+        if !region_has_alpha(image, rect) {
+            return None;
+        }
+        let tile = self.resources.create_tile(&self.device, coord);
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tile.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            image.as_raw(),
+            wgpu::TexelCopyBufferLayout {
+                offset: (u64::from(rect.y) * u64::from(image.width()) + u64::from(rect.x)) * 4,
+                bytes_per_row: Some(image.width() * 4),
+                rows_per_image: Some(rect.height),
+            },
+            wgpu::Extent3d {
+                width: rect.width,
+                height: rect.height,
+                depth_or_array_layers: 1,
+            },
+        );
+        Some(tile)
     }
 
     pub fn load_document(
@@ -1108,33 +1099,9 @@ impl Canvas {
                 },
             );
             for coord in all_tile_coords(document_size) {
-                let rect = tile_document_rect(coord, document_size);
-                if !region_has_alpha(&image, rect) {
-                    continue;
+                if let Some(tile) = self.create_tile_from_image(&image, coord) {
+                    layer.tiles.insert(coord, tile);
                 }
-                let tile = self.resources.create_tile(&self.device, coord);
-                self.queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &tile.texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    image.as_raw(),
-                    wgpu::TexelCopyBufferLayout {
-                        offset: (u64::from(rect.y) * u64::from(document_size[0])
-                            + u64::from(rect.x))
-                            * 4,
-                        bytes_per_row: Some(document_size[0] * 4),
-                        rows_per_image: Some(rect.height),
-                    },
-                    wgpu::Extent3d {
-                        width: rect.width,
-                        height: rect.height,
-                        depth_or_array_layers: 1,
-                    },
-                );
-                layer.tiles.insert(coord, tile);
             }
             layers.push(layer);
         }
@@ -1397,14 +1364,7 @@ impl Canvas {
             });
         for (coord, source_tile) in self.layers[source_index].tiles.iter() {
             let tile = self.resources.create_tile(&self.device, coord);
-            copy_texture_region(
-                &mut encoder,
-                &source_tile.texture,
-                [0, 0],
-                &tile.texture,
-                [0, 0],
-                [TILE_SIZE; 2],
-            );
+            copy_tile(&mut encoder, source_tile, &tile);
             layer.tiles.insert(coord, tile);
         }
         let index = insertion_index(Some(source_index), self.layers.len());
@@ -1479,22 +1439,12 @@ impl Canvas {
         for coord in coords {
             let tile = self.resources.create_tile(&self.device, coord);
             {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("layer merge pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &tile.view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
+                let mut pass = begin_color_pass(
+                    &mut encoder,
+                    "layer merge pass",
+                    &tile.view,
+                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                );
                 let lower_tile = lower.tiles.get(coord);
                 if let Some(lower_tile) = lower_tile {
                     pass.set_pipeline(&self.resources.merge_pipeline);
@@ -1693,22 +1643,12 @@ impl Canvas {
                     .tiles
                     .get(span.coord)
                     .expect("committed tile was prepared");
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("stroke commit pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &tile.view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
+                let mut pass = begin_color_pass(
+                    &mut encoder,
+                    "stroke commit pass",
+                    &tile.view,
+                    wgpu::LoadOp::Load,
+                );
                 let local = span.local_rect();
                 pass.set_pipeline(commit_pipeline);
                 pass.set_bind_group(0, &self.resources.stroke_commit_bind_group, &[]);
@@ -1721,22 +1661,12 @@ impl Canvas {
                 pass.draw(0..3, 0..1);
             }
 
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("stroke mask dirty rect clear pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.resources.stroke_mask_view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+            let mut pass = begin_color_pass(
+                &mut encoder,
+                "stroke mask dirty rect clear pass",
+                &self.resources.stroke_mask_view,
+                wgpu::LoadOp::Load,
+            );
             pass.set_pipeline(&self.resources.mask_clear_pipeline);
             pass.set_scissor_rect(rect.x, rect.y, rect.width, rect.height);
             pass.draw(0..3, 0..1);
@@ -1764,14 +1694,7 @@ impl Canvas {
         let tile = self.resources.create_tile(&self.device, coord);
         let original = self.layers[layer_index].tiles.remove(coord);
         if let Some(original) = &original {
-            copy_texture_region(
-                encoder,
-                &original.texture,
-                [0, 0],
-                &tile.texture,
-                [0, 0],
-                [TILE_SIZE; 2],
-            );
+            copy_tile(encoder, original, &tile);
         }
         self.layers[layer_index].tiles.insert(coord, tile);
         self.stroke_original_tiles.insert(coord, original);
@@ -1951,22 +1874,12 @@ impl Canvas {
             self.surface_size(),
         );
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("canvas background pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: canvas_view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.workspace_background_color),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+            let mut pass = begin_color_pass(
+                encoder,
+                "canvas background pass",
+                canvas_view,
+                wgpu::LoadOp::Clear(self.workspace_background_color),
+            );
             if let Some(canvas_rect) = canvas_rect {
                 pass.set_scissor_rect(
                     canvas_rect.x,
@@ -1975,7 +1888,7 @@ impl Canvas {
                     canvas_rect.height,
                 );
                 pass.set_pipeline(&self.resources.background_pipeline);
-                pass.set_bind_group(0, self.resources.clipping_group_bind_group(), &[]);
+                pass.set_bind_group(0, self.resources.full_opacity_blit_bind_group(), &[]);
                 pass.draw(0..3, 0..1);
             }
         }
@@ -1987,13 +1900,12 @@ impl Canvas {
                 .active_stroke
                 .filter(|stroke| stroke.render_path() == StrokeRenderPath::Mask);
             // Stroke previews may draw where the layer has no tile yet.
-            let stroke_coords: BTreeSet<_> = mask_stroke
-                .and_then(|_| {
-                    [self.stamp_queue.dirty_rect(), self.rendered_preview_rect]
-                        .into_iter()
-                        .flatten()
-                        .reduce(TextureRect::union)
-                })
+            let stroke_rect = [self.stamp_queue.dirty_rect(), self.rendered_preview_rect]
+                .into_iter()
+                .flatten()
+                .reduce(TextureRect::union)
+                .filter(|_| mask_stroke.is_some());
+            let stroke_coords: BTreeSet<_> = stroke_rect
                 .into_iter()
                 .flat_map(tile_spans)
                 .map(|span| span.coord)
@@ -2053,44 +1965,23 @@ impl Canvas {
                         };
                         let base_tile = tile_bind_group(base, coord)
                             .expect("base coordinates have a tile or a preview");
-                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("clipping group pass"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: &self.resources.scratch_tile_view,
-                                resolve_target: None,
-                                depth_slice: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                                    store: wgpu::StoreOp::Store,
-                                },
-                            })],
-                            depth_stencil_attachment: None,
-                            timestamp_writes: None,
-                            occlusion_query_set: None,
-                            multiview_mask: None,
-                        });
-                        match preview_tool(base) {
-                            Some(PaintTool::Brush) => {
-                                pass.set_pipeline(&self.resources.group_brush_preview_pipeline);
-                                pass.set_bind_group(
-                                    0,
-                                    self.resources.stroke_preview_bind_group(),
-                                    &[],
-                                );
-                            }
-                            Some(PaintTool::Eraser) => {
-                                pass.set_pipeline(&self.resources.group_eraser_preview_pipeline);
-                                pass.set_bind_group(
-                                    0,
-                                    self.resources.stroke_preview_bind_group(),
-                                    &[],
-                                );
-                            }
-                            Some(PaintTool::Smudge) | None => {
-                                pass.set_pipeline(&self.resources.merge_pipeline);
-                                pass.set_bind_group(0, &base.blit_bind_group, &[]);
-                            }
-                        }
+                        let mut pass = begin_color_pass(
+                            encoder,
+                            "clipping group pass",
+                            &self.resources.scratch_tile_view,
+                            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        );
+                        let (pipeline, bind_group) = layer_program(
+                            &self.resources,
+                            preview_tool(base),
+                            [
+                                &self.resources.group_brush_preview_pipeline,
+                                &self.resources.group_eraser_preview_pipeline,
+                            ],
+                            (&self.resources.merge_pipeline, &base.blit_bind_group),
+                        );
+                        pass.set_pipeline(pipeline);
+                        pass.set_bind_group(0, bind_group, &[]);
                         pass.set_bind_group(1, base_tile, &[]);
                         if preview_tool(base).is_some() {
                             // The base preview ignores group 2, but its layout declares it.
@@ -2102,61 +1993,39 @@ impl Canvas {
                             let Some(layer_tile) = tile_bind_group(layer, coord) else {
                                 continue;
                             };
-                            match preview_tool(layer) {
-                                Some(PaintTool::Brush) => {
-                                    pass.set_pipeline(
-                                        &self.resources.group_clipped_brush_preview_pipeline,
-                                    );
-                                    pass.set_bind_group(
-                                        0,
-                                        self.resources.stroke_preview_bind_group(),
-                                        &[],
-                                    );
-                                }
-                                Some(PaintTool::Eraser) => {
-                                    pass.set_pipeline(
-                                        &self.resources.group_clipped_eraser_preview_pipeline,
-                                    );
-                                    pass.set_bind_group(
-                                        0,
-                                        self.resources.stroke_preview_bind_group(),
-                                        &[],
-                                    );
-                                }
-                                Some(PaintTool::Smudge) | None => {
-                                    pass.set_pipeline(&self.resources.clipped_layer_merge_pipeline);
-                                    let bind_group = self
-                                        .clipped_layer_bind_groups
-                                        .get(&layer.id)
-                                        .expect("clipped layer must have a bind group");
-                                    pass.set_bind_group(0, bind_group, &[]);
-                                }
-                            }
+                            let clipped_bind_group = self
+                                .clipped_layer_bind_groups
+                                .get(&layer.id)
+                                .expect("clipped layer must have a bind group");
+                            let (pipeline, bind_group) = layer_program(
+                                &self.resources,
+                                preview_tool(layer),
+                                [
+                                    &self.resources.group_clipped_brush_preview_pipeline,
+                                    &self.resources.group_clipped_eraser_preview_pipeline,
+                                ],
+                                (
+                                    &self.resources.clipped_layer_merge_pipeline,
+                                    clipped_bind_group,
+                                ),
+                            );
+                            pass.set_pipeline(pipeline);
+                            pass.set_bind_group(0, bind_group, &[]);
                             pass.set_bind_group(1, layer_tile, &[]);
                             pass.set_bind_group(2, base_tile, &[]);
                             pass.draw(0..3, 0..1);
                         }
                         drop(pass);
 
-                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("clipping group blit pass"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: canvas_view,
-                                resolve_target: None,
-                                depth_slice: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Load,
-                                    store: wgpu::StoreOp::Store,
-                                },
-                            })],
-                            depth_stencil_attachment: None,
-                            timestamp_writes: None,
-                            occlusion_query_set: None,
-                            multiview_mask: None,
-                        });
+                        let mut pass = begin_color_pass(
+                            encoder,
+                            "clipping group blit pass",
+                            canvas_view,
+                            wgpu::LoadOp::Load,
+                        );
                         pass.set_scissor_rect(scissor.x, scissor.y, scissor.width, scissor.height);
                         pass.set_pipeline(&self.resources.layer_pipeline);
-                        pass.set_bind_group(0, self.resources.clipping_group_bind_group(), &[]);
+                        pass.set_bind_group(0, self.resources.full_opacity_blit_bind_group(), &[]);
                         pass.set_bind_group(
                             1,
                             &self.resources.tile_slot(coord).scratch_tile_bind_group,
@@ -2165,36 +2034,23 @@ impl Canvas {
                         pass.draw(0..3, 0..1);
                     }
                 } else {
-                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("layer blit pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: canvas_view,
-                            resolve_target: None,
-                            depth_slice: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Load,
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
-                    });
-                    match preview_tool(base) {
-                        Some(PaintTool::Brush) => {
-                            pass.set_pipeline(&self.resources.brush_preview_pipeline);
-                            pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
-                        }
-                        Some(PaintTool::Eraser) => {
-                            pass.set_pipeline(&self.resources.eraser_preview_pipeline);
-                            pass.set_bind_group(0, self.resources.stroke_preview_bind_group(), &[]);
-                        }
-                        Some(PaintTool::Smudge) | None => {
-                            pass.set_pipeline(&self.resources.layer_pipeline);
-                            pass.set_bind_group(0, &base.blit_bind_group, &[]);
-                        }
-                    }
+                    let mut pass = begin_color_pass(
+                        encoder,
+                        "layer blit pass",
+                        canvas_view,
+                        wgpu::LoadOp::Load,
+                    );
+                    let (pipeline, bind_group) = layer_program(
+                        &self.resources,
+                        preview_tool(base),
+                        [
+                            &self.resources.brush_preview_pipeline,
+                            &self.resources.eraser_preview_pipeline,
+                        ],
+                        (&self.resources.layer_pipeline, &base.blit_bind_group),
+                    );
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(0, bind_group, &[]);
                     for coord in base_coords {
                         let Some(scissor) = window_tile_rect(coord) else {
                             continue;
@@ -2216,22 +2072,12 @@ impl Canvas {
 
         if use_backdrop {
             {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("canvas screen pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
+                let mut pass = begin_color_pass(
+                    encoder,
+                    "canvas screen pass",
+                    view,
+                    wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                );
                 pass.set_pipeline(&self.resources.screen_pipeline);
                 pass.set_bind_group(0, &self.resources.cursor_bind_group, &[]);
                 pass.draw(0..3, 0..1);
@@ -2278,22 +2124,7 @@ impl Canvas {
 
     fn draw_brush_cursor(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         let surface_size = self.surface_size();
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("brush cursor pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                resolve_target: None,
-                depth_slice: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
+        let mut pass = begin_color_pass(encoder, "brush cursor pass", view, wgpu::LoadOp::Load);
         pass.set_scissor_rect(0, 0, surface_size[0], surface_size[1]);
         pass.set_pipeline(&self.resources.cursor_pipeline);
         pass.set_bind_group(0, &self.resources.cursor_bind_group, &[]);
@@ -2331,22 +2162,12 @@ impl Canvas {
                 continue;
             }
             {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("layer preview pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &layer.preview_view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
+                let mut pass = begin_color_pass(
+                    encoder,
+                    "layer preview pass",
+                    &layer.preview_view,
+                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                );
                 pass.set_pipeline(&self.resources.layer_thumbnail_pipeline);
                 pass.set_bind_group(0, &self.resources.thumbnail_bind_group, &[]);
                 for (_, tile) in layer.tiles.iter() {
@@ -2404,22 +2225,12 @@ impl Canvas {
             active_stroke.tool,
             PaintTool::Brush | PaintTool::Eraser
         ));
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("stroke mask stamp pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.resources.stroke_mask_view,
-                resolve_target: None,
-                depth_slice: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
+        let mut pass = begin_color_pass(
+            encoder,
+            "stroke mask stamp pass",
+            &self.resources.stroke_mask_view,
+            wgpu::LoadOp::Load,
+        );
         pass.set_pipeline(&self.resources.mask_pipeline);
         pass.set_bind_group(0, &self.resources.stamp_bind_group, &[]);
         pass.draw(0..6, 0..count as u32);
@@ -2447,22 +2258,12 @@ impl Canvas {
         }
         self.rendered_preview_rect = next_rect;
 
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("stroke preview pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.resources.preview_mask_view,
-                resolve_target: None,
-                depth_slice: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
+        let mut pass = begin_color_pass(
+            encoder,
+            "stroke preview pass",
+            &self.resources.preview_mask_view,
+            wgpu::LoadOp::Load,
+        );
         if let Some(rect) = previous_rect {
             pass.set_pipeline(&self.resources.mask_clear_pipeline);
             pass.set_scissor_rect(rect.x, rect.y, rect.width, rect.height);
@@ -2493,22 +2294,8 @@ impl Canvas {
                     .get(span.coord)
                     .expect("smudged tile was prepared");
                 let local = span.local_rect();
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("smudge pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &tile.view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
+                let mut pass =
+                    begin_color_pass(encoder, "smudge pass", &tile.view, wgpu::LoadOp::Load);
                 pass.set_pipeline(&self.resources.smudge_pipeline);
                 pass.set_bind_group(0, &self.resources.smudge_snapshot().bind_group, &[]);
                 pass.set_bind_group(
@@ -2775,29 +2562,7 @@ fn document_rect_in_window(
         view.document_to_window([left, bottom]),
         view.document_to_window([right, bottom]),
     ];
-    if corners.iter().flatten().any(|value| !value.is_finite()) {
-        return None;
-    }
-    let min = corners.iter().fold([f32::INFINITY; 2], |min, corner| {
-        [min[0].min(corner[0]), min[1].min(corner[1])]
-    });
-    let max = corners.iter().fold([f32::NEG_INFINITY; 2], |max, corner| {
-        [max[0].max(corner[0]), max[1].max(corner[1])]
-    });
-
-    let surface_width = surface_size[0] as f32;
-    let surface_height = surface_size[1] as f32;
-    let left = min[0].floor().clamp(0.0, surface_width) as u32;
-    let top = min[1].floor().clamp(0.0, surface_height) as u32;
-    let right = max[0].ceil().clamp(0.0, surface_width) as u32;
-    let bottom = max[1].ceil().clamp(0.0, surface_height) as u32;
-
-    (right > left && bottom > top).then_some(TextureRect {
-        x: left,
-        y: top,
-        width: right - left,
-        height: bottom - top,
-    })
+    pixel_rect_covering(&corners, 0.0, surface_size)
 }
 
 fn effective_spacing(tool: PaintTool, spacing: BrushSpacing) -> BrushSpacing {
@@ -2862,6 +2627,45 @@ fn next_layer_number(layers: &[LayerInfo]) -> u64 {
         .max(1)
 }
 
+fn begin_color_pass<'encoder>(
+    encoder: &'encoder mut wgpu::CommandEncoder,
+    label: &str,
+    view: &wgpu::TextureView,
+    load: wgpu::LoadOp<wgpu::Color>,
+) -> wgpu::RenderPass<'encoder> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            resolve_target: None,
+            depth_slice: None,
+            ops: wgpu::Operations {
+                load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    })
+}
+
+/// A layer's pipeline and group 0 bind group: the stroke preview program for `preview_tool`, or
+/// `fallback` when the layer is not being painted.
+fn layer_program<'a>(
+    resources: &'a RenderResources,
+    preview_tool: Option<PaintTool>,
+    [brush_preview, eraser_preview]: [&'a wgpu::RenderPipeline; 2],
+    fallback: (&'a wgpu::RenderPipeline, &'a wgpu::BindGroup),
+) -> (&'a wgpu::RenderPipeline, &'a wgpu::BindGroup) {
+    match preview_tool {
+        Some(PaintTool::Brush) => (brush_preview, resources.stroke_preview_bind_group()),
+        Some(PaintTool::Eraser) => (eraser_preview, resources.stroke_preview_bind_group()),
+        Some(PaintTool::Smudge) | None => fallback,
+    }
+}
+
 /// A layer's tile at `coord`, or a transparent stand-in when a stroke preview may draw there.
 fn layer_tile_bind_group<'a>(
     resources: &'a RenderResources,
@@ -2875,12 +2679,8 @@ fn layer_tile_bind_group<'a>(
     }
 }
 
-/// The document pixels covered by `points` grown by `padding`, clipped to the document.
-fn document_rect_from_points(
-    points: &[[f32; 2]],
-    padding: f32,
-    document_size: [u32; 2],
-) -> Option<TextureRect> {
+/// The whole pixels covered by `points` grown by `padding`, clipped to a `size` area.
+fn pixel_rect_covering(points: &[[f32; 2]], padding: f32, size: [u32; 2]) -> Option<TextureRect> {
     if points.iter().flatten().any(|value| !value.is_finite()) {
         return None;
     }
@@ -2891,10 +2691,10 @@ fn document_rect_from_points(
         [max[0].max(point[0]), max[1].max(point[1])]
     });
     let clamp = |value: f32, limit: u32| value.clamp(0.0, limit as f32) as u32;
-    let left = clamp((min[0] - padding).floor(), document_size[0]);
-    let top = clamp((min[1] - padding).floor(), document_size[1]);
-    let right = clamp((max[0] + padding).ceil(), document_size[0]);
-    let bottom = clamp((max[1] + padding).ceil(), document_size[1]);
+    let left = clamp((min[0] - padding).floor(), size[0]);
+    let top = clamp((min[1] - padding).floor(), size[1]);
+    let right = clamp((max[0] + padding).ceil(), size[0]);
+    let bottom = clamp((max[1] + padding).ceil(), size[1]);
     (right > left && bottom > top).then_some(TextureRect {
         x: left,
         y: top,
@@ -3208,7 +3008,7 @@ mod tests {
     }
 
     #[test]
-    fn layer_transform_apply_inverts_the_shader_mapping() {
+    fn layer_transform_map_point_inverts_the_shader_mapping() {
         let transform = LayerTransform {
             translation: [30.0, -12.0],
             scale: [0.5, 2.0],
@@ -3233,7 +3033,7 @@ mod tests {
     #[test]
     fn transformed_points_cover_padded_document_pixels() {
         assert_eq!(
-            document_rect_from_points(&[[10.2, 5.0], [30.5, 40.9]], 1.0, [100, 100]),
+            pixel_rect_covering(&[[10.2, 5.0], [30.5, 40.9]], 1.0, [100, 100]),
             Some(TextureRect {
                 x: 9,
                 y: 4,
@@ -3242,7 +3042,7 @@ mod tests {
             })
         );
         assert_eq!(
-            document_rect_from_points(&[[-50.0, -50.0], [-10.0, -5.0]], 1.0, [100, 100]),
+            pixel_rect_covering(&[[-50.0, -50.0], [-10.0, -5.0]], 1.0, [100, 100]),
             None
         );
     }

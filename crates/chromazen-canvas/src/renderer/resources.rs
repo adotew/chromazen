@@ -40,14 +40,14 @@ pub(crate) struct RenderResources {
     pub(crate) cursor_bind_group: wgpu::BindGroup,
     pub(crate) backdrop_texture: wgpu::Texture,
     pub(crate) backdrop_view: wgpu::TextureView,
-    smudge: Option<SmudgeSnapshot>,
+    smudge_snapshot: Option<SmudgeSnapshot>,
     // Clipping groups are composed here one tile at a time before being drawn to the canvas.
     _scratch_tile_texture: wgpu::Texture,
     pub(crate) scratch_tile_view: wgpu::TextureView,
     _empty_tile_texture: wgpu::Texture,
     empty_tile_view: wgpu::TextureView,
     tile_slots: Vec<TileSlot>,
-    clipping_group_bind_group: wgpu::BindGroup,
+    full_opacity_blit_bind_group: wgpu::BindGroup,
     pub(crate) thumbnail_bind_group: wgpu::BindGroup,
     _stroke_mask_texture: wgpu::Texture,
     pub(crate) stroke_mask_view: wgpu::TextureView,
@@ -181,27 +181,13 @@ impl RenderResources {
             create_backdrop_texture(device, surface_size, surface_format);
         let (scratch_tile_texture, scratch_tile_view) =
             create_tile_texture(device, "clipping group scratch tile");
-        let empty_tile_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("empty tile texture"),
-            size: wgpu::Extent3d {
-                width: TILE_SIZE,
-                height: TILE_SIZE,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DOCUMENT_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
         // Shaders load tile texels by integer coordinate without bounds checks, so this stand-in
         // for a missing tile matches a tile's size. wgpu zero-initializes it, which is transparent.
-        let empty_tile_view =
-            empty_tile_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let clipping_group_settings_buffer =
+        let (empty_tile_texture, empty_tile_view) =
+            create_tile_texture(device, "empty tile texture");
+        let full_opacity_settings_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("clipping group settings uniform buffer"),
+                label: Some("full opacity settings uniform buffer"),
                 contents: bytemuck::bytes_of(&LayerSettingsUniform {
                     opacity: 1.0,
                     padding: [0.0; 3],
@@ -317,9 +303,9 @@ impl RenderResources {
             });
         // Group 1 of every pass that renders into a layer tile. The binding number matches the
         // tile uniform in `tile_bind_group_layout`, so shaders declare it once.
-        let tile_target_bind_group_layout =
+        let tile_origin_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("tile target bind group layout"),
+                label: Some("tile origin bind group layout"),
                 entries: &[uniform_layout_entry(1)],
             });
         let clipped_layer_bind_group_layout =
@@ -409,8 +395,8 @@ impl RenderResources {
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
                 let origin_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("tile target bind group"),
-                    layout: &tile_target_bind_group_layout,
+                    label: Some("tile origin bind group"),
+                    layout: &tile_origin_bind_group_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 1,
                         resource: origin_buffer.as_entire_binding(),
@@ -451,7 +437,7 @@ impl RenderResources {
                 label: Some("smudge pipeline layout"),
                 bind_group_layouts: &[
                     Some(&stamp_bind_group_layout),
-                    Some(&tile_target_bind_group_layout),
+                    Some(&tile_origin_bind_group_layout),
                 ],
                 immediate_size: 0,
             });
@@ -466,11 +452,11 @@ impl RenderResources {
             bind_group_layouts: &[Some(&blit_bind_group_layout), Some(&tile_bind_group_layout)],
             immediate_size: 0,
         });
-        let clipping_group_bind_group = create_blit_bind_group(
+        let full_opacity_blit_bind_group = create_blit_bind_group(
             device,
             &blit_bind_group_layout,
             &view_uniform_buffer,
-            &clipping_group_settings_buffer,
+            &full_opacity_settings_buffer,
         );
         let clipped_layer_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -506,7 +492,7 @@ impl RenderResources {
                 label: Some("stroke commit pipeline layout"),
                 bind_group_layouts: &[
                     Some(&stroke_commit_bind_group_layout),
-                    Some(&tile_target_bind_group_layout),
+                    Some(&tile_origin_bind_group_layout),
                 ],
                 immediate_size: 0,
             });
@@ -515,7 +501,7 @@ impl RenderResources {
                 label: Some("layer transform pipeline layout"),
                 bind_group_layouts: &[
                     Some(&transform_bind_group_layout),
-                    Some(&tile_target_bind_group_layout),
+                    Some(&tile_origin_bind_group_layout),
                 ],
                 immediate_size: 0,
             });
@@ -1040,13 +1026,13 @@ impl RenderResources {
             cursor_bind_group,
             backdrop_texture,
             backdrop_view,
-            smudge: None,
+            smudge_snapshot: None,
             _scratch_tile_texture: scratch_tile_texture,
             scratch_tile_view,
             _empty_tile_texture: empty_tile_texture,
             empty_tile_view,
             tile_slots,
-            clipping_group_bind_group,
+            full_opacity_blit_bind_group,
             thumbnail_bind_group,
             _stroke_mask_texture: stroke_mask_texture,
             stroke_mask_view,
@@ -1242,7 +1228,7 @@ impl RenderResources {
             &self.stroke_uniform_buffer,
         );
 
-        self.smudge = None;
+        self.smudge_snapshot = None;
         self._stroke_mask_texture = stroke_mask_texture;
         self.stroke_mask_view = stroke_mask_view;
         self._preview_mask_texture = preview_mask_texture;
@@ -1308,8 +1294,8 @@ impl RenderResources {
         &self.tile_slots[(coord.y * MAX_TILE_GRID + coord.x) as usize]
     }
 
-    pub(crate) fn clipping_group_bind_group(&self) -> &wgpu::BindGroup {
-        &self.clipping_group_bind_group
+    pub(crate) fn full_opacity_blit_bind_group(&self) -> &wgpu::BindGroup {
+        &self.full_opacity_blit_bind_group
     }
 
     pub(crate) fn create_clipped_layer_bind_group(
@@ -1350,20 +1336,20 @@ impl RenderResources {
             &self.stamp_uniform_buffer,
             &view,
         );
-        self.smudge.insert(SmudgeSnapshot {
+        self.smudge_snapshot.insert(SmudgeSnapshot {
             texture,
             bind_group,
         })
     }
 
     pub(crate) fn smudge_snapshot(&self) -> &SmudgeSnapshot {
-        self.smudge
+        self.smudge_snapshot
             .as_ref()
             .expect("smudge strokes require a smudge snapshot")
     }
 
     pub(crate) fn end_smudge(&mut self) {
-        self.smudge = None;
+        self.smudge_snapshot = None;
     }
 
     pub(crate) fn replace_brush_stamp(
@@ -1739,7 +1725,7 @@ fn create_tile_texture(device: &wgpu::Device, label: &str) -> (wgpu::Texture, wg
     (texture, view)
 }
 
-fn create_paint_texture(
+pub(super) fn create_paint_texture(
     device: &wgpu::Device,
     size: [u32; 2],
 ) -> (wgpu::Texture, wgpu::TextureView) {

@@ -13,6 +13,13 @@ pub(crate) struct TileCoord {
 }
 
 impl TileCoord {
+    pub(crate) fn containing(pixel: [u32; 2]) -> Self {
+        Self {
+            x: pixel[0] / TILE_SIZE,
+            y: pixel[1] / TILE_SIZE,
+        }
+    }
+
     pub(crate) fn origin(self) -> [u32; 2] {
         [self.x * TILE_SIZE, self.y * TILE_SIZE]
     }
@@ -43,6 +50,18 @@ impl TileSet {
 
     pub(crate) fn insert(&mut self, coord: TileCoord, tile: Tile) -> Option<Tile> {
         self.tiles.insert(coord, tile)
+    }
+
+    pub(crate) fn get_or_insert_with(
+        &mut self,
+        coord: TileCoord,
+        create: impl FnOnce() -> Tile,
+    ) -> &Tile {
+        self.tiles.entry(coord).or_insert_with(create)
+    }
+
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(TileCoord) -> bool) {
+        self.tiles.retain(|coord, _| keep(*coord));
     }
 
     pub(crate) fn remove(&mut self, coord: TileCoord) -> Option<Tile> {
@@ -154,6 +173,17 @@ pub(crate) fn tile_document_rect(coord: TileCoord, document_size: [u32; 2]) -> T
 pub(crate) fn region_has_alpha(image: &image::RgbaImage, rect: TextureRect) -> bool {
     (rect.y..rect.y + rect.height)
         .any(|y| (rect.x..rect.x + rect.width).any(|x| image.get_pixel(x, y)[3] != 0))
+}
+
+pub(crate) fn copy_tile(encoder: &mut wgpu::CommandEncoder, source: &Tile, destination: &Tile) {
+    copy_texture_region(
+        encoder,
+        &source.texture,
+        [0, 0],
+        &destination.texture,
+        [0, 0],
+        [TILE_SIZE; 2],
+    );
 }
 
 pub(crate) fn copy_texture_region(

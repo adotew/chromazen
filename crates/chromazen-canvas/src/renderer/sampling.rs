@@ -41,10 +41,7 @@ pub(super) fn read_composited_color(
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("eyedropper readback encoder"),
     });
-    let coord = TileCoord {
-        x: pixel[0] / TILE_SIZE,
-        y: pixel[1] / TILE_SIZE,
-    };
+    let coord = TileCoord::containing(pixel);
     // The buffer starts zero-filled, so layers without a tile here sample as transparent.
     for (index, layer) in layers.iter().enumerate() {
         let Some(tile) = layer.tiles.get(coord) else {
