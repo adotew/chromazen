@@ -198,16 +198,14 @@ impl PaintView {
         self.set_rotation_around(0.0, anchor)
     }
 
-    pub(crate) fn toggle_flip_horizontal_around(&mut self, anchor: [f32; 2]) {
-        let anchor_in_window = self.snapshot().document_to_window(anchor);
+    pub(crate) fn toggle_flip_horizontal(&mut self) {
         self.flip[0] = -self.flip[0];
-        self.keep_anchor_at_window_point(anchor, anchor_in_window);
+        self.rotation = normalize_angle(-self.rotation);
     }
 
-    pub(crate) fn toggle_flip_vertical_around(&mut self, anchor: [f32; 2]) {
-        let anchor_in_window = self.snapshot().document_to_window(anchor);
+    pub(crate) fn toggle_flip_vertical(&mut self) {
         self.flip[1] = -self.flip[1];
-        self.keep_anchor_at_window_point(anchor, anchor_in_window);
+        self.rotation = normalize_angle(-self.rotation);
     }
 
     fn keep_anchor_at_window_point(&mut self, anchor: [f32; 2], window_point: [f32; 2]) {
@@ -375,8 +373,8 @@ mod tests {
         let before = view.snapshot().workspace_to_window(reference_position);
 
         view.set_rotation_around(0.91, canvas_center);
-        view.toggle_flip_horizontal_around(canvas_center);
-        view.toggle_flip_vertical_around(canvas_center);
+        view.toggle_flip_horizontal();
+        view.toggle_flip_vertical();
 
         assert_eq!(
             view.snapshot().workspace_to_window(reference_position),
@@ -385,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn flipping_keeps_the_requested_document_anchor_stationary() {
+    fn flipping_mirrors_the_visible_region_across_the_viewport_center() {
         let mut view = PaintView {
             zoom: 0.8,
             center: [-40.0, 120.0],
@@ -393,15 +391,18 @@ mod tests {
             rotation: 0.4,
             ..PaintView::default()
         };
-        let canvas_center = [200.0, 150.0];
-        let before = view.snapshot().document_to_window(canvas_center);
+        let document_point = [200.0, 150.0];
+        let before = view.snapshot().document_to_window(document_point);
 
-        view.toggle_flip_horizontal_around(canvas_center);
-        view.toggle_flip_vertical_around(canvas_center);
+        view.toggle_flip_horizontal();
+        let after = view.snapshot().document_to_window(document_point);
+        assert!((after[0] - (900.0 - before[0])).abs() < 0.001);
+        assert!((after[1] - before[1]).abs() < 0.001);
 
-        let after = view.snapshot().document_to_window(canvas_center);
-        assert!((before[0] - after[0]).abs() < 0.0001);
-        assert!((before[1] - after[1]).abs() < 0.0001);
+        view.toggle_flip_vertical();
+        let after = view.snapshot().document_to_window(document_point);
+        assert!((after[0] - (900.0 - before[0])).abs() < 0.001);
+        assert!((after[1] - (500.0 - before[1])).abs() < 0.001);
     }
 
     #[test]

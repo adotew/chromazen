@@ -569,13 +569,11 @@ impl Canvas {
     }
 
     pub fn toggle_canvas_flip_horizontal(&mut self) {
-        let center = self.document_center();
-        self.view.toggle_flip_horizontal_around(center);
+        self.view.toggle_flip_horizontal();
     }
 
     pub fn toggle_canvas_flip_vertical(&mut self) {
-        let center = self.document_center();
-        self.view.toggle_flip_vertical_around(center);
+        self.view.toggle_flip_vertical();
     }
 
     fn document_center(&self) -> [f32; 2] {
