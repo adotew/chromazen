@@ -68,8 +68,8 @@ impl Default for AppConfig {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SurfaceStyle {
     #[default]
-    Frosted,
     Opaque,
+    Frosted,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -381,22 +381,22 @@ mod tests {
         assert_eq!(config.brush.color, CurrentBrushConfig::default().color);
         assert_eq!(config.accent_color, DEFAULT_ACCENT_COLOR);
         assert_eq!(config.active_brush, "charcoal");
-        assert_eq!(config.surface_style, SurfaceStyle::Frosted);
+        assert_eq!(config.surface_style, SurfaceStyle::Opaque);
         assert_eq!(config.workspace_background, WorkspaceBackground::Standard);
     }
 
     #[test]
-    fn surface_style_round_trips_and_defaults_to_frosted() {
+    fn surface_style_round_trips_and_defaults_to_opaque() {
         let default_config: AppConfig = toml::from_str("").expect("parse defaults");
-        assert_eq!(default_config.surface_style, SurfaceStyle::Frosted);
+        assert_eq!(default_config.surface_style, SurfaceStyle::Opaque);
 
-        let opaque: AppConfig =
-            toml::from_str("surface_style = \"opaque\"\n").expect("parse opaque style");
-        assert_eq!(opaque.surface_style, SurfaceStyle::Opaque);
+        let frosted: AppConfig =
+            toml::from_str("surface_style = \"frosted\"\n").expect("parse frosted style");
+        assert_eq!(frosted.surface_style, SurfaceStyle::Frosted);
         assert!(
-            toml::to_string(&opaque)
-                .expect("serialize opaque style")
-                .contains("surface_style = \"opaque\"")
+            toml::to_string(&frosted)
+                .expect("serialize frosted style")
+                .contains("surface_style = \"frosted\"")
         );
     }
 
