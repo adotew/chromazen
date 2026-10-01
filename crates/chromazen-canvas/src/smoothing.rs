@@ -30,23 +30,19 @@ pub struct StrokePositionFilter {
 
 impl Default for StrokePositionFilter {
     fn default() -> Self {
-        Self::with_parameters(MIN_FILTER_CUTOFF_HZ, FILTER_BETA)
-    }
-}
-
-impl StrokePositionFilter {
-    fn with_parameters(min_cutoff_hz: f32, beta: f32) -> Self {
         Self {
             filtered_position: [0.0; 2],
             filtered_velocity: [0.0; 2],
             previous_time: Duration::ZERO,
             sample_interval: FALLBACK_SAMPLE_INTERVAL,
-            min_cutoff_hz,
-            beta,
+            min_cutoff_hz: MIN_FILTER_CUTOFF_HZ,
+            beta: FILTER_BETA,
             initialized: false,
         }
     }
+}
 
+impl StrokePositionFilter {
     pub fn reset(&mut self, position: [f32; 2], time: Duration) -> [f32; 2] {
         self.filtered_position = position;
         self.filtered_velocity = [0.0; 2];
