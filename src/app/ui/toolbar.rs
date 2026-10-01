@@ -57,12 +57,31 @@ impl GuiLayer {
         }
     }
 
+    pub(super) fn show_brush_color_swatch(&mut self, ui: &mut egui::Ui) {
+        if color_picker::show_swatch(ui, self.brush.color, self.previous_brush_color) {
+            self.brush.color = self.previous_brush_color;
+            self.commands
+                .push(AppCommand::Editor(EditorCommand::SetBrushColor(
+                    self.brush.color.to_array(),
+                )));
+        }
+    }
+
     pub(super) fn show_brush_color_picker(&mut self, ui: &mut egui::Ui) {
         if color_picker::show(ui, &mut self.brush.color) {
             self.commands
                 .push(AppCommand::Editor(EditorCommand::SetBrushColor(
                     self.brush.color.to_array(),
                 )));
+        }
+        // Wait until after the release frame's pick to avoid saving intermediate drag colors.
+        if !ui.ctx().input(|input| input.pointer.any_down())
+            && self.brush.color != self.settled_brush_color
+        {
+            self.previous_brush_color =
+                std::mem::replace(&mut self.settled_brush_color, self.brush.color);
+            // The sidebar swatch was already painted this frame.
+            ui.ctx().request_repaint();
         }
     }
 

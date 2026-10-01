@@ -20,16 +20,17 @@ pub(super) fn show(ui: &mut Ui, color: &mut Color32) -> bool {
     hsvag.a = 1.0;
 
     let width = ui.available_width();
+    let mut interacted = false;
     ui.scope(|ui| {
         let hue_width = ui.spacing().interact_size.y;
         ui.spacing_mut().slider_width = width - hue_width - ui.spacing().item_spacing.x;
 
         ui.horizontal(|ui| {
             let opaque = HsvaGamma { a: 1.0, ..hsvag };
-            color_slider_2d(ui, &mut hsvag.s, &mut hsvag.v, |s, v| {
+            let square = color_slider_2d(ui, &mut hsvag.s, &mut hsvag.v, |s, v| {
                 HsvaGamma { s, v, ..opaque }.into()
             });
-            color_slider_vertical(ui, &mut hsvag.h, |h| {
+            let hue = color_slider_vertical(ui, &mut hsvag.h, |h| {
                 HsvaGamma {
                     h,
                     s: 1.0,
@@ -39,11 +40,17 @@ pub(super) fn show(ui: &mut Ui, color: &mut Color32) -> bool {
                 .into()
             })
             .on_hover_text("Hue");
+            interacted =
+                square.interact_pointer_pos().is_some() || hue.interact_pointer_pos().is_some();
         });
     });
 
-    hsva = Hsva::from(hsvag);
-    *color = Color32::from(hsva);
+    // Only write back on interaction: the HSV round trip can shift colors set elsewhere
+    // (e.g. by the eyedropper), which would otherwise register as a new pick.
+    if interacted {
+        hsva = Hsva::from(hsvag);
+        *color = Color32::from(hsva);
+    }
     ui.ctx().data_mut(|data| {
         data.insert_temp(
             state_id,
@@ -54,6 +61,39 @@ pub(super) fn show(ui: &mut Ui, color: &mut Color32) -> bool {
         );
     });
     hsva != before
+}
+
+pub(super) fn show_swatch(ui: &mut Ui, current: Color32, previous: Color32) -> bool {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(72.0, 24.0), Sense::hover());
+    let (left, right) = rect.split_left_right_at_fraction(0.5);
+    let response = ui
+        .interact(right, ui.id().with("previous color"), Sense::click())
+        .on_hover_text("Previous color")
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        painter.rect_filled(
+            left,
+            egui::CornerRadius {
+                nw: 6,
+                sw: 6,
+                ..egui::CornerRadius::ZERO
+            },
+            current,
+        );
+        painter.rect_filled(
+            right,
+            egui::CornerRadius {
+                ne: 6,
+                se: 6,
+                ..egui::CornerRadius::ZERO
+            },
+            previous,
+        );
+    }
+
+    response.clicked()
 }
 
 fn color_slider_vertical(

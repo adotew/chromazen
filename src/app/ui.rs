@@ -171,6 +171,8 @@ pub struct GuiLayer {
     surface_style: SurfaceStyle,
     workspace_background: WorkspaceBackground,
     pub brush: BrushSettings,
+    previous_brush_color: egui::Color32,
+    settled_brush_color: egui::Color32,
     tool_brushes: [String; 3],
     tool_sizes: [f32; 3],
     tool_opacities: [f32; 3],
@@ -406,6 +408,8 @@ impl GuiLayer {
             surface_style: config.surface_style,
             workspace_background: config.workspace_background,
             brush: brush_settings_from_config(&config.brush, brush_preset),
+            previous_brush_color: brush_color(&config.brush),
+            settled_brush_color: brush_color(&config.brush),
             tool_brushes: [
                 brush_preset.id.clone(),
                 config.eraser_brush.clone(),
@@ -670,6 +674,8 @@ impl GuiLayer {
     pub(crate) fn set_brush_color(&mut self, color: [u8; 4]) {
         self.brush.color =
             egui::Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3]);
+        self.previous_brush_color = self.brush.color;
+        self.settled_brush_color = self.brush.color;
     }
 
     pub(crate) fn reset_active_brush_settings(&mut self) {

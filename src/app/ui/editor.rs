@@ -118,8 +118,17 @@ impl GuiLayer {
                         content_ui.set_clip_rect(panel_ui.clip_rect());
 
                         content_ui.add_space(8.0);
-                        content_ui.vertical_centered(|ui| {
-                            ui.heading("Color");
+                        let header_width = content_ui.available_width();
+                        content_ui.allocate_ui(egui::vec2(header_width, 28.0), |ui| {
+                            ui.columns(3, |columns| {
+                                columns[1].vertical_centered(|ui| {
+                                    ui.heading("Color");
+                                });
+                                columns[0].with_layout(
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| self.show_brush_color_swatch(ui),
+                                );
+                            });
                         });
                         content_ui.add_space(8.0);
                         self.show_brush_color_picker(&mut content_ui);
@@ -188,6 +197,18 @@ impl GuiLayer {
             {
                 let min = response.response.rect.min;
                 self.panel_layout.color_panel_pos = [min.x, min.y];
+                let swatch_rect = egui::Rect::from_min_size(
+                    response.response.rect.left_top() + egui::vec2(8.0, 8.0),
+                    egui::vec2(72.0, 24.0),
+                );
+                let mut swatch_ui = ui.new_child(
+                    egui::UiBuilder::new()
+                        .id(egui::Id::new("floating color swatch"))
+                        .layer_id(response.response.layer_id)
+                        .max_rect(swatch_rect),
+                );
+                swatch_ui.set_clip_rect(response.response.rect);
+                self.show_brush_color_swatch(&mut swatch_ui);
             }
 
             if !self.sidebar_visible
