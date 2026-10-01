@@ -59,6 +59,8 @@ use crate::{
     },
 };
 
+pub(super) type WakeCallback = Arc<dyn Fn() + Send + Sync>;
+
 const WINDOW_TITLE: &str = "Chromazen";
 #[cfg(target_os = "linux")]
 const LINUX_APPLICATION_ID: &str = "io.github.adotew.chromazen";

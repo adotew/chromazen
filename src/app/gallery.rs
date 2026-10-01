@@ -1,10 +1,12 @@
 use std::{
     path::PathBuf,
-    sync::{Arc, mpsc},
+    sync::mpsc,
     time::{Duration, Instant},
 };
 
 use chromazen_canvas::CanvasSizeConstraints;
+
+use super::WakeCallback;
 
 use crate::artwork::{
     ArtworkId, ArtworkStore, ArtworkSummary, DocumentManifest, ReferenceManifest,
@@ -23,8 +25,6 @@ pub(super) struct ThumbnailCompletion {
     pub(super) path: PathBuf,
     pub(super) result: Result<image::RgbaImage, String>,
 }
-
-type WakeCallback = Arc<dyn Fn() + Send + Sync>;
 
 const LOAD_DIALOG_DELAY: Duration = Duration::from_millis(200);
 
@@ -279,6 +279,8 @@ fn load_artwork(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     #[test]

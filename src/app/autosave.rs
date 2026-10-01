@@ -12,12 +12,13 @@ use crate::artwork::{
     ReferenceWrite, RevisionWrite, encode_png, flatten_premultiplied_layers,
 };
 
-use super::references::{ReferenceBoard, ReferenceId, ReferenceVersions};
+use super::{
+    WakeCallback,
+    references::{ReferenceBoard, ReferenceId, ReferenceVersions},
+};
 
 const AUTOSAVE_DELAY: Duration = Duration::from_secs(2);
 const THUMBNAIL_SIZE: u32 = 512;
-
-type WakeCallback = Arc<dyn Fn() + Send + Sync>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum SaveStatus {

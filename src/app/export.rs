@@ -1,7 +1,7 @@
 use std::{
     io::Write,
     path::{Path, PathBuf},
-    sync::{Arc, mpsc},
+    sync::mpsc,
 };
 
 use atomic_write_file::AtomicWriteFile;
@@ -9,7 +9,7 @@ use chromazen_canvas::Canvas;
 
 use crate::artwork::{CompositeLayer, encode_png, flatten_premultiplied_layers};
 
-type WakeCallback = Arc<dyn Fn() + Send + Sync>;
+use super::WakeCallback;
 
 pub(super) struct ExportCompletion {
     pub(super) path: PathBuf,

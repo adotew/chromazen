@@ -1,14 +1,15 @@
 use std::{
     path::PathBuf,
-    sync::{Arc, mpsc},
+    sync::mpsc,
     time::{Duration, Instant},
 };
 
 use crate::artwork::ArtworkId;
 
-use super::references::{DecodedReference, decode_reference_file};
-
-type WakeCallback = Arc<dyn Fn() + Send + Sync>;
+use super::{
+    WakeCallback,
+    references::{DecodedReference, decode_reference_file},
+};
 
 const IMPORT_DIALOG_DELAY: Duration = Duration::from_millis(200);
 
