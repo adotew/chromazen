@@ -13,6 +13,7 @@ mod menu;
 mod reference_panel;
 mod toolbar;
 
+use dialogs::SettingsPage;
 use interaction_geometry::*;
 
 use std::time::Duration;
@@ -182,6 +183,7 @@ pub struct GuiLayer {
     commands: Vec<AppCommand>,
     message_dialog: Option<MessageDialog>,
     settings_dialog_open: bool,
+    settings_page: SettingsPage,
     shortcuts_dialog_open: bool,
     background_edit_start: Option<[u8; 3]>,
     layer_name_edit: Option<LayerNameEdit>,
@@ -428,6 +430,7 @@ impl GuiLayer {
             commands: Vec::new(),
             message_dialog,
             settings_dialog_open: false,
+            settings_page: SettingsPage::Appearance,
             shortcuts_dialog_open: false,
             background_edit_start: None,
             layer_name_edit: None,

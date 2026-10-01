@@ -19,6 +19,143 @@ const ACCENT_COLORS: [(&str, egui::Color32); 7] = [
     ("Purple", egui::Color32::from_rgb(142, 93, 231)),
 ];
 
+const SETTINGS_SIDEBAR_WIDTH: f32 = 150.0;
+const SETTINGS_CONTENT_WIDTH: f32 = 520.0;
+const SETTINGS_LABEL_WIDTH: f32 = 240.0;
+const SETTINGS_MIN_HEIGHT: f32 = 280.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SettingsPage {
+    Appearance,
+}
+
+impl SettingsPage {
+    const ALL: [Self; 1] = [Self::Appearance];
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Appearance => "Appearance",
+        }
+    }
+}
+
+/// Returns whether any appearance setting changed.
+fn appearance_settings(
+    ui: &mut egui::Ui,
+    accent_color: &mut egui::Color32,
+    workspace_background: &mut WorkspaceBackground,
+    surface_style: &mut SurfaceStyle,
+) -> bool {
+    let mut changed = false;
+    setting_row(
+        ui,
+        "Accent color",
+        "Highlights selections and active controls.",
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            for (name, color) in ACCENT_COLORS.into_iter().rev() {
+                changed |= accent_swatch(ui, name, color, accent_color);
+            }
+        },
+    );
+    setting_row(
+        ui,
+        "Workspace background",
+        "Color of the area around the canvas.",
+        |ui| {
+            changed |= ui
+                .selectable_value(
+                    workspace_background,
+                    WorkspaceBackground::NeutralGray,
+                    "Neutral Gray",
+                )
+                .changed();
+            changed |= ui
+                .selectable_value(
+                    workspace_background,
+                    WorkspaceBackground::Standard,
+                    "Standard",
+                )
+                .changed();
+        },
+    );
+    setting_row(
+        ui,
+        "Interface backgrounds",
+        "Use solid fills or blur the canvas behind panels.",
+        |ui| {
+            changed |= ui
+                .selectable_value(surface_style, SurfaceStyle::Frosted, "Frosted")
+                .changed();
+            changed |= ui
+                .selectable_value(surface_style, SurfaceStyle::Opaque, "Opaque")
+                .changed();
+        },
+    );
+    changed
+}
+
+/// Lays out a title and description on the left and a right-aligned control.
+/// The control is added right to left, so it must add its widgets in reverse.
+fn setting_row(
+    ui: &mut egui::Ui,
+    title: &str,
+    description: &str,
+    add_control: impl FnOnce(&mut egui::Ui),
+) {
+    ui.horizontal(|ui| {
+        let text = ui.vertical(|ui| {
+            ui.set_width(SETTINGS_LABEL_WIDTH);
+            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.label(egui::RichText::new(title).color(ui.visuals().strong_text_color()));
+            ui.label(egui::RichText::new(description).text_style(egui::TextStyle::Small));
+        });
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), text.response.rect.height()),
+            egui::Layout::right_to_left(egui::Align::Center),
+            add_control,
+        );
+    });
+    ui.add_space(20.0);
+}
+
+fn settings_nav_item(ui: &mut egui::Ui, title: &str, selected: bool) -> bool {
+    ui.add_sized(
+        egui::vec2(ui.available_width(), 30.0),
+        egui::Button::selectable(selected, title),
+    )
+    .clicked()
+}
+
+fn accent_swatch(
+    ui: &mut egui::Ui,
+    name: &str,
+    color: egui::Color32,
+    accent_color: &mut egui::Color32,
+) -> bool {
+    let selected = color == *accent_color;
+    let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(30.0), egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, name)
+    });
+    ui.painter().circle_filled(rect.center(), 10.0, color);
+    if selected || response.hovered() {
+        ui.painter().circle_stroke(
+            rect.center(),
+            13.5,
+            egui::Stroke::new(
+                if selected { 2.0_f32 } else { 1.0_f32 },
+                ui.visuals().text_color(),
+            ),
+        );
+    }
+    let clicked = response.on_hover_text(name).clicked();
+    if clicked {
+        *accent_color = color;
+    }
+    clicked && !selected
+}
+
 impl GuiLayer {
     pub(crate) fn open_settings_dialog(&mut self) {
         self.settings_dialog_open = true;
@@ -145,84 +282,75 @@ impl GuiLayer {
         if !self.settings_dialog_open {
             return;
         }
+        let mut page = self.settings_page;
         let mut accent_color = self.accent_color;
         let mut surface_style = self.surface_style;
         let mut workspace_background = self.workspace_background;
         let mut changed = false;
         let mut close = false;
-        let response = egui::Modal::new(egui::Id::new("settings dialog")).show(context, |ui| {
-            ui.set_width(420.0);
-            ui.heading("Settings");
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                ui.label("Accent color");
-                ui.add_space(8.0);
-                for (name, color) in ACCENT_COLORS {
-                    let selected = color == accent_color;
-                    let (rect, response) =
-                        ui.allocate_exact_size(egui::Vec2::splat(34.0), egui::Sense::click());
-                    response.widget_info(|| {
-                        egui::WidgetInfo::selected(
-                            egui::WidgetType::RadioButton,
-                            true,
-                            selected,
-                            name,
-                        )
-                    });
-                    if response.clicked() {
-                        accent_color = color;
-                        changed = true;
-                    }
-                    ui.painter().circle_filled(rect.center(), 11.0, color);
-                    if selected || response.hovered() {
-                        ui.painter().circle_stroke(
-                            rect.center(),
-                            15.0,
-                            egui::Stroke::new(
-                                if selected { 2.0_f32 } else { 1.0_f32 },
-                                ui.visuals().text_color(),
-                            ),
-                        );
-                    }
-                    response.on_hover_text(name);
-                }
+        let frame = egui::Frame::popup(&context.global_style()).inner_margin(0);
+        let response = egui::Modal::new(egui::Id::new("settings dialog"))
+            .frame(frame)
+            .show(context, |ui| {
+                let visuals = ui.visuals_mut();
+                visuals.selection.bg_fill = visuals.text_color().gamma_multiply(0.08);
+                visuals.selection.stroke = egui::Stroke::new(1.0, visuals.strong_text_color());
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin {
+                            left: 20,
+                            right: 12,
+                            top: 20,
+                            bottom: 20,
+                        })
+                        .show(ui, |ui| {
+                            ui.vertical(|ui| {
+                                ui.set_width(SETTINGS_SIDEBAR_WIDTH);
+                                ui.set_min_height(SETTINGS_MIN_HEIGHT);
+                                ui.heading("Settings");
+                                ui.add_space(12.0);
+                                for candidate in SettingsPage::ALL {
+                                    if settings_nav_item(ui, candidate.title(), page == candidate) {
+                                        page = candidate;
+                                    }
+                                }
+                            });
+                        });
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin::symmetric(24, 20))
+                        .show(ui, |ui| {
+                            ui.vertical(|ui| {
+                                ui.set_width(SETTINGS_CONTENT_WIDTH);
+                                ui.heading(page.title());
+                                ui.add_space(12.0);
+                                match page {
+                                    SettingsPage::Appearance => {
+                                        changed |= appearance_settings(
+                                            ui,
+                                            &mut accent_color,
+                                            &mut workspace_background,
+                                            &mut surface_style,
+                                        );
+                                    }
+                                }
+                                let button_height = ui.spacing().interact_size.y;
+                                let used_height = ui.min_rect().height();
+                                ui.add_space(
+                                    (SETTINGS_MIN_HEIGHT - used_height - button_height).max(16.0),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        close = ui.button("Done").clicked();
+                                    },
+                                );
+                            });
+                        });
+                });
             });
-            ui.add_space(16.0);
-            ui.horizontal(|ui| {
-                ui.label("Workspace background");
-                ui.add_space(8.0);
-                changed |= ui
-                    .selectable_value(
-                        &mut workspace_background,
-                        WorkspaceBackground::Standard,
-                        "Standard",
-                    )
-                    .changed();
-                changed |= ui
-                    .selectable_value(
-                        &mut workspace_background,
-                        WorkspaceBackground::NeutralGray,
-                        "Neutral Gray",
-                    )
-                    .changed();
-            });
-            ui.add_space(16.0);
-            ui.horizontal(|ui| {
-                ui.label("Interface backgrounds");
-                ui.add_space(8.0);
-                changed |= ui
-                    .selectable_value(&mut surface_style, SurfaceStyle::Frosted, "Frosted")
-                    .changed();
-                changed |= ui
-                    .selectable_value(&mut surface_style, SurfaceStyle::Opaque, "Opaque")
-                    .changed();
-            });
-            ui.add_space(16.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                close = ui.button("Done").clicked();
-            });
-        });
         close |= response.should_close();
+        self.settings_page = page;
         if changed {
             self.set_accent_color(accent_color);
             self.set_surface_style(surface_style);
