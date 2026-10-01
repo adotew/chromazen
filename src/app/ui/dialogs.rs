@@ -127,6 +127,17 @@ fn settings_nav_item(ui: &mut egui::Ui, title: &str, selected: bool) -> bool {
     .clicked()
 }
 
+/// Lays out a label on the left and a number field with its unit on the right.
+fn dimension_row(ui: &mut egui::Ui, label: &str, value: &mut u32, max: u32) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.weak("px");
+            ui.add(egui::DragValue::new(value).range(1..=max).speed(1));
+        });
+    });
+}
+
 fn accent_swatch(
     ui: &mut egui::Ui,
     name: &str,
@@ -186,50 +197,38 @@ impl GuiLayer {
         };
         let mut close = false;
         let mut create = None;
-        let response = egui::Modal::new(egui::Id::new("new artwork dialog")).show(context, |ui| {
-            ui.heading("New Artwork");
-            ui.add_space(8.0);
-            egui::Grid::new("new artwork dimensions")
-                .num_columns(3)
-                .spacing([10.0, 8.0])
-                .show(ui, |ui| {
-                    ui.label("Width");
-                    ui.add(
-                        egui::DragValue::new(&mut dialog.width)
-                            .range(1..=self.canvas_size_constraints.max_dimension)
-                            .speed(1),
-                    );
-                    ui.label("px");
-                    ui.end_row();
-
-                    ui.label("Height");
-                    ui.add(
-                        egui::DragValue::new(&mut dialog.height)
-                            .range(1..=self.canvas_size_constraints.max_dimension)
-                            .speed(1),
-                    );
-                    ui.label("px");
-                    ui.end_row();
+        let frame = egui::Frame::popup(&context.global_style()).inner_margin(24);
+        let response = egui::Modal::new(egui::Id::new("new artwork dialog"))
+            .frame(frame)
+            .show(context, |ui| {
+                ui.set_width(260.0);
+                ui.heading("New Artwork");
+                ui.add_space(16.0);
+                let max_dimension = self.canvas_size_constraints.max_dimension;
+                dimension_row(ui, "Width", &mut dialog.width, max_dimension);
+                ui.add_space(10.0);
+                dimension_row(ui, "Height", &mut dialog.height, max_dimension);
+                let validation = self
+                    .canvas_size_constraints
+                    .validate([dialog.width, dialog.height]);
+                if let Err(error) = &validation {
+                    ui.add_space(8.0);
+                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                }
+                ui.add_space(20.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let submit = ui.add_enabled(validation.is_ok(), egui::Button::new("Create"));
+                    if submit.clicked()
+                        || (validation.is_ok()
+                            && ui.input(|input| input.key_pressed(egui::Key::Enter)))
+                    {
+                        create = Some((dialog.width, dialog.height));
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
                 });
-            let validation = self
-                .canvas_size_constraints
-                .validate([dialog.width, dialog.height]);
-            if let Err(error) = &validation {
-                ui.colored_label(egui::Color32::LIGHT_RED, error);
-            }
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() {
-                    close = true;
-                }
-                let submit = ui.add_enabled(validation.is_ok(), egui::Button::new("Create"));
-                if submit.clicked()
-                    || (validation.is_ok() && ui.input(|input| input.key_pressed(egui::Key::Enter)))
-                {
-                    create = Some((dialog.width, dialog.height));
-                }
             });
-        });
         close |= response.should_close();
         if let Some((width, height)) = create {
             self.commands
