@@ -30,6 +30,8 @@ Run the relevant Rust or website checks before submitting changes.
 
 Follow `rustfmt` defaults. Use `snake_case` for modules, functions, and variables; `UpperCamelCase` for structs and enums; and `SCREAMING_SNAKE_CASE` for constants. Prefer small, direct helpers over new abstractions or dependencies.
 
+Avoid unnecessary comments that restate the code. Add comments only when they clarify non-obvious intent, constraints, or trade-offs.
+
 Preserve these boundaries and invariants:
 
 - Route editor and native-menu actions through the existing command/controller flow instead of duplicating state transitions.
