@@ -7,6 +7,7 @@ const SMUDGE_MAX_ADVECTION: f32 = 0.35;
 @group(0) @binding(3) var<uniform> paint: Paint;
 // A document-sized snapshot of the smudged layer.
 @group(0) @binding(4) var sourceTexture: texture_2d<f32>;
+@group(0) @binding(5) var selectionMask: texture_2d<f32>;
 @group(1) @binding(1) var<uniform> tile: Tile;
 
 // Must match `tiles::TILE_SIZE`.
@@ -81,12 +82,18 @@ fn sample_source(pos: vec2f) -> vec4f {
   return textureSampleLevel(sourceTexture, brushSampler, clampedPos / paint.dims, 0.0);
 }
 
+fn selection_coverage(document: vec2i) -> f32 {
+  let last = vec2i(textureDimensions(selectionMask)) - vec2i(1);
+  return textureLoad(selectionMask, clamp(document, vec2i(0), last), 0).r;
+}
+
 @fragment
 fn fs(in: VertexOut) -> @location(0) vec4f {
+  let document = vec2i(in.position.xy + tile.origin);
   let mask = textureSample(brushStamp, brushSampler, in.uv).a;
   let base = clamp(in.strength * mask, 0.0, 1.0);
-  let strength = SMUDGE_MAX_ADVECTION * base;
-  let targetColor = textureLoad(sourceTexture, vec2i(in.position.xy + tile.origin), 0);
+  let strength = SMUDGE_MAX_ADVECTION * base * selection_coverage(document);
+  let targetColor = textureLoad(sourceTexture, document, 0);
   let draggedColor = sample_source(in.sourcePos);
   return mix(targetColor, draggedColor, strength);
 }

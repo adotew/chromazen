@@ -7,6 +7,7 @@ mod layers;
 mod persistence;
 mod resources;
 mod sampling;
+mod selection;
 mod stamps;
 mod tiles;
 mod view;
@@ -19,6 +20,7 @@ use self::{
     },
     resources::{RenderResources, create_paint_texture},
     sampling::{document_pixel, read_composited_color},
+    selection::SelectionMask,
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue, StampRaw},
     tiles::{
         Tile, TileCoord, TileSet, all_tile_coords, copy_texture_region, copy_tile,
@@ -123,6 +125,8 @@ struct TileUniform {
 struct TransformUniform {
     source_from_destination_x: [f32; 4],
     source_from_destination_y: [f32; 4],
+    source_origin: [f32; 2],
+    padding: [f32; 2],
 }
 
 #[repr(C)]
@@ -252,6 +256,8 @@ impl LayerTransform {
         TransformUniform {
             source_from_destination_x: [a, b, pivot[0] - a * origin[0] - b * origin[1], 0.0],
             source_from_destination_y: [c, d, pivot[1] - c * origin[0] - d * origin[1], 0.0],
+            source_origin: [0.0; 2],
+            padding: [0.0; 2],
         }
     }
 }
@@ -328,6 +334,11 @@ struct ActiveLayerTransform {
     original_tiles: BTreeMap<TileCoord, Tile>,
 }
 
+struct Selection {
+    polygon: Vec<[f32; 2]>,
+    mask: SelectionMask,
+}
+
 impl ActiveStroke {
     fn new(layer_id: LayerId, tool: PaintTool, color: [f32; 4], opacity: f32) -> Self {
         Self {
@@ -374,6 +385,7 @@ pub struct Canvas {
     /// Tiles replaced by copy-on-write during the active stroke, keyed by coordinate.
     stroke_original_tiles: BTreeMap<TileCoord, Option<Tile>>,
     active_transform: Option<ActiveLayerTransform>,
+    lasso_selection: Option<Selection>,
     content_bounds_cache: Option<(LayerId, LayerResourceId, Option<LayerContentBounds>)>,
     history: PaintHistory,
     view: PaintView,
@@ -446,6 +458,7 @@ impl Canvas {
             active_stroke: None,
             stroke_original_tiles: BTreeMap::new(),
             active_transform: None,
+            lasso_selection: None,
             content_bounds_cache: None,
             history,
             view: PaintView::default(),
@@ -652,7 +665,14 @@ impl Canvas {
         .map_err(|error| log::error!("failed to find layer content bounds: {error}"))
         .ok()
         .and_then(|layers| layers.into_iter().next())
-        .and_then(|(_, image)| alpha_content_bounds(&image));
+        .and_then(|(_, image)| {
+            alpha_content_bounds(
+                &image,
+                self.lasso_selection
+                    .as_ref()
+                    .map(|selection| &selection.mask),
+            )
+        });
         self.content_bounds_cache = Some((layer_id, layer_resource_id, bounds));
         bounds
     }
@@ -758,10 +778,17 @@ impl Canvas {
             .corners()
             .map(|corner| transform.map_point(pivot, corner));
         let destination = pixel_rect_covering(&corners, 1.0, self.document_size);
+        let kept_coords = self
+            .lasso_selection
+            .is_some()
+            .then(|| active.original_tiles.keys().copied())
+            .into_iter()
+            .flatten();
         let coords: BTreeSet<_> = destination
             .into_iter()
             .flat_map(tile_spans)
             .map(|span| span.coord)
+            .chain(kept_coords)
             .collect();
 
         let mut encoder = self
@@ -789,9 +816,15 @@ impl Canvas {
                 document_area.width,
                 document_area.height,
             );
+            let slot = self.resources.tile_slot(coord);
+            let original = active
+                .original_tiles
+                .get(&coord)
+                .map_or(&slot.empty_tile_bind_group, |tile| &tile.bind_group);
             pass.set_pipeline(&self.resources.transform_pipeline);
             pass.set_bind_group(0, &active.bind_group, &[]);
-            pass.set_bind_group(1, &self.resources.tile_slot(coord).origin_bind_group, &[]);
+            pass.set_bind_group(1, &slot.origin_bind_group, &[]);
+            pass.set_bind_group(2, original, &[]);
             pass.draw(0..3, 0..1);
         }
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -828,6 +861,55 @@ impl Canvas {
             .collect();
         self.history.commit_stroke(active.layer_id, replaced);
         self.mark_layer_changed(active.layer_id);
+        if let Some(selection) = &self.lasso_selection {
+            let pivot = active.bounds.center();
+            let polygon = selection
+                .polygon
+                .iter()
+                .map(|&point| active.value.map_point(pivot, point))
+                .collect();
+            if !self.set_selection(polygon) {
+                self.clear_selection();
+            }
+        }
+        true
+    }
+
+    pub fn selection_polygon(&self) -> Option<&[[f32; 2]]> {
+        self.lasso_selection
+            .as_ref()
+            .map(|selection| selection.polygon.as_slice())
+    }
+
+    pub fn set_selection(&mut self, polygon: Vec<[f32; 2]>) -> bool {
+        if self.active_stroke.is_some() || self.active_transform.is_some() {
+            return false;
+        }
+        let Some(mask) = selection::rasterize(&polygon, self.document_size) else {
+            return false;
+        };
+        self.resources.set_selection_mask(
+            &self.device,
+            &self.queue,
+            self.document_size,
+            Some(&mask),
+        );
+        self.lasso_selection = Some(Selection { polygon, mask });
+        self.content_bounds_cache = None;
+        true
+    }
+
+    pub fn clear_selection(&mut self) -> bool {
+        if self.lasso_selection.is_none()
+            || self.active_stroke.is_some()
+            || self.active_transform.is_some()
+        {
+            return false;
+        }
+        self.lasso_selection = None;
+        self.resources
+            .set_selection_mask(&self.device, &self.queue, self.document_size, None);
+        self.content_bounds_cache = None;
         true
     }
 
@@ -907,6 +989,7 @@ impl Canvas {
             return Err("the current document is busy".to_owned());
         }
         self.canvas_size_constraints().validate(size)?;
+        self.clear_selection();
         self.resize_document_resources(size);
 
         let id = LayerId(1);
@@ -939,6 +1022,7 @@ impl Canvas {
         if size == self.document_size && origin == [0, 0] {
             return Ok(false);
         }
+        self.clear_selection();
 
         let before_size = self.document_size;
         let copy = canvas_copy_for_resize(before_size, size, origin);
@@ -1067,6 +1151,7 @@ impl Canvas {
         if pixels.len() != document.layers.len() {
             return Err("loaded layer count does not match document metadata".to_owned());
         }
+        self.clear_selection();
 
         for (metadata, image) in document.layers.iter().zip(&pixels) {
             if image.dimensions() != (document.size[0], document.size[1]) {
@@ -2701,11 +2786,14 @@ fn pixel_rect_covering(points: &[[f32; 2]], padding: f32, size: [u32; 2]) -> Opt
     })
 }
 
-fn alpha_content_bounds(image: &image::RgbaImage) -> Option<LayerContentBounds> {
+fn alpha_content_bounds(
+    image: &image::RgbaImage,
+    selection: Option<&SelectionMask>,
+) -> Option<LayerContentBounds> {
     let mut min = [image.width(), image.height()];
     let mut max = [0, 0];
     for (x, y, pixel) in image.enumerate_pixels() {
-        if pixel[3] == 0 {
+        if pixel[3] == 0 || selection.is_some_and(|mask| mask.at(x, y) == 0) {
             continue;
         }
         min[0] = min[0].min(x);
@@ -2932,14 +3020,30 @@ mod tests {
     #[test]
     fn alpha_bounds_wrap_visible_pixels() {
         let mut image = image::RgbaImage::new(8, 6);
-        assert_eq!(alpha_content_bounds(&image), None);
+        assert_eq!(alpha_content_bounds(&image, None), None);
         image.put_pixel(2, 4, image::Rgba([1, 2, 3, 1]));
         image.put_pixel(6, 1, image::Rgba([1, 2, 3, 255]));
         assert_eq!(
-            alpha_content_bounds(&image),
+            alpha_content_bounds(&image, None),
             Some(LayerContentBounds {
                 min: [2.0, 1.0],
                 max: [7.0, 5.0],
+            })
+        );
+    }
+
+    #[test]
+    fn alpha_bounds_ignore_pixels_outside_the_selection() {
+        let mut image = image::RgbaImage::new(8, 8);
+        image.put_pixel(1, 1, image::Rgba([0, 0, 0, 255]));
+        image.put_pixel(5, 6, image::Rgba([0, 0, 0, 255]));
+        let selection =
+            selection::rasterize(&[[4.0, 4.0], [8.0, 4.0], [8.0, 8.0], [4.0, 8.0]], [8, 8]);
+        assert_eq!(
+            alpha_content_bounds(&image, selection.as_ref()),
+            Some(LayerContentBounds {
+                min: [5.0, 6.0],
+                max: [6.0, 7.0],
             })
         );
     }

@@ -14,6 +14,8 @@ impl GuiLayer {
             tool,
             layer_transform,
             layer_content_bounds,
+            selection,
+            lasso,
             brush_resize_position,
             brush_outline_half_size,
             eyedropper_indicator,
@@ -278,10 +280,15 @@ impl GuiLayer {
                         .push(AppCommand::Editor(EditorCommand::ApplyLayerTransform));
                 }
                 if ui.ctx().input(|input| input.key_pressed(egui::Key::Escape)) {
-                    if tool == EditorTool::Transform {
+                    if tool == EditorTool::Transform
+                        && (layer_transform.is_some() || selection.is_none())
+                    {
                         self.layer_transform_drag = None;
                         self.commands
                             .push(AppCommand::Editor(EditorCommand::CancelLayerTransform));
+                    } else if selection.is_some() {
+                        self.commands
+                            .push(AppCommand::Editor(EditorCommand::ClearSelection));
                     } else {
                         self.brush_window_open = false;
                         self.color_window_open = false;
@@ -292,6 +299,14 @@ impl GuiLayer {
 
             let workspace_rect = ui.available_rect_before_wrap();
             self.show_workspace_references(ui.ctx(), references, workspace_view, workspace_rect);
+            if let Some(selection) = selection
+                && layer_transform.is_none()
+            {
+                self.show_selection_outline(ui, workspace_view, selection, true, workspace_rect);
+            }
+            if let Some(lasso) = lasso {
+                self.show_selection_outline(ui, workspace_view, lasso, false, workspace_rect);
+            }
             if tool == EditorTool::Transform {
                 self.show_layer_transform_overlay(
                     ui,
@@ -315,7 +330,9 @@ impl GuiLayer {
                     egui::vec2(-SIDEBAR_WIDTH * sidebar_progress, 0.0),
                 )
                 .order(egui::Order::Foreground)
-                .show(ui.ctx(), |ui| self.show_tool_settings(ui, tool))
+                .show(ui.ctx(), |ui| {
+                    self.show_tool_settings(ui, tool, selection.is_some())
+                })
                 .inner;
             if let Some(tool) = selected_tool.or(selected_setting) {
                 self.commands

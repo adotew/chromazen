@@ -11,6 +11,7 @@ mod layer_transform;
 mod layers_panel;
 mod menu;
 mod reference_panel;
+mod selection_outline;
 mod toolbar;
 
 use dialogs::SettingsPage;
@@ -134,6 +135,8 @@ pub(crate) struct EditorUiState<'a> {
     pub(crate) tool: EditorTool,
     pub(crate) layer_transform: Option<LayerTransform>,
     pub(crate) layer_content_bounds: Option<LayerContentBounds>,
+    pub(crate) selection: Option<&'a [[f32; 2]]>,
+    pub(crate) lasso: Option<&'a [[f32; 2]]>,
     pub(crate) brush_resize_position: Option<[f32; 2]>,
     pub(crate) brush_outline_half_size: &'a dyn Fn(f32) -> [f32; 2],
     pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
@@ -1185,6 +1188,11 @@ fn show_tool_button(
             egui::include_image!("../../assets/icons/move.svg"),
             "Transform",
             "T",
+        ),
+        EditorTool::Select => (
+            egui::include_image!("../../assets/icons/lasso.svg"),
+            "Selection",
+            "L",
         ),
     };
     let response = ui.interact(rect, ui.id().with(label), egui::Sense::click());

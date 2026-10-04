@@ -32,6 +32,8 @@ impl App {
                     | EditorCommand::ToggleCanvasFlipHorizontal
                     | EditorCommand::ToggleCanvasFlipVertical
                     | EditorCommand::RequestCanvasResize
+                    | EditorCommand::ClearSelection
+                    | EditorCommand::CancelSelection
             )
         {
             return;
@@ -39,6 +41,8 @@ impl App {
         if matches!(
             command,
             EditorCommand::SelectTool(_)
+                | EditorCommand::ClearSelection
+                | EditorCommand::CancelSelection
                 | EditorCommand::SelectLayer(_)
                 | EditorCommand::AddLayer
                 | EditorCommand::DuplicateSelectedLayer
@@ -155,6 +159,16 @@ impl App {
             EditorCommand::DuplicateSelectedLayer => {
                 if let Some(paint) = self.paint.as_mut() {
                     paint.duplicate_selected_layer();
+                }
+            }
+            EditorCommand::ClearSelection | EditorCommand::CancelSelection => {
+                if let Some(paint) = self.paint.as_mut() {
+                    paint.clear_selection();
+                }
+                if command == EditorCommand::CancelSelection
+                    && self.input.tool() == EditorTool::Select
+                {
+                    self.restore_previous_paint_tool();
                 }
             }
             EditorCommand::ClearLayer => {

@@ -402,6 +402,7 @@ impl GuiLayer {
                                 &[
                                     ("Brush / Eraser / Smudge", "D/B, E, S"),
                                     ("Transform", "T"),
+                                    ("Freehand selection", "L"),
                                     ("Cycle paint tools", "Shift-Tab"),
                                     ("Show or hide sidebar", "Tab"),
                                     ("Show or hide artwork tabs", RAIL_SHORTCUT),
@@ -436,7 +437,7 @@ impl GuiLayer {
                                     ("Undo", UNDO_SHORTCUT),
                                     ("Redo", REDO_SHORTCUT),
                                     ("Apply transform or crop", "Enter"),
-                                    ("Cancel transform or crop", "Escape"),
+                                    ("Cancel transform or crop, or deselect", "Escape"),
                                 ],
                             );
                         });

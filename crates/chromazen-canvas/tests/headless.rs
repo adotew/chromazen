@@ -1,7 +1,8 @@
 use std::sync::mpsc;
 
 use chromazen_canvas::{
-    BrushCursor, BrushSpacing, Canvas, CanvasDocument, LayerId, LayerInfo, PaintTool, StrokePoint,
+    BrushCursor, BrushSpacing, Canvas, CanvasDocument, LayerId, LayerInfo, LayerTransform,
+    PaintTool, StrokePoint,
 };
 
 const RENDER_SIZE: [u32; 2] = [64, 64];
@@ -87,6 +88,8 @@ async fn run() {
     sparse_documents_round_trip_through_tiles(&device, &queue);
     unaligned_canvas_resize_shifts_tiled_content(&device, &queue);
     smudge_drags_color_into_an_empty_tile(&device, &queue);
+    selection_limits_painting_across_tiles(&device, &queue);
+    selection_transform_moves_only_selected_pixels(&device, &queue);
     preview_is_visible_but_not_committed(&device, &queue);
     run_brush_cursor_contrast(&device, &queue);
     run_adjustment_preview_over_reference(&device, &queue);
@@ -260,6 +263,91 @@ fn smudge_drags_color_into_an_empty_tile(device: &wgpu::Device, queue: &wgpu::Qu
     assert!(smudged[3] > 0 && smudged[0] > 0 && smudged[1] == 0);
     assert!(canvas.undo());
     assert_eq!(read_layers(&canvas)[0].get_pixel(530, 300)[3], 0);
+}
+
+fn rectangle(min: [f32; 2], max: [f32; 2]) -> Vec<[f32; 2]> {
+    vec![min, [max[0], min[1]], max, [min[0], max[1]]]
+}
+
+fn selection_limits_painting_across_tiles(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let mut canvas = tiled_canvas(device, queue);
+    let from = StrokePoint {
+        x: 490.0,
+        y: 300.0,
+        radius: 6.0,
+        opacity: 1.0,
+    };
+    let to = StrokePoint { x: 560.0, ..from };
+    let stroke = |canvas: &mut Canvas, tool| {
+        assert!(canvas.begin_stroke(tool, from, [0.0, 0.0, 0.0, 1.0], 1.0));
+        assert!(canvas.queue_stamp(from));
+        canvas.stamp_line(from, to, BrushSpacing::default());
+        canvas.end_stroke();
+    };
+    let alpha_at = |canvas: &Canvas, x| read_layers(canvas)[0].get_pixel(x, 300)[3];
+
+    assert!(canvas.set_selection(rectangle([0.0, 0.0], [520.0, 700.0])));
+    stroke(&mut canvas, PaintTool::Brush);
+    assert_eq!(alpha_at(&canvas, 500), 255);
+    assert_eq!(alpha_at(&canvas, 515), 255);
+    assert_eq!(alpha_at(&canvas, 530), 0);
+
+    assert!(canvas.set_selection(rectangle([505.0, 0.0], [1100.0, 700.0])));
+    stroke(&mut canvas, PaintTool::Eraser);
+    assert_eq!(alpha_at(&canvas, 500), 255);
+    assert_eq!(alpha_at(&canvas, 515), 0);
+
+    let image =
+        image::RgbaImage::from_fn(TILED_DOCUMENT_SIZE[0], TILED_DOCUMENT_SIZE[1], |x, _| {
+            if x < 512 {
+                image::Rgba([255, 0, 0, 255])
+            } else {
+                image::Rgba([0; 4])
+            }
+        });
+    load_single_layer(&mut canvas, image);
+    assert!(canvas.selection_polygon().is_none());
+    assert!(canvas.set_selection(rectangle([0.0, 0.0], [520.0, 700.0])));
+    stroke(&mut canvas, PaintTool::Smudge);
+    assert!(alpha_at(&canvas, 515) > 0);
+    assert_eq!(alpha_at(&canvas, 530), 0);
+}
+
+fn selection_transform_moves_only_selected_pixels(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let mut canvas = tiled_canvas(device, queue);
+    let image =
+        image::RgbaImage::from_fn(TILED_DOCUMENT_SIZE[0], TILED_DOCUMENT_SIZE[1], |x, y| {
+            let in_square = |left| (left..left + 20).contains(&x) && (100..120).contains(&y);
+            if in_square(100) || in_square(300) {
+                image::Rgba([255, 0, 0, 255])
+            } else {
+                image::Rgba([0; 4])
+            }
+        });
+    load_single_layer(&mut canvas, image);
+    assert!(canvas.set_selection(rectangle([90.0, 90.0], [130.0, 130.0])));
+    assert_eq!(
+        canvas.read_selected_layer_content_bounds().map(|b| b.max),
+        Some([120.0, 120.0])
+    );
+    assert!(canvas.update_layer_transform(LayerTransform {
+        translation: [600.0, 0.0],
+        ..LayerTransform::default()
+    }));
+    assert!(canvas.commit_layer_transform());
+
+    let alpha_at = |canvas: &Canvas, x| read_layers(canvas)[0].get_pixel(x, 110)[3];
+    assert_eq!(alpha_at(&canvas, 110), 0);
+    assert_eq!(alpha_at(&canvas, 710), 255);
+    assert_eq!(alpha_at(&canvas, 310), 255);
+    assert_eq!(
+        canvas.selection_polygon().map(|polygon| polygon[0]),
+        Some([690.0, 90.0])
+    );
+
+    assert!(canvas.undo());
+    assert_eq!(alpha_at(&canvas, 110), 255);
+    assert_eq!(alpha_at(&canvas, 710), 0);
 }
 
 fn preview_is_visible_but_not_committed(device: &wgpu::Device, queue: &wgpu::Queue) {

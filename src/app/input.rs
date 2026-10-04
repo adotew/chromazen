@@ -18,6 +18,7 @@ const EYEDROPPER_DRAG_SAMPLE_INTERVAL: Duration = Duration::from_millis(33);
 const ROTATION_SNAP_INTERVAL: f32 = std::f32::consts::FRAC_PI_2;
 const ROTATION_SNAP_ENTER: f32 = 5.0_f32.to_radians();
 const ROTATION_SNAP_EXIT: f32 = 8.0_f32.to_radians();
+const LASSO_MIN_POINT_SPACING: f32 = 2.0;
 
 /// Converts tablet input to the same physical-coordinate events used by mouse input.
 pub(crate) fn window_events_for_pen(event: PenEvent, scale_factor: f64) -> Vec<WindowEvent> {
@@ -84,6 +85,7 @@ pub(super) enum KeyboardShortcut {
 pub(crate) enum EditorTool {
     Paint(PaintTool),
     Transform,
+    Select,
 }
 
 impl Default for EditorTool {
@@ -96,7 +98,7 @@ impl EditorTool {
     pub(crate) fn paint_tool(self) -> Option<PaintTool> {
         match self {
             Self::Paint(tool) => Some(tool),
-            Self::Transform => None,
+            Self::Transform | Self::Select => None,
         }
     }
 }
@@ -120,6 +122,7 @@ pub struct PaintInputController {
     resize_origin: Option<[f32; 2]>,
     resize_drag: Option<BrushResizeDrag>,
     eyedropper_drag: Option<EyedropperDrag>,
+    lasso: Option<Vec<[f32; 2]>>,
     last_point: Option<StrokePoint>,
     last_raw_point: Option<StrokePoint>,
     last_pan_pos: [f32; 2],
@@ -188,8 +191,13 @@ impl PaintInputController {
         self.resize_origin
     }
 
+    pub(crate) fn lasso_points(&self) -> Option<&[[f32; 2]]> {
+        self.lasso.as_deref()
+    }
+
     pub fn has_active_document_drag(&self) -> bool {
         self.is_drawing
+            || self.lasso.is_some()
             || self.is_panning
             || self.resize_origin.is_some()
             || self.rotation_drag.is_some()
@@ -234,7 +242,7 @@ impl PaintInputController {
     }
 
     pub fn select_tool(&mut self, tool: EditorTool) -> bool {
-        if self.is_drawing || self.tool == tool {
+        if self.is_drawing || self.lasso.is_some() || self.tool == tool {
             return false;
         }
         if let Some(tool) = self.tool.paint_tool() {
@@ -248,7 +256,9 @@ impl PaintInputController {
         let tool = match self.tool {
             EditorTool::Paint(PaintTool::Brush) => PaintTool::Eraser.into(),
             EditorTool::Paint(PaintTool::Eraser) => PaintTool::Smudge.into(),
-            EditorTool::Paint(PaintTool::Smudge) | EditorTool::Transform => PaintTool::Brush.into(),
+            EditorTool::Paint(PaintTool::Smudge) | EditorTool::Transform | EditorTool::Select => {
+                PaintTool::Brush.into()
+            }
         };
         self.select_tool(tool)
     }
@@ -320,6 +330,17 @@ impl PaintInputController {
                     }
                     return false;
                 }
+                if let Some(points) = &mut self.lasso {
+                    let point = paint.window_to_document(next);
+                    let min_distance = LASSO_MIN_POINT_SPACING / paint.zoom();
+                    let far_enough = points.last().is_none_or(|last| {
+                        (point[0] - last[0]).hypot(point[1] - last[1]) >= min_distance
+                    });
+                    if far_enough {
+                        points.push(point);
+                    }
+                    return far_enough;
+                }
 
                 if self.is_drawing {
                     let time = self.sample_time(pressure_state);
@@ -371,6 +392,11 @@ impl PaintInputController {
                 self.resize_drag = None;
                 true
             }
+            WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
+            } if self.lasso.is_some() => self.finish_lasso(paint),
             WindowEvent::MouseInput { state, button, .. } => match (state, button) {
                 (ElementState::Pressed, MouseButton::Left) if self.is_rotation_key_down => {
                     let anchor = paint.canvas_center_in_window();
@@ -397,6 +423,10 @@ impl PaintInputController {
                 (ElementState::Pressed, MouseButton::Left) if self.is_space_down => {
                     self.is_panning = true;
                     self.last_pan_pos = self.cursor_pos;
+                    true
+                }
+                (ElementState::Pressed, MouseButton::Left) if self.tool == EditorTool::Select => {
+                    self.lasso = Some(vec![paint.window_to_document(self.cursor_pos)]);
                     true
                 }
                 (ElementState::Pressed, MouseButton::Left) => {
@@ -498,7 +528,8 @@ impl PaintInputController {
                 self.is_rotation_key_down = false;
                 let was_rotating = self.rotation_drag.take().is_some();
                 let was_sampling = self.eyedropper_drag.take().is_some();
-                self.end_stroke(paint, *brush) || was_sampling || was_rotating
+                let was_selecting = self.finish_lasso(paint);
+                self.end_stroke(paint, *brush) || was_sampling || was_rotating || was_selecting
             }
             _ => false,
         }
@@ -514,8 +545,19 @@ impl PaintInputController {
         self.is_rotation_key_down = false;
         self.rotation_drag = None;
         self.eyedropper_drag = None;
+        let selected = self.finish_lasso(paint);
         let ended = self.end_stroke(paint, brush);
-        paint.commit_layer_transform() || ended
+        paint.commit_layer_transform() || ended || selected
+    }
+
+    fn finish_lasso(&mut self, paint: &mut Canvas) -> bool {
+        let Some(points) = self.lasso.take() else {
+            return false;
+        };
+        if !paint.set_selection(points) {
+            paint.clear_selection();
+        }
+        true
     }
 
     fn sample_color_at(
@@ -721,6 +763,7 @@ fn editor_tool_for_key(key: KeyCode, modifiers: ModifiersState) -> Option<Editor
         KeyCode::KeyE => Some(PaintTool::Eraser.into()),
         KeyCode::KeyS => Some(PaintTool::Smudge.into()),
         KeyCode::KeyT => Some(EditorTool::Transform),
+        KeyCode::KeyL => Some(EditorTool::Select),
         _ => None,
     }
 }
@@ -1027,6 +1070,10 @@ mod tests {
         assert_eq!(
             editor_tool_for_key(KeyCode::KeyT, ModifiersState::empty()),
             Some(EditorTool::Transform)
+        );
+        assert_eq!(
+            editor_tool_for_key(KeyCode::KeyL, ModifiersState::empty()),
+            Some(EditorTool::Select)
         );
         for modifiers in [
             ModifiersState::CONTROL,

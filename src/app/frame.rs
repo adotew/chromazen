@@ -151,13 +151,13 @@ impl App {
             return;
         }
         let layer_content_bounds = (self.screen == AppScreen::Editor
-            && self.input.tool().paint_tool().is_none())
-        .then(|| {
-            self.paint
-                .as_mut()
-                .and_then(Canvas::read_selected_layer_content_bounds)
-        })
-        .flatten();
+            && self.input.tool() == EditorTool::Transform)
+            .then(|| {
+                self.paint
+                    .as_mut()
+                    .and_then(Canvas::read_selected_layer_content_bounds)
+            })
+            .flatten();
         let Some(paint) = self.paint.as_ref() else {
             return;
         };
@@ -229,6 +229,8 @@ impl App {
                             tool: self.input.tool(),
                             layer_transform: paint.active_layer_transform(),
                             layer_content_bounds,
+                            selection: paint.selection_polygon(),
+                            lasso: self.input.lasso_points(),
                             brush_resize_position: self.input.brush_resize_pos(),
                             brush_outline_half_size: &|size| paint.brush_outline_half_size(size),
                             eyedropper_indicator,

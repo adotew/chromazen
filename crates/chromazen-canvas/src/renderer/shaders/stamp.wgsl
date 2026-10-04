@@ -2,6 +2,7 @@
 @group(0) @binding(1) var brushStamp: texture_2d<f32>;
 @group(0) @binding(2) var<storage, read> brushes: array<Brush>;
 @group(0) @binding(3) var<uniform> paint: Paint;
+@group(0) @binding(5) var selectionMask: texture_2d<f32>;
 
 struct Paint {
   dims: vec2f,
@@ -68,7 +69,12 @@ fn fs(in: VertexOut) -> @location(0) vec4f {
   return vec4f(in.color.rgb * alpha, alpha);
 }
 
+fn selection_coverage(document: vec2i) -> f32 {
+  let last = vec2i(textureDimensions(selectionMask)) - vec2i(1);
+  return textureLoad(selectionMask, clamp(document, vec2i(0), last), 0).r;
+}
+
 @fragment
 fn fs_mask(in: VertexOut) -> @location(0) vec4f {
-  return vec4f(stamp_coverage(in));
+  return vec4f(stamp_coverage(in) * selection_coverage(vec2i(in.position.xy)));
 }

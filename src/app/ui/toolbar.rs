@@ -190,20 +190,21 @@ impl GuiLayer {
         &mut self,
         ui: &mut egui::Ui,
         active_tool: EditorTool,
+        has_selection: bool,
     ) -> Option<EditorTool> {
         const TOOL_SIZE: f32 = 40.0;
         const VERTICAL_PADDING: f32 = 6.0;
         const EDGE_MARGIN: f32 = 12.0;
 
         let controls_height = (ui.ctx().content_rect().height()
-            - TOOL_SIZE
+            - 2.0 * TOOL_SIZE
             - 2.0 * VERTICAL_PADDING
             - 2.0 * EDGE_MARGIN)
             .clamp(0.0, brush_controls::CONTROLS_HEIGHT);
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(
                 TOOL_RAIL_THICKNESS,
-                TOOL_SIZE + controls_height + 2.0 * VERTICAL_PADDING,
+                2.0 * TOOL_SIZE + controls_height + 2.0 * VERTICAL_PADDING,
             ),
             egui::Sense::hover(),
         );
@@ -243,6 +244,13 @@ impl GuiLayer {
             EditorTool::Transform,
             active_tool == EditorTool::Transform,
         );
+        let select_rect = transform_rect.translate(egui::vec2(0.0, TOOL_SIZE));
+        let select_response = show_tool_button(
+            ui,
+            select_rect,
+            EditorTool::Select,
+            active_tool == EditorTool::Select || has_selection,
+        );
         if transform_response.clicked() {
             egui::Popup::close_all(ui.ctx());
             if active_tool == EditorTool::Transform {
@@ -251,6 +259,15 @@ impl GuiLayer {
                 None
             } else {
                 Some(EditorTool::Transform)
+            }
+        } else if select_response.clicked() {
+            egui::Popup::close_all(ui.ctx());
+            if active_tool == EditorTool::Select || has_selection {
+                self.commands
+                    .push(AppCommand::Editor(EditorCommand::CancelSelection));
+                None
+            } else {
+                Some(EditorTool::Select)
             }
         } else {
             None

@@ -1,6 +1,7 @@
 use wgpu::util::DeviceExt;
 
 use super::layers::{LayerId, LayerProperties, LayerResourceId, PaintLayer};
+use super::selection::SelectionMask;
 use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
 use super::tiles::{MAX_TILE_GRID, TILE_SIZE, Tile, TileCoord, TileSet};
 use super::{
@@ -53,6 +54,8 @@ pub(crate) struct RenderResources {
     pub(crate) stroke_mask_view: wgpu::TextureView,
     _preview_mask_texture: wgpu::Texture,
     pub(crate) preview_mask_view: wgpu::TextureView,
+    _selection_texture: wgpu::Texture,
+    selection_view: wgpu::TextureView,
     brush_texture: wgpu::Texture,
     brush_texture_view: wgpu::TextureView,
     brush_sampler: wgpu::Sampler,
@@ -200,6 +203,8 @@ impl RenderResources {
             create_stroke_mask_texture(device, document_size);
         clear_stroke_mask(device, queue, &stroke_mask_view);
         clear_stroke_mask(device, queue, &preview_mask_view);
+        let (selection_texture, selection_view) =
+            create_selection_texture(device, queue, document_size, None);
 
         let stamp_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -251,17 +256,20 @@ impl RenderResources {
                         },
                         count: None,
                     },
+                    texture_layout_entry(5),
                 ],
             });
         let [stamp_bind_group, preview_stamp_bind_group] = create_stamp_bind_groups(
             device,
             &stamp_bind_group_layout,
             &brush_sampler,
-            &brush_texture_view,
             [&stamp_buffer, &preview_stamp_buffer],
             &stamp_uniform_buffer,
-            // Mask strokes do not read the smudge source.
-            &empty_tile_view,
+            StampTextures {
+                brush: &brush_texture_view,
+                smudge: &empty_tile_view,
+                selection: &selection_view,
+            },
         );
         let cursor_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -360,6 +368,7 @@ impl RenderResources {
                         },
                         count: None,
                     },
+                    texture_layout_entry(2),
                 ],
             });
         let stroke_commit_bind_group = create_stroke_commit_bind_group(
@@ -502,6 +511,7 @@ impl RenderResources {
                 bind_group_layouts: &[
                     Some(&transform_bind_group_layout),
                     Some(&tile_origin_bind_group_layout),
+                    Some(&tile_bind_group_layout),
                 ],
                 immediate_size: 0,
             });
@@ -1038,6 +1048,8 @@ impl RenderResources {
             stroke_mask_view,
             _preview_mask_texture: preview_mask_texture,
             preview_mask_view,
+            _selection_texture: selection_texture,
+            selection_view,
             brush_texture,
             brush_texture_view,
             brush_sampler,
@@ -1091,6 +1103,10 @@ impl RenderResources {
                     binding: 1,
                     resource: self.transform_uniform_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&self.selection_view),
+                },
             ],
         })
     }
@@ -1105,6 +1121,7 @@ impl RenderResources {
         let mut uniform = transform.uniform(pivot);
         uniform.source_from_destination_x[2] -= source_origin[0] as f32;
         uniform.source_from_destination_y[2] -= source_origin[1] as f32;
+        uniform.source_origin = source_origin.map(|value| value as f32);
         queue.write_buffer(
             &self.transform_uniform_buffer,
             0,
@@ -1235,6 +1252,36 @@ impl RenderResources {
         self.preview_mask_view = preview_mask_view;
         self.stroke_commit_bind_group = stroke_commit_bind_group;
         self.stroke_preview_bind_group = None;
+        self.set_selection_mask(device, queue, document_size, None);
+    }
+
+    // Active strokes and transforms retain the previous mask in their bind groups.
+    pub(crate) fn set_selection_mask(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        document_size: [u32; 2],
+        mask: Option<&SelectionMask>,
+    ) {
+        let (texture, view) = create_selection_texture(device, queue, document_size, mask);
+        self._selection_texture = texture;
+        self.selection_view = view;
+        self.rebuild_stamp_bind_groups(device);
+    }
+
+    fn rebuild_stamp_bind_groups(&mut self, device: &wgpu::Device) {
+        [self.stamp_bind_group, self.preview_stamp_bind_group] = create_stamp_bind_groups(
+            device,
+            &self.stamp_bind_group_layout,
+            &self.brush_sampler,
+            [&self.stamp_buffer, &self.preview_stamp_buffer],
+            &self.stamp_uniform_buffer,
+            StampTextures {
+                brush: &self.brush_texture_view,
+                smudge: &self.empty_tile_view,
+                selection: &self.selection_view,
+            },
+        );
     }
 
     pub(crate) fn create_paint_layer(
@@ -1331,10 +1378,13 @@ impl RenderResources {
             device,
             &self.stamp_bind_group_layout,
             &self.brush_sampler,
-            &self.brush_texture_view,
             &self.stamp_buffer,
             &self.stamp_uniform_buffer,
-            &view,
+            StampTextures {
+                brush: &self.brush_texture_view,
+                smudge: &view,
+                selection: &self.selection_view,
+            },
         );
         self.smudge_snapshot.insert(SmudgeSnapshot {
             texture,
@@ -1359,15 +1409,6 @@ impl RenderResources {
         brush_stamp: &image::RgbaImage,
     ) -> Result<(), String> {
         let (brush_texture, brush_texture_view) = create_brush_texture(device, queue, brush_stamp);
-        let [stamp_bind_group, preview_stamp_bind_group] = create_stamp_bind_groups(
-            device,
-            &self.stamp_bind_group_layout,
-            &self.brush_sampler,
-            &brush_texture_view,
-            [&self.stamp_buffer, &self.preview_stamp_buffer],
-            &self.stamp_uniform_buffer,
-            &self.empty_tile_view,
-        );
         let cursor_bind_group = create_cursor_bind_group(
             device,
             &self.cursor_bind_group_layout,
@@ -1378,35 +1419,42 @@ impl RenderResources {
         );
         self.brush_texture = brush_texture;
         self.brush_texture_view = brush_texture_view;
-        self.stamp_bind_group = stamp_bind_group;
-        self.preview_stamp_bind_group = preview_stamp_bind_group;
         self.cursor_bind_group = cursor_bind_group;
+        self.rebuild_stamp_bind_groups(device);
         Ok(())
     }
+}
+
+#[derive(Clone, Copy)]
+struct StampTextures<'a> {
+    brush: &'a wgpu::TextureView,
+    smudge: &'a wgpu::TextureView,
+    selection: &'a wgpu::TextureView,
 }
 
 fn create_stamp_bind_groups(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
-    brush: &wgpu::TextureView,
     stamp_buffers: [&wgpu::Buffer; 2],
     uniform: &wgpu::Buffer,
-    smudge: &wgpu::TextureView,
+    textures: StampTextures,
 ) -> [wgpu::BindGroup; 2] {
-    stamp_buffers.map(|stamps| {
-        create_stamp_bind_group(device, layout, sampler, brush, stamps, uniform, smudge)
-    })
+    stamp_buffers
+        .map(|stamps| create_stamp_bind_group(device, layout, sampler, stamps, uniform, textures))
 }
 
 fn create_stamp_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
-    brush: &wgpu::TextureView,
     stamps: &wgpu::Buffer,
     uniform: &wgpu::Buffer,
-    smudge: &wgpu::TextureView,
+    StampTextures {
+        brush,
+        smudge,
+        selection,
+    }: StampTextures,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("stamp bind group"),
@@ -1431,6 +1479,10 @@ fn create_stamp_bind_group(
             wgpu::BindGroupEntry {
                 binding: 4,
                 resource: wgpu::BindingResource::TextureView(smudge),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: wgpu::BindingResource::TextureView(selection),
             },
         ],
     })
@@ -1680,6 +1732,71 @@ fn create_stroke_mask_texture(
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
+}
+
+fn create_selection_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    document_size: [u32; 2],
+    mask: Option<&SelectionMask>,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let size = if mask.is_some() {
+        document_size
+    } else {
+        [1, 1]
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("selection mask texture"),
+        size: wgpu::Extent3d {
+            width: size[0],
+            height: size[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: STROKE_MASK_FORMAT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    // wgpu zero-initializes the texture, so only the mask's bounds are uploaded.
+    let (rect, data) = match mask {
+        Some(mask) => (mask.rect, mask.coverage.as_slice()),
+        None => (
+            super::history::TextureRect {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+            &[u8::MAX][..],
+        ),
+    };
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d {
+                x: rect.x,
+                y: rect.y,
+                z: 0,
+            },
+            aspect: wgpu::TextureAspect::All,
+        },
+        data,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(rect.width),
+            rows_per_image: Some(rect.height),
+        },
+        wgpu::Extent3d {
+            width: rect.width,
+            height: rect.height,
+            depth_or_array_layers: 1,
+        },
+    );
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
 }

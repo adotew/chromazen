@@ -35,6 +35,8 @@ pub(super) enum EditorCommand {
     SetLayerTransform(LayerTransform),
     ApplyLayerTransform,
     CancelLayerTransform,
+    ClearSelection,
+    CancelSelection,
     SelectLayer(LayerId),
     AddLayer,
     DuplicateSelectedLayer,
