@@ -25,7 +25,7 @@ use winit::{
     application::ApplicationHandler,
     event::{ElementState, MouseButton, StartCause, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
-    window::{CursorIcon, Theme, Window, WindowAttributes},
+    window::{Theme, Window, WindowAttributes},
 };
 
 use self::{

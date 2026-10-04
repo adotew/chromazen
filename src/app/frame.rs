@@ -281,6 +281,8 @@ impl App {
         let is_rotating_canvas = self.input.is_rotating_canvas();
         let is_pan_modifier_active = self.input.is_pan_modifier_active();
         let is_eyedropper_active = self.input.is_eyedropper_active();
+        let is_selecting =
+            self.screen == AppScreen::Editor && self.input.tool() == EditorTool::Select;
         let brush_pressure = self.pressure_state.brush_pressure();
         let gpu = self.gpu.as_ref()?;
         let paint = self.paint.as_mut()?;
@@ -306,15 +308,19 @@ impl App {
                 })
         });
         let repaint_delay = ui::repaint_delay(&full_output);
+        // Overrides go through egui so its cached cursor stays in sync with the window.
+        let cursor_icon = &mut full_output.platform_output.cursor_icon;
+        if reference_resize_active {
+            *cursor_icon = egui::CursorIcon::ResizeNwSe;
+        } else if reference_drag_active || is_panning || is_rotating_canvas {
+            *cursor_icon = egui::CursorIcon::Grabbing;
+        } else if is_pan_modifier_active && (!pointer_over_ui || pointer_over_reference) {
+            *cursor_icon = egui::CursorIcon::Grab;
+        } else if is_selecting && !pointer_over_ui_or_reference {
+            *cursor_icon = egui::CursorIcon::Crosshair;
+        }
         gui.state
             .handle_platform_output(window, full_output.platform_output);
-        if reference_resize_active {
-            window.set_cursor(CursorIcon::NwseResize);
-        } else if reference_drag_active || is_panning || is_rotating_canvas {
-            window.set_cursor(CursorIcon::Grabbing);
-        } else if is_pan_modifier_active && (!pointer_over_ui || pointer_over_reference) {
-            window.set_cursor(CursorIcon::Grab);
-        }
         let eyedropper_over_canvas = is_eyedropper_active && !pointer_over_ui_or_reference;
         window.set_cursor_visible(
             is_resizing_brush
