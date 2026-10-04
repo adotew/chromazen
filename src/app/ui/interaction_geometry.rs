@@ -118,8 +118,8 @@ pub(super) fn resize_handle_at(
     pointer: egui::Pos2,
     handles: &[(CanvasCropHandle, egui::Pos2); 8],
 ) -> Option<CanvasCropHandle> {
-    const CORNER_HIT_RADIUS: f32 = 28.0;
-    const HANDLE_HIT_RADIUS: f32 = 24.0;
+    const CORNER_HIT_RADIUS: f32 = 10.0;
+    const HANDLE_HIT_RADIUS: f32 = 10.0;
     let nearest = |corner_only: bool, radius: f32| {
         handles
             .iter()
@@ -138,7 +138,7 @@ pub(super) fn resize_edge_at(
     pointer: egui::Pos2,
     handles: &[(CanvasCropHandle, egui::Pos2); 8],
 ) -> Option<CanvasCropHandle> {
-    const EDGE_HIT_RADIUS: f32 = 14.0;
+    const EDGE_HIT_RADIUS: f32 = 5.0;
     [
         (CanvasCropHandle::Top, handles[0].1, handles[2].1),
         (CanvasCropHandle::Right, handles[2].1, handles[4].1),
@@ -154,25 +154,14 @@ pub(super) fn resize_edge_at(
 
 pub(super) fn layer_transform_handle_at(
     pointer: egui::Pos2,
-    corners: [egui::Pos2; 4],
     handles: &[(CanvasCropHandle, egui::Pos2); 8],
     rotation_handle: egui::Pos2,
-) -> Option<LayerTransformHandle> {
+) -> LayerTransformHandle {
     (pointer.distance_sq(rotation_handle) <= 18.0 * 18.0)
         .then_some(LayerTransformHandle::Rotate)
         .or_else(|| resize_handle_at(pointer, handles).map(LayerTransformHandle::Scale))
         .or_else(|| resize_edge_at(pointer, handles).map(LayerTransformHandle::Scale))
-        .or_else(|| point_in_quad(pointer, corners).then_some(LayerTransformHandle::Move))
-}
-
-pub(super) fn point_in_quad(point: egui::Pos2, corners: [egui::Pos2; 4]) -> bool {
-    let crosses = std::array::from_fn::<_, 4, _>(|index| {
-        let start = corners[index];
-        let edge = corners[(index + 1) % 4] - start;
-        let offset = point - start;
-        edge.x * offset.y - edge.y * offset.x
-    });
-    crosses.iter().all(|cross| *cross >= 0.0) || crosses.iter().all(|cross| *cross <= 0.0)
+        .unwrap_or(LayerTransformHandle::Move)
 }
 
 pub(super) fn layer_transform_from_drag(

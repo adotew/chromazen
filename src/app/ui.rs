@@ -1631,7 +1631,7 @@ mod tests {
     }
 
     #[test]
-    fn crop_handles_have_large_targets_and_entire_edges_are_draggable() {
+    fn crop_handles_have_precise_targets_and_entire_edges_are_draggable() {
         let corners = [
             egui::pos2(0.0, 0.0),
             egui::pos2(400.0, 0.0),
@@ -1645,21 +1645,47 @@ mod tests {
         };
 
         assert_eq!(
-            canvas_crop_handle_at(egui::pos2(-18.0, -18.0), [-18.0, -18.0], rect, &handles),
+            canvas_crop_handle_at(egui::pos2(-6.0, -6.0), [-6.0, -6.0], rect, &handles),
             Some(CanvasCropHandle::TopLeft)
         );
         assert_eq!(
-            canvas_crop_handle_at(egui::pos2(200.0, 20.0), [200.0, 20.0], rect, &handles),
+            canvas_crop_handle_at(egui::pos2(200.0, 8.0), [200.0, 8.0], rect, &handles),
             Some(CanvasCropHandle::Top)
         );
         assert_eq!(
-            canvas_crop_handle_at(egui::pos2(100.0, 10.0), [100.0, 10.0], rect, &handles),
+            canvas_crop_handle_at(egui::pos2(100.0, 4.0), [100.0, 4.0], rect, &handles),
             Some(CanvasCropHandle::Top)
+        );
+        assert_eq!(
+            canvas_crop_handle_at(egui::pos2(20.0, 20.0), [20.0, 20.0], rect, &handles),
+            Some(CanvasCropHandle::Move)
         );
         assert_eq!(
             canvas_crop_handle_at(egui::pos2(200.0, 100.0), [200.0, 100.0], rect, &handles),
             Some(CanvasCropHandle::Move)
         );
+    }
+
+    #[test]
+    fn small_transform_box_stays_movable_inside_and_outside() {
+        let corners = [
+            egui::pos2(100.0, 100.0),
+            egui::pos2(124.0, 100.0),
+            egui::pos2(124.0, 124.0),
+            egui::pos2(100.0, 124.0),
+        ];
+        let handles = canvas_crop_handle_positions(corners);
+        let rotation_handle = layer_rotation_handle(corners);
+        let handle_at =
+            |x, y| layer_transform_handle_at(egui::pos2(x, y), &handles, rotation_handle);
+
+        assert_eq!(handle_at(112.0, 112.0), LayerTransformHandle::Move);
+        assert_eq!(handle_at(300.0, 300.0), LayerTransformHandle::Move);
+        assert_eq!(
+            handle_at(98.0, 98.0),
+            LayerTransformHandle::Scale(CanvasCropHandle::TopLeft)
+        );
+        assert_eq!(handle_at(112.0, 64.0), LayerTransformHandle::Rotate);
     }
 
     #[test]

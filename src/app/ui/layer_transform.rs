@@ -20,16 +20,22 @@ impl GuiLayer {
         let handles = canvas_crop_handle_positions(corners);
         let rotation_handle = layer_rotation_handle(corners);
         let pointer = context.pointer_latest_pos();
-        let hovered_handle = pointer.and_then(|pointer| {
-            layer_transform_handle_at(pointer, corners, &handles, rotation_handle)
-        });
+        let hovered_handle = pointer
+            .filter(|pointer| workspace_rect.contains(*pointer))
+            .map(|pointer| layer_transform_handle_at(pointer, &handles, rotation_handle));
         let cursor_handle = self
             .layer_transform_drag
             .map(|drag| drag.handle)
             .or(hovered_handle);
-        let (panning, preserve_aspect) =
-            context.input(|input| (input.key_down(egui::Key::Space), input.modifiers.shift));
-        let interaction_rect = if panning {
+        let (canvas_gesture, preserve_aspect) = context.input(|input| {
+            (
+                input.key_down(egui::Key::Space)
+                    || input.key_down(egui::Key::R)
+                    || input.modifiers.alt,
+                input.modifiers.shift,
+            )
+        });
+        let interaction_rect = if canvas_gesture {
             egui::Rect::NOTHING
         } else if self.layer_transform_drag.is_some() {
             workspace_rect
