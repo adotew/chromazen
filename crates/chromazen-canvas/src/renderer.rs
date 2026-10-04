@@ -202,7 +202,7 @@ impl LayerTransform {
     const MIN_SCALE: f32 = 0.01;
     const MAX_SCALE: f32 = 100.0;
 
-    fn normalized(mut self) -> Option<Self> {
+    pub fn normalized(mut self) -> Option<Self> {
         if self
             .translation
             .into_iter()

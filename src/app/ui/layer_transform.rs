@@ -49,6 +49,39 @@ impl GuiLayer {
             ui.id().with("layer transform interaction"),
             egui::Sense::click_and_drag(),
         );
+        let response = if let Some(handle) = cursor_handle {
+            response.on_hover_cursor(layer_transform_cursor(handle))
+        } else {
+            response
+        };
+
+        if response.drag_started()
+            && let (Some(pointer), Some(handle)) = (pointer, hovered_handle)
+        {
+            self.layer_transform_drag = Some(LayerTransformDrag {
+                handle,
+                start_transform: transform,
+                start_pointer: pointer_document_position(pointer, view, pixels_per_point),
+            });
+        }
+        let mut painted_transform = transform;
+        if response.dragged()
+            && let (Some(pointer), Some(drag)) = (pointer, self.layer_transform_drag)
+        {
+            let pointer = pointer_document_position(pointer, view, pixels_per_point);
+            let next = layer_transform_from_drag(drag, pointer, bounds, preserve_aspect);
+            painted_transform = next.normalized().unwrap_or(transform);
+            self.commands
+                .push(AppCommand::Editor(EditorCommand::SetLayerTransform(next)));
+        }
+        if response.drag_stopped() {
+            self.layer_transform_drag = None;
+        }
+
+        let corners =
+            layer_transform_screen_corners(bounds, painted_transform, view, pixels_per_point);
+        let handles = canvas_crop_handle_positions(corners);
+        let rotation_handle = layer_rotation_handle(corners);
         let painter = ui.painter().with_clip_rect(workspace_rect);
         painter.add(egui::Shape::closed_line(
             corners.to_vec(),
@@ -73,32 +106,5 @@ impl GuiLayer {
             egui::FontId::proportional(14.0),
             egui::Color32::WHITE,
         );
-        let response = if let Some(handle) = cursor_handle {
-            response.on_hover_cursor(layer_transform_cursor(handle))
-        } else {
-            response
-        };
-
-        if response.drag_started()
-            && let (Some(pointer), Some(handle)) = (pointer, hovered_handle)
-        {
-            self.layer_transform_drag = Some(LayerTransformDrag {
-                handle,
-                start_transform: transform,
-                start_pointer: pointer_document_position(pointer, view, pixels_per_point),
-            });
-        }
-        if response.dragged()
-            && let (Some(pointer), Some(drag)) = (pointer, self.layer_transform_drag)
-        {
-            let pointer = pointer_document_position(pointer, view, pixels_per_point);
-            self.commands
-                .push(AppCommand::Editor(EditorCommand::SetLayerTransform(
-                    layer_transform_from_drag(drag, pointer, bounds, preserve_aspect),
-                )));
-        }
-        if response.drag_stopped() {
-            self.layer_transform_drag = None;
-        }
     }
 }
