@@ -1,0 +1,10 @@
+[package]
+name = "chromazen-brush"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+chromazen-canvas = { path = "../chromazen-canvas" }
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1.0.228", features = ["derive"] }

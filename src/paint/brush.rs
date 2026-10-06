@@ -1,3 +1,4 @@
+use chromazen_brush::PressureConfig;
 use chromazen_canvas::{BrushSpacing, StrokePoint};
 use egui::Color32;
 
@@ -6,20 +7,8 @@ pub struct BrushSettings {
     pub color: Color32,
     pub size: f32,
     pub opacity: f32,
-    pub pressure: PressureSettings,
+    pub pressure: PressureConfig,
     pub spacing: BrushSpacing,
-}
-
-impl Default for BrushSettings {
-    fn default() -> Self {
-        Self {
-            color: Color32::from_rgb(170, 187, 204),
-            size: 300.0,
-            opacity: 1.0,
-            pressure: PressureSettings::default(),
-            spacing: BrushSpacing::default(),
-        }
-    }
 }
 
 impl BrushSettings {
@@ -28,47 +17,13 @@ impl BrushSettings {
     }
 
     pub fn radius(self, pressure: f32) -> f32 {
-        pressure_radius(self.size, pressure, self.pressure)
+        self.pressure.radius(self.size, pressure)
     }
 
     pub fn stroke_point(self, document_point: [f32; 2], pressure: f32) -> StrokePoint {
-        StrokePoint {
-            x: document_point[0],
-            y: document_point[1],
-            radius: self.radius(pressure),
-            opacity: pressure_opacity(pressure, self.pressure),
-        }
+        self.pressure
+            .stroke_point(document_point, self.size, pressure)
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct PressureSettings {
-    pub(crate) min_size: f32,
-    pub(crate) min_opacity: f32,
-    pub(crate) full_opacity_pressure: f32,
-    pub(crate) opacity_gamma: f32,
-}
-
-impl Default for PressureSettings {
-    fn default() -> Self {
-        Self {
-            min_size: 0.45,
-            min_opacity: 0.08,
-            full_opacity_pressure: 0.8,
-            opacity_gamma: 1.35,
-        }
-    }
-}
-
-fn pressure_radius(brush_size: f32, pressure: f32, settings: PressureSettings) -> f32 {
-    let pressure = pressure.clamp(0.0, 1.0);
-    let pressure_scale = settings.min_size + (1.0 - settings.min_size) * pressure;
-    brush_size * pressure_scale * 0.5
-}
-
-fn pressure_opacity(pressure: f32, settings: PressureSettings) -> f32 {
-    let pressure = (pressure.clamp(0.0, 1.0) / settings.full_opacity_pressure).min(1.0);
-    settings.min_opacity + (1.0 - settings.min_opacity) * pressure.powf(settings.opacity_gamma)
 }
 
 pub fn color32_to_rgba(color: Color32) -> [f32; 4] {
@@ -78,44 +33,4 @@ pub fn color32_to_rgba(color: Color32) -> [f32; 4] {
         color.b() as f32 / 255.0,
         1.0,
     ]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pressure_changes_radius_with_minimum_floor() {
-        let brush = BrushSettings {
-            size: 100.0,
-            ..BrushSettings::default()
-        };
-        assert_eq!(brush.radius(0.0), 22.5);
-        assert_eq!(brush.radius(1.0), 50.0);
-    }
-
-    #[test]
-    fn stroke_point_contains_pressure_opacity() {
-        let brush = BrushSettings::default();
-
-        assert_eq!(brush.stroke_point([0.0, 0.0], 1.0).opacity, 1.0);
-        assert_eq!(
-            brush.stroke_point([0.0, 0.0], 0.0).opacity,
-            brush.pressure.min_opacity
-        );
-    }
-
-    #[test]
-    fn pressure_uses_runtime_configuration() {
-        let settings = PressureSettings {
-            min_size: 0.2,
-            min_opacity: 0.4,
-            full_opacity_pressure: 0.8,
-            opacity_gamma: 2.0,
-        };
-
-        assert_eq!(pressure_radius(100.0, 0.0, settings), 10.0);
-        assert_eq!(pressure_opacity(0.0, settings), 0.4);
-        assert_eq!(pressure_opacity(0.8, settings), 1.0);
-    }
 }

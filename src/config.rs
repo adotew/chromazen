@@ -6,19 +6,17 @@ use std::{
 };
 
 use atomic_write_file::AtomicWriteFile;
-use brush::{
-    BRISTLE_ID, DEFAULT_BRUSH_ID, RECTANGLE_ID, ROUNDED_ID, SKETCH_ID, discover_user_brushes,
-    load_user_brush,
-};
+use brush::{discover_user_brushes, load_user_brush};
+use chromazen_brush::{BrushError, DEFAULT_BRUSH_ID};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::paint::PaintTool;
-mod abr;
 mod brush;
 mod brush_import;
 
-pub(crate) use brush::{BrushCatalog, BrushSummary, LoadedBrushPreset};
+pub(crate) use brush::{BrushCatalog, BrushSummary};
+pub(crate) use chromazen_brush::LoadedBrushPreset;
 
 const APP_NAME: &str = "Chromazen";
 const CONFIG_FILE_NAME: &str = "config.toml";
@@ -254,15 +252,10 @@ impl ConfigStore {
 
     pub(crate) fn load_brush(&self, id: &str) -> Result<LoadedBrushPreset, ConfigError> {
         let config_path = self.brushes_path().join(id).join("brush.toml");
-        if !config_path.exists() {
-            match id {
-                DEFAULT_BRUSH_ID => return Ok(LoadedBrushPreset::bundled_charcoal()),
-                SKETCH_ID => return Ok(LoadedBrushPreset::bundled_sketch()),
-                ROUNDED_ID => return Ok(LoadedBrushPreset::bundled_rounded()),
-                RECTANGLE_ID => return Ok(LoadedBrushPreset::bundled_rectangle()),
-                BRISTLE_ID => return Ok(LoadedBrushPreset::bundled_bristle()),
-                _ => {}
-            }
+        if !config_path.exists()
+            && let Some(brush) = LoadedBrushPreset::bundled(id)
+        {
+            return Ok(brush);
         }
         load_user_brush(&self.brushes_path(), id)
     }
@@ -350,6 +343,12 @@ impl fmt::Display for ConfigError {
 }
 
 impl Error for ConfigError {}
+
+impl From<BrushError> for ConfigError {
+    fn from(error: BrushError) -> Self {
+        Self::new(error.to_string())
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -578,29 +577,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["charcoal", "sketch", "rounded", "rectangle", "bristle"]
         );
-    }
-
-    #[test]
-    fn subpixel_minimum_brush_spacing_has_a_safe_floor() {
-        let mut preset = brush::BrushPreset::default();
-        preset.spacing.minimum = 0.5;
-        preset.validate().expect("half-pixel spacing");
-
-        preset.spacing.minimum = 0.24;
-        let error = preset.validate().expect_err("spacing below safe floor");
-        assert!(error.to_string().contains("spacing.minimum"));
-    }
-
-    #[test]
-    fn full_opacity_pressure_must_be_positive_and_at_most_one() {
-        for pressure in [0.0, 1.1] {
-            let mut preset = brush::BrushPreset::default();
-            preset.pressure.full_opacity_pressure = pressure;
-
-            let error = preset.validate().expect_err("invalid pressure threshold");
-
-            assert!(error.to_string().contains("pressure.full_opacity_pressure"));
-        }
     }
 
     #[test]

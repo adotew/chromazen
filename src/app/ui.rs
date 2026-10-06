@@ -36,7 +36,7 @@ use crate::{
         WorkspaceBackground,
     },
     gpu::GpuContext,
-    paint::{BrushSettings, BrushSpacing, PaintTool, PressureSettings},
+    paint::{BrushSettings, PaintTool},
 };
 
 #[cfg(not(target_os = "macos"))]
@@ -724,16 +724,8 @@ impl GuiLayer {
         }
         self.brush.size = self.tool_sizes[index];
         self.brush.opacity = self.tool_opacities[index];
-        self.brush.pressure = PressureSettings {
-            min_size: preset.pressure.min_size,
-            min_opacity: preset.pressure.min_opacity,
-            full_opacity_pressure: preset.pressure.full_opacity_pressure,
-            opacity_gamma: preset.pressure.opacity_gamma,
-        };
-        self.brush.spacing = BrushSpacing {
-            ratio: preset.spacing.ratio,
-            minimum: preset.spacing.minimum,
-        };
+        self.brush.pressure = preset.pressure;
+        self.brush.spacing = preset.spacing.into();
     }
 
     pub(crate) fn apply_reloaded_settings(&mut self, config: &AppConfig, active_tool: PaintTool) {
@@ -1528,16 +1520,8 @@ fn brush_settings_from_config(
         color: brush_color(config),
         size: config.size.clamp(preset.size.min, preset.size.max),
         opacity: config.opacity,
-        pressure: PressureSettings {
-            min_size: preset.pressure.min_size,
-            min_opacity: preset.pressure.min_opacity,
-            full_opacity_pressure: preset.pressure.full_opacity_pressure,
-            opacity_gamma: preset.pressure.opacity_gamma,
-        },
-        spacing: BrushSpacing {
-            ratio: preset.spacing.ratio,
-            minimum: preset.spacing.minimum,
-        },
+        pressure: preset.pressure,
+        spacing: preset.spacing.into(),
     }
 }
 

@@ -1,13 +1,12 @@
 use std::{collections::HashSet, fs, path::Path};
 
+use chromazen_brush::{
+    AbrBrush, BrushPreset, PressureConfig, SizeConfig, SpacingConfig, parse_abr,
+};
 use image::{GrayImage, Rgba, RgbaImage, imageops::FilterType};
 use uuid::Uuid;
 
-use super::{
-    ConfigError, ConfigStore,
-    abr::{AbrBrush, parse_abr},
-    brush::{BrushPreset, PressureConfig, SizeConfig, SpacingConfig},
-};
+use super::{ConfigError, ConfigStore};
 
 const MAX_ABR_FILE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_IMPORTED_STAMP_DIMENSION: u32 = 4_096;

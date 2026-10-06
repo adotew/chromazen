@@ -6,6 +6,7 @@ export class WebCanvas {
     free(): void;
     [Symbol.dispose](): void;
     beginStroke(x: number, y: number, pressure: number, time_ms: number): boolean;
+    static brushes(): any;
     clear(): boolean;
     static create(element: HTMLCanvasElement, width: number, height: number, scale: number, dark_mode: boolean): Promise<WebCanvas>;
     endStroke(): boolean;
@@ -16,6 +17,7 @@ export class WebCanvas {
     render(): boolean;
     resize(width: number, height: number, scale: number): void;
     saveDocument(): Promise<any>;
+    setBrush(id: string): void;
     setBrushSize(size: number): void;
     setColor(red: number, green: number, blue: number): void;
     setTool(tool: number): void;
@@ -30,6 +32,7 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_webcanvas_free: (a: number, b: number) => void;
     readonly webcanvas_beginStroke: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly webcanvas_brushes: () => [number, number, number];
     readonly webcanvas_clear: (a: number) => number;
     readonly webcanvas_create: (a: any, b: number, c: number, d: number, e: number) => any;
     readonly webcanvas_endStroke: (a: number) => number;
@@ -40,6 +43,7 @@ export interface InitOutput {
     readonly webcanvas_render: (a: number) => number;
     readonly webcanvas_resize: (a: number, b: number, c: number, d: number) => void;
     readonly webcanvas_saveDocument: (a: number) => [number, number, number];
+    readonly webcanvas_setBrush: (a: number, b: number, c: number) => [number, number];
     readonly webcanvas_setBrushSize: (a: number, b: number) => void;
     readonly webcanvas_setColor: (a: number, b: number, c: number, d: number) => void;
     readonly webcanvas_setTool: (a: number, b: number) => [number, number];
@@ -48,7 +52,7 @@ export interface InitOutput {
     readonly webcanvas_zoomAt: (a: number, b: number, c: number, d: number) => number;
     readonly wasm_bindgen__convert__closures_____invoke__h3c9d997bc3177e87: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen__convert__closures_____invoke__h44b72ec416254d87: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h5b4127e1602774fb: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h8d9ff7081932d866: (a: number, b: number, c: any) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

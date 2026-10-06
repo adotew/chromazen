@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/chromazen-canvas", "crates/chromazen-web"]
-default-members = [".", "crates/chromazen-canvas"]
+members = ["crates/chromazen-brush", "crates/chromazen-canvas", "crates/chromazen-web"]
+default-members = [".", "crates/chromazen-brush", "crates/chromazen-canvas"]
 resolver = "3"
 
 [package]
@@ -10,6 +10,7 @@ edition = "2024"
 
 [dependencies]
 atomic-write-file = "0.3.0"
+chromazen-brush = { path = "crates/chromazen-brush" }
 chromazen-canvas = { path = "crates/chromazen-canvas" }
 directories = "6.0.0"
 egui = "0.34.1"

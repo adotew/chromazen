@@ -4,226 +4,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use chromazen_brush::{
+    BUNDLED_BRUSH_IDS, BrushPreset, LoadedBrushPreset, MAX_STAMP_DIMENSION, PressureConfig,
+    SizeConfig, SpacingConfig, bundled_preset, bundled_stamp,
+};
 use image::{ImageFormat, ImageReader, Limits, RgbaImage};
-use serde::{Deserialize, Serialize};
 
 use super::ConfigError;
-
-pub(crate) const DEFAULT_BRUSH_ID: &str = "charcoal";
-pub(crate) const SKETCH_ID: &str = "sketch";
-pub(crate) const ROUNDED_ID: &str = "rounded";
-pub(crate) const RECTANGLE_ID: &str = "rectangle";
-pub(crate) const BRISTLE_ID: &str = "bristle";
-const BRUSH_SCHEMA_VERSION: u32 = 1;
-const MAX_STAMP_DIMENSION: u32 = 4096;
-const MIN_BRUSH_SPACING: f32 = 0.25;
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub(crate) struct BrushPreset {
-    pub(crate) schema_version: u32,
-    pub(crate) name: String,
-    pub(crate) stamp: String,
-    pub(crate) size: SizeConfig,
-    pub(crate) spacing: SpacingConfig,
-    pub(crate) pressure: PressureConfig,
-}
-
-impl Default for BrushPreset {
-    fn default() -> Self {
-        Self {
-            schema_version: BRUSH_SCHEMA_VERSION,
-            name: "Charcoal".to_owned(),
-            stamp: "stamp.png".to_owned(),
-            size: SizeConfig::default(),
-            spacing: SpacingConfig::default(),
-            pressure: PressureConfig::default(),
-        }
-    }
-}
-
-impl BrushPreset {
-    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
-        if self.schema_version != BRUSH_SCHEMA_VERSION {
-            return Err(ConfigError::new(format!(
-                "unsupported brush schema_version {}; expected {BRUSH_SCHEMA_VERSION}",
-                self.schema_version
-            )));
-        }
-        if self.name.trim().is_empty() {
-            return Err(ConfigError::new("brush name must not be empty"));
-        }
-        validate_finite_positive("size.min", self.size.min)?;
-        validate_finite_positive("size.max", self.size.max)?;
-        validate_finite_positive("size.default", self.size.default)?;
-        if self.size.max < self.size.min {
-            return Err(ConfigError::new(
-                "size.max must be greater than or equal to size.min",
-            ));
-        }
-        if !(self.size.min..=self.size.max).contains(&self.size.default) {
-            return Err(ConfigError::new(
-                "size.default must be between size.min and size.max",
-            ));
-        }
-        validate_finite_non_negative("spacing.ratio", self.spacing.ratio)?;
-        validate_finite_at_least("spacing.minimum", self.spacing.minimum, MIN_BRUSH_SPACING)?;
-        validate_unit("pressure.min_size", self.pressure.min_size)?;
-        validate_unit("pressure.min_opacity", self.pressure.min_opacity)?;
-        validate_finite_positive(
-            "pressure.full_opacity_pressure",
-            self.pressure.full_opacity_pressure,
-        )?;
-        validate_unit(
-            "pressure.full_opacity_pressure",
-            self.pressure.full_opacity_pressure,
-        )?;
-        validate_finite_positive("pressure.opacity_gamma", self.pressure.opacity_gamma)?;
-        validate_stamp_path(&self.stamp)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub(crate) struct SizeConfig {
-    pub(crate) default: f32,
-    pub(crate) min: f32,
-    pub(crate) max: f32,
-}
-
-impl Default for SizeConfig {
-    fn default() -> Self {
-        Self {
-            default: 300.0,
-            min: 1.0,
-            max: 2000.0,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub(crate) struct SpacingConfig {
-    pub(crate) ratio: f32,
-    pub(crate) minimum: f32,
-}
-
-impl Default for SpacingConfig {
-    fn default() -> Self {
-        Self {
-            ratio: 0.03,
-            minimum: 1.0,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub(crate) struct PressureConfig {
-    pub(crate) min_size: f32,
-    pub(crate) min_opacity: f32,
-    pub(crate) full_opacity_pressure: f32,
-    pub(crate) opacity_gamma: f32,
-}
-
-impl Default for PressureConfig {
-    fn default() -> Self {
-        Self {
-            min_size: 0.3,
-            min_opacity: 0.01,
-            full_opacity_pressure: 0.9,
-            opacity_gamma: 2.0,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct LoadedBrushPreset {
-    pub(crate) id: String,
-    pub(crate) preset: BrushPreset,
-    pub(crate) stamp_image: RgbaImage,
-}
-
-impl LoadedBrushPreset {
-    pub(crate) fn bundled_charcoal() -> Self {
-        Self {
-            id: DEFAULT_BRUSH_ID.to_owned(),
-            preset: BrushPreset::default(),
-            stamp_image: load_bundled_stamp(DEFAULT_BRUSH_ID)
-                .expect("bundled brush stamp is valid"),
-        }
-    }
-
-    pub(crate) fn bundled_sketch() -> Self {
-        Self {
-            id: SKETCH_ID.to_owned(),
-            preset: BrushPreset {
-                name: "Sketch".to_owned(),
-                size: SizeConfig {
-                    default: 18.0,
-                    min: 1.0,
-                    max: 200.0,
-                },
-                spacing: SpacingConfig {
-                    ratio: 0.08,
-                    minimum: 1.0,
-                },
-                pressure: PressureConfig {
-                    min_size: 0.25,
-                    min_opacity: 0.01,
-                    full_opacity_pressure: 1.0,
-                    opacity_gamma: 10.0,
-                },
-                ..BrushPreset::default()
-            },
-            stamp_image: load_bundled_stamp(SKETCH_ID).expect("bundled brush stamp is valid"),
-        }
-    }
-
-    pub(crate) fn bundled_rounded() -> Self {
-        Self::bundled_stamp(ROUNDED_ID, "Rounded", 60.0, 0.001)
-    }
-
-    pub(crate) fn bundled_rectangle() -> Self {
-        Self::bundled_stamp(RECTANGLE_ID, "Rectangle", 80.0, 0.001)
-    }
-
-    pub(crate) fn bundled_bristle() -> Self {
-        Self::bundled_stamp(BRISTLE_ID, "Bristle", 500.0, 0.03)
-    }
-
-    fn bundled_stamp(id: &str, name: &str, default_size: f32, spacing: f32) -> Self {
-        Self {
-            id: id.to_owned(),
-            preset: BrushPreset {
-                name: name.to_owned(),
-                stamp: format!("{id}.png"),
-                size: SizeConfig {
-                    default: default_size,
-                    ..SizeConfig::default()
-                },
-                spacing: SpacingConfig {
-                    ratio: spacing,
-                    minimum: 0.5,
-                },
-                ..BrushPreset::default()
-            },
-            stamp_image: load_bundled_stamp(id).expect("bundled brush stamp is valid"),
-        }
-    }
-}
-
-fn load_bundled_stamp(id: &str) -> Result<RgbaImage, ConfigError> {
-    let bytes: &[u8] = match id {
-        ROUNDED_ID => include_bytes!("../../assets/stamps/rounded.png"),
-        RECTANGLE_ID => include_bytes!("../../assets/stamps/rectangle.png"),
-        BRISTLE_ID => include_bytes!("../../assets/stamps/bristle.png"),
-        _ => include_bytes!("../../assets/stamps/charcoal.png"),
-    };
-    image::load_from_memory(bytes)
-        .map(image::DynamicImage::into_rgba8)
-        .map_err(|error| ConfigError::new(format!("failed to decode bundled brush: {error}")))
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct BrushSummary {
@@ -258,7 +45,7 @@ impl BrushSummary {
         if let Some(path) = &self.preview.stamp_path {
             return decode_stamp(path);
         }
-        load_bundled_stamp(&self.id)
+        Ok(bundled_stamp(&self.id)?)
     }
 }
 
@@ -270,29 +57,13 @@ pub(crate) struct BrushCatalog {
 impl Default for BrushCatalog {
     fn default() -> Self {
         Self {
-            brushes: vec![
-                BrushSummary::new(DEFAULT_BRUSH_ID.to_owned(), BrushPreset::default(), None),
-                BrushSummary::new(
-                    SKETCH_ID.to_owned(),
-                    LoadedBrushPreset::bundled_sketch().preset,
-                    None,
-                ),
-                BrushSummary::new(
-                    ROUNDED_ID.to_owned(),
-                    LoadedBrushPreset::bundled_rounded().preset,
-                    None,
-                ),
-                BrushSummary::new(
-                    RECTANGLE_ID.to_owned(),
-                    LoadedBrushPreset::bundled_rectangle().preset,
-                    None,
-                ),
-                BrushSummary::new(
-                    BRISTLE_ID.to_owned(),
-                    LoadedBrushPreset::bundled_bristle().preset,
-                    None,
-                ),
-            ],
+            brushes: BUNDLED_BRUSH_IDS
+                .into_iter()
+                .filter_map(|id| {
+                    let preset = bundled_preset(id)?;
+                    Some(BrushSummary::new(id.to_owned(), preset, None))
+                })
+                .collect(),
             warnings: Vec::new(),
         }
     }
@@ -444,60 +215,6 @@ fn validate_brush_id(id: &str) -> Result<(), ConfigError> {
         || components.next().is_some()
     {
         return Err(ConfigError::new(format!("invalid brush ID {id:?}")));
-    }
-    Ok(())
-}
-
-fn validate_stamp_path(stamp: &str) -> Result<(), ConfigError> {
-    let path = Path::new(stamp);
-    if stamp.trim().is_empty()
-        || path.is_absolute()
-        || path.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::ParentDir
-                    | std::path::Component::RootDir
-                    | std::path::Component::Prefix(_)
-            )
-        })
-    {
-        return Err(ConfigError::new(
-            "stamp must be a relative path inside the brush directory",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_finite_positive(field: &str, value: f32) -> Result<(), ConfigError> {
-    if !value.is_finite() || value <= 0.0 {
-        return Err(ConfigError::new(format!(
-            "{field} must be finite and greater than zero"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_finite_non_negative(field: &str, value: f32) -> Result<(), ConfigError> {
-    if !value.is_finite() || value < 0.0 {
-        return Err(ConfigError::new(format!(
-            "{field} must be finite and non-negative"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_finite_at_least(field: &str, value: f32, minimum: f32) -> Result<(), ConfigError> {
-    if !value.is_finite() || value < minimum {
-        return Err(ConfigError::new(format!(
-            "{field} must be finite and at least {minimum}"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_unit(field: &str, value: f32) -> Result<(), ConfigError> {
-    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
-        return Err(ConfigError::new(format!("{field} must be between 0 and 1")));
     }
     Ok(())
 }

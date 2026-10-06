@@ -33,6 +33,8 @@
   let lastPressure = 1
   type Tool = 'brush' | 'eraser' | 'smudge'
   const toolIds: Record<Tool, number> = { brush: 0, eraser: 1, smudge: 2 }
+  type BrushInfo = { id: string; name: string; sizeMin: number; sizeMax: number; sizeDefault: number }
+  const brushStorageKey = 'chromazen.brush'
 
   let loading = $state(true)
   let error = $state('')
@@ -42,7 +44,10 @@
   let manualSaving = $state(false)
   let manualSaved = $state(false)
   let tool = $state<Tool>('brush')
-  let brushSize = $state(500)
+  let brushes = $state<BrushInfo[]>([])
+  let brushId = $state('')
+  let brushSize = $state(300)
+  let activeBrush = $derived(brushes.find((brush) => brush.id === brushId))
   let color = $state('#1d4ed8')
   let createdAt = Date.now()
   let mounted = false
@@ -91,7 +96,8 @@
         }
         renderer = created as Renderer
         renderer.setWorkspaceDarkMode(darkMode.matches)
-        renderer.setBrushSize(brushSize)
+        brushes = wasm.WebCanvas.brushes() as BrushInfo[]
+        selectBrush(localStorage.getItem(brushStorageKey) ?? brushes[0]?.id ?? '')
         let isNew = false
         try {
           const artwork = await getArtwork(data.id)
@@ -299,6 +305,16 @@
     requestFrame()
   }
 
+  function selectBrush(id: string) {
+    const brush = brushes.find((candidate) => candidate.id === id) ?? brushes[0]
+    if (!renderer || !brush) return
+    renderer.setBrush(brush.id)
+    brushId = brush.id
+    brushSize = brush.sizeDefault
+    localStorage.setItem(brushStorageKey, brush.id)
+    requestFrame()
+  }
+
   function resizeBrush() {
     renderer?.setBrushSize(brushSize)
   }
@@ -380,6 +396,17 @@
         </button>
       </div>
 
+      <select
+        class="h-8 -translate-y-0.5 cursor-pointer rounded-[0.35rem] border-0 bg-transparent px-1 text-xs text-[#c7c4bc] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+        aria-label="Brush preset"
+        value={brushId}
+        onchange={(event) => selectBrush(event.currentTarget.value)}
+      >
+        {#each brushes as brush (brush.id)}
+          <option value={brush.id}>{brush.name}</option>
+        {/each}
+      </select>
+
       <label
         class="grid size-8 -translate-y-0.5 place-items-center overflow-hidden rounded-full border border-white/[0.18]"
         aria-label="Brush color"
@@ -403,8 +430,8 @@
       <input
         class="h-32 w-6 accent-foreground [direction:rtl] [writing-mode:vertical-lr]"
         type="range"
-        min="2"
-        max="2000"
+        min={activeBrush?.sizeMin ?? 1}
+        max={activeBrush?.sizeMax ?? 2000}
         step="1"
         bind:value={brushSize}
         oninput={resizeBrush}

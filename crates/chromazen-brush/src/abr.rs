@@ -6,24 +6,24 @@ const MAX_BRUSH_PIXELS: usize = 64 * 1024 * 1024;
 const MAX_TOTAL_BRUSH_PIXELS: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct AbrBrush {
-    pub(crate) name: Option<String>,
-    pub(crate) width: u32,
-    pub(crate) height: u32,
+pub struct AbrBrush {
+    pub name: Option<String>,
+    pub width: u32,
+    pub height: u32,
     /// One byte of coverage per pixel, from transparent (0) to opaque (255).
-    pub(crate) mask: Vec<u8>,
+    pub mask: Vec<u8>,
     /// ABR spacing is stored as a percentage of the brush diameter.
-    pub(crate) spacing_percent: Option<f32>,
+    pub spacing_percent: Option<f32>,
 }
 
 #[derive(Debug, Default, PartialEq)]
-pub(crate) struct ParsedAbr {
-    pub(crate) brushes: Vec<AbrBrush>,
-    pub(crate) warnings: Vec<String>,
+pub struct ParsedAbr {
+    pub brushes: Vec<AbrBrush>,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct AbrError {
+pub struct AbrError {
     message: String,
 }
 
@@ -43,7 +43,7 @@ impl fmt::Display for AbrError {
 
 impl Error for AbrError {}
 
-pub(crate) fn parse_abr(bytes: &[u8]) -> Result<ParsedAbr, AbrError> {
+pub fn parse_abr(bytes: &[u8]) -> Result<ParsedAbr, AbrError> {
     let mut input = Reader::new(bytes);
     let version = input.read_u16()?;
     let count_or_subversion = input.read_u16()?;

@@ -2,9 +2,10 @@
 
 use std::time::Duration;
 
+use chromazen_brush::{BUNDLED_BRUSH_IDS, BrushPreset, LoadedBrushPreset, bundled_preset};
 use chromazen_canvas::{
-    BrushSpacing, Canvas, CanvasDocument, LayerId, LayerInfo, PaintTool, StrokePoint,
-    StrokePositionFilter, StrokeSmoother,
+    Canvas, CanvasDocument, LayerId, LayerInfo, PaintTool, StrokePoint, StrokePositionFilter,
+    StrokeSmoother,
 };
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -14,9 +15,6 @@ use web_sys::HtmlCanvasElement;
 
 const DOCUMENT_SIZE: [u32; 2] = [2000, 1500];
 const DOCUMENT_SCHEMA_VERSION: u32 = 1;
-const CHARCOAL_STAMP_SIZE: u32 = 500;
-const CHARCOAL_STAMP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/charcoal.alpha"));
-const _: () = assert!(CHARCOAL_STAMP.len() == (CHARCOAL_STAMP_SIZE * CHARCOAL_STAMP_SIZE) as usize);
 
 fn workspace_background_color(dark_mode: bool) -> [f32; 3] {
     [if dark_mode { 0.16 } else { 0.82 }; 3]
@@ -31,6 +29,8 @@ pub struct WebCanvas {
     canvas: Canvas,
     tool: PaintTool,
     color: [f32; 4],
+    brush: BrushPreset,
+    pending_stamp: Option<image::RgbaImage>,
     brush_size: f32,
     scale: f32,
     drawing: bool,
@@ -38,6 +38,16 @@ pub struct WebCanvas {
     last_raw_point: Option<StrokePoint>,
     position_filter: StrokePositionFilter,
     smoother: StrokeSmoother,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrushInfo {
+    id: &'static str,
+    name: String,
+    size_min: f32,
+    size_max: f32,
+    size_default: f32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -117,18 +127,14 @@ impl WebCanvas {
         };
         surface.configure(&device, &config);
 
-        let brush_stamp =
-            image::RgbaImage::from_fn(CHARCOAL_STAMP_SIZE, CHARCOAL_STAMP_SIZE, |x, y| {
-                let alpha = CHARCOAL_STAMP[(y * CHARCOAL_STAMP_SIZE + x) as usize];
-                image::Rgba([255, 255, 255, alpha])
-            });
+        let brush = LoadedBrushPreset::bundled_charcoal();
         let canvas = Canvas::new(
             device.clone(),
             queue.clone(),
             format,
             [width, height],
             DOCUMENT_SIZE,
-            &brush_stamp,
+            &brush.stamp_image,
             workspace_background_color(dark_mode),
         )
         .map_err(js_error)?;
@@ -141,7 +147,9 @@ impl WebCanvas {
             canvas,
             tool: PaintTool::Brush,
             color: [29.0 / 255.0, 78.0 / 255.0, 216.0 / 255.0, 1.0],
-            brush_size: 500.0,
+            brush_size: brush.preset.size.default,
+            brush: brush.preset,
+            pending_stamp: None,
             scale: scale.max(1.0),
             drawing: false,
             last_point: None,
@@ -199,6 +207,7 @@ impl WebCanvas {
         if self.drawing || !valid_sample(x, y, pressure, time_ms) {
             return false;
         }
+        self.apply_pending_stamp();
         let point = self.stroke_point(x, y, pressure);
         if !self.canvas.begin_stroke(self.tool, point, self.color, 1.0) {
             return false;
@@ -265,10 +274,39 @@ impl WebCanvas {
         Ok(())
     }
 
+    pub fn brushes() -> Result<JsValue, JsValue> {
+        let brushes: Vec<_> = BUNDLED_BRUSH_IDS
+            .into_iter()
+            .filter_map(|id| {
+                let preset = bundled_preset(id)?;
+                Some(BrushInfo {
+                    id,
+                    name: preset.name,
+                    size_min: preset.size.min,
+                    size_max: preset.size.max,
+                    size_default: preset.size.default,
+                })
+            })
+            .collect();
+        serde_wasm_bindgen::to_value(&brushes).map_err(js_error)
+    }
+
+    #[wasm_bindgen(js_name = setBrush)]
+    pub fn set_brush(&mut self, id: &str) -> Result<(), JsValue> {
+        self.finish_stroke();
+        let brush =
+            LoadedBrushPreset::bundled(id).ok_or_else(|| JsValue::from_str("unknown brush"))?;
+        self.brush_size = brush.preset.size.default;
+        self.brush = brush.preset;
+        self.pending_stamp = Some(brush.stamp_image);
+        self.apply_pending_stamp();
+        Ok(())
+    }
+
     #[wasm_bindgen(js_name = setBrushSize)]
     pub fn set_brush_size(&mut self, size: f32) {
         if size.is_finite() {
-            self.brush_size = size.clamp(1.0, 2000.0);
+            self.brush_size = size.clamp(self.brush.size.min, self.brush.size.max);
         }
     }
 
@@ -382,6 +420,7 @@ impl WebCanvas {
     }
 
     pub fn render(&mut self) -> bool {
+        self.apply_pending_stamp();
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -404,22 +443,32 @@ impl WebCanvas {
         self.canvas.render_to_view(&mut encoder, &view, None);
         self.queue.submit([encoder.finish()]);
         frame.present();
-        self.canvas.has_pending_stamps()
+        self.canvas.has_pending_stamps() || self.pending_stamp.is_some()
     }
 }
 
 impl WebCanvas {
+    fn apply_pending_stamp(&mut self) {
+        let Some(stamp) = &self.pending_stamp else {
+            return;
+        };
+        match self.canvas.try_set_brush_stamp(stamp) {
+            Ok(false) => {}
+            Ok(true) => self.pending_stamp = None,
+            Err(error) => {
+                web_sys::console::error_1(&js_error(error));
+                self.pending_stamp = None;
+            }
+        }
+    }
+
     fn stroke_point(&self, x: f32, y: f32, pressure: f32) -> StrokePoint {
-        let pressure = pressure.clamp(0.0, 1.0);
         let position = self
             .canvas
             .window_to_document([x * self.scale, y * self.scale]);
-        StrokePoint {
-            x: position[0],
-            y: position[1],
-            radius: self.brush_size * (0.25 + pressure * 0.75) * 0.5,
-            opacity: 0.12 + pressure * 0.88,
-        }
+        self.brush
+            .pressure
+            .stroke_point(position, self.brush_size, pressure)
     }
 
     fn queue_points(&mut self, points: Vec<StrokePoint>) -> bool {
@@ -428,7 +477,7 @@ impl WebCanvas {
             if let Some(previous) = self.last_point {
                 changed |= self
                     .canvas
-                    .stamp_line(previous, point, BrushSpacing::default())
+                    .stamp_line(previous, point, self.brush.spacing.into())
                     > 0;
             } else {
                 changed |= self.canvas.queue_stamp(point);
