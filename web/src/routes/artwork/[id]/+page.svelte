@@ -3,6 +3,7 @@
   import Eraser from '@lucide/svelte/icons/eraser'
   import Redo2 from '@lucide/svelte/icons/redo-2'
   import Undo2 from '@lucide/svelte/icons/undo-2'
+  import X from '@lucide/svelte/icons/x'
   import WavesHorizontal from '@lucide/svelte/icons/waves-horizontal'
   import { onMount } from 'svelte'
   import Menu from '$lib/components/Menu.svelte'
@@ -31,14 +32,18 @@
   let lastPanPoint = [0, 0]
   let strokeStartedAt = 0
   let lastPressure = 1
+  let strokeUsesPressure = false
   type Tool = 'brush' | 'eraser' | 'smudge'
   const toolIds: Record<Tool, number> = { brush: 0, eraser: 1, smudge: 2 }
   type BrushInfo = { id: string; name: string; sizeMin: number; sizeMax: number; sizeDefault: number }
   const brushStorageKey = 'chromazen.brush'
+  const pressureHintStorageKey = 'chromazen.safariPressureHintDismissed'
 
   let loading = $state(true)
   let error = $state('')
   let isLinux = $state(false)
+  let isMacSafari = false
+  let pressureHint = $state(false)
   let persistenceError = $state('')
   let saveState = $state<SaveState>('idle')
   let manualSaving = $state(false)
@@ -81,6 +86,11 @@
     darkMode.addEventListener('change', themeChanged)
     mounted = true
     isLinux = /Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent)
+    // iPadOS Safari also reports "Macintosh" but has touch points and real Apple Pencil pressure.
+    isMacSafari =
+      /Macintosh/.test(navigator.userAgent) &&
+      /Version\/[\d.]+.*Safari/.test(navigator.userAgent) &&
+      navigator.maxTouchPoints === 0
 
     async function start() {
       try {
@@ -174,7 +184,7 @@
   }
 
   function point(event: PointerEvent, bounds = canvasElement.getBoundingClientRect()) {
-    if (event.pointerType === 'mouse') lastPressure = 1
+    if (!strokeUsesPressure) lastPressure = 1
     else if (event.pressure > 0) lastPressure = event.pressure
     return {
       x: event.clientX - bounds.left,
@@ -213,7 +223,12 @@
       lastPanPoint = [event.clientX, event.clientY]
     } else {
       strokeStartedAt = event.timeStamp
-      lastPressure = event.pointerType === 'mouse' ? 1 : event.pressure || 0.5
+      // Some macOS browsers report tablet pens as mice; plain mice only report 0.5 while pressed.
+      strokeUsesPressure = event.pointerType !== 'mouse' || (event.pressure > 0 && event.pressure !== 0.5)
+      lastPressure = strokeUsesPressure ? event.pressure || 0.5 : 1
+      if (isMacSafari && !strokeUsesPressure && !localStorage.getItem(pressureHintStorageKey)) {
+        pressureHint = true
+      }
       const sample = point(event)
       renderer.beginStroke(sample.x, sample.y, sample.pressure, sample.time)
     }
@@ -297,6 +312,11 @@
     panning = false
     saver.interactionEnded()
     requestFrame()
+  }
+
+  function dismissPressureHint() {
+    pressureHint = false
+    localStorage.setItem(pressureHintStorageKey, '1')
   }
 
   function selectTool(next: Tool) {
@@ -478,6 +498,23 @@
       class="fixed right-3 bottom-3 z-3 rounded-[0.4rem] bg-[rgb(18_18_16/0.72)] px-[0.6rem] py-[0.35rem] text-xs text-muted backdrop-blur-[18px]"
       >Saved</div
     >
+  {/if}
+
+  {#if pressureHint}
+    <div
+      class="fixed bottom-3 left-3 z-3 flex max-w-[22rem] items-start gap-2 rounded-[0.4rem] bg-[rgb(18_18_16/0.72)] py-[0.35rem] pr-1 pl-[0.6rem] text-xs leading-relaxed text-muted backdrop-blur-[18px] max-[52rem]:top-15 max-[52rem]:bottom-auto"
+      role="status"
+    >
+      <span>Pen pressure isn't available in Safari on macOS. Use a different browser for pressure-sensitive drawing.</span>
+      <button
+        class="grid size-5 shrink-0 cursor-pointer place-items-center rounded-[0.3rem] border-0 bg-transparent p-0 text-muted hover:text-white focus-visible:outline-2 focus-visible:outline-foreground"
+        aria-label="Dismiss"
+        title="Dismiss"
+        onclick={dismissPressureHint}
+      >
+        <X size={14} aria-hidden="true" />
+      </button>
+    </div>
   {/if}
 
   <section class="fixed inset-0" bind:this={workspace} aria-label="Painting canvas">
