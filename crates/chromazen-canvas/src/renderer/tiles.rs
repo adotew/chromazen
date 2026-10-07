@@ -95,7 +95,6 @@ impl From<BTreeMap<TileCoord, Tile>> for TileSet {
     }
 }
 
-/// The part of a document rectangle that falls inside one tile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TileSpan {
     pub(crate) coord: TileCoord,

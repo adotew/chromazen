@@ -105,7 +105,6 @@ impl StampQueue {
         self.dirty_tiles.clear();
     }
 
-    /// Document pixels touched by stamps queued since the stroke began.
     pub(crate) fn dirty_rect(&self) -> Option<TextureRect> {
         self.dirty_rect
     }

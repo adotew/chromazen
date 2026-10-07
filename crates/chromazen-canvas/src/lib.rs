@@ -1,5 +1,3 @@
-//! Window-independent GPU painting canvas.
-
 mod renderer;
 mod smoothing;
 

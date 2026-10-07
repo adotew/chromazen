@@ -127,7 +127,6 @@ fn settings_nav_item(ui: &mut egui::Ui, title: &str, selected: bool) -> bool {
     .clicked()
 }
 
-/// Lays out a label on the left and a number field with its unit on the right.
 fn dimension_row(ui: &mut egui::Ui, label: &str, value: &mut u32, max: u32) {
     ui.horizontal(|ui| {
         ui.label(label);

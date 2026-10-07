@@ -16,7 +16,19 @@ struct VertexOut {
   @builtin(position) position: vec4f,
   @location(0) uv: vec2f,
   @location(1) uvPerPixel: vec2f,
+  @location(2) screenOffset: vec2f,
+  @location(3) @interpolate(flat) crosshair: vec2f,
 };
+
+const CROSSHAIR_MAX_RADIUS: f32 = 32.0;
+const CROSSHAIR_GAP: f32 = 3.0;
+const CROSSHAIR_ARM: f32 = 16.0;
+const CROSSHAIR_HALF_WIDTH: f32 = 3.0;
+
+fn crosshair_extent(halfSize: vec2f) -> f32 {
+  let radius = max(halfSize.x, halfSize.y);
+  return select(0.0, radius + CROSSHAIR_GAP + CROSSHAIR_ARM, radius < CROSSHAIR_MAX_RADIUS);
+}
 
 fn quad_corner(vertexIndex: u32) -> vec2f {
   let corners = array<vec2f, 6>(
@@ -34,7 +46,7 @@ fn quad_corner(vertexIndex: u32) -> vec2f {
 fn vs(@builtin(vertex_index) vertexIndex: u32) -> VertexOut {
   let corner = quad_corner(vertexIndex);
   let halfSize = max(cursor.halfSize, vec2f(0.5));
-  let localOffset = corner * (halfSize + vec2f(2.0));
+  let localOffset = corner * max(halfSize + vec2f(2.0), vec2f(crosshair_extent(halfSize)));
   let pixelOffset = cursor.axisX * localOffset.x + cursor.axisY * localOffset.y;
   let screenPosition = cursor.center + pixelOffset;
 
@@ -47,6 +59,8 @@ fn vs(@builtin(vertex_index) vertexIndex: u32) -> VertexOut {
   );
   out.uv = localOffset / (halfSize * 2.0) + vec2f(0.5);
   out.uvPerPixel = vec2f(0.5) / halfSize;
+  out.screenOffset = pixelOffset;
+  out.crosshair = vec2f(max(halfSize.x, halfSize.y) + CROSSHAIR_GAP, crosshair_extent(halfSize));
   return out;
 }
 
@@ -105,7 +119,13 @@ fn fs(in: VertexOut) -> @location(0) vec4f {
   let inner = centerMask * (1.0 - near.x);
   let outer = (1.0 - centerMask) * far.y;
 
-  if (inner > 0.0 || outer > 0.0) {
+  let gap = in.crosshair.x;
+  let extent = in.crosshair.y;
+  let offset = abs(in.screenOffset);
+  let horizontal = offset.y < CROSSHAIR_HALF_WIDTH && offset.x >= gap && offset.x <= extent;
+  let vertical = offset.x < CROSSHAIR_HALF_WIDTH && offset.y >= gap && offset.y <= extent;
+
+  if (inner > 0.0 || outer > 0.0 || horizontal || vertical) {
     let color = adaptive_contrast_color(textureLoad(backdrop, vec2i(in.position.xy), 0).rgb);
     return vec4f(color * 0.85, 0.85);
   }

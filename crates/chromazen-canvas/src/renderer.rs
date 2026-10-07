@@ -382,7 +382,6 @@ pub struct Canvas {
     pending_preview_stamps: Option<Vec<StampRaw>>,
     rendered_preview_rect: Option<TextureRect>,
     active_stroke: Option<ActiveStroke>,
-    /// Tiles replaced by copy-on-write during the active stroke, keyed by coordinate.
     stroke_original_tiles: BTreeMap<TileCoord, Option<Tile>>,
     active_transform: Option<ActiveLayerTransform>,
     lasso_selection: Option<Selection>,
@@ -2629,7 +2628,6 @@ fn visible_canvas_rect(
     )
 }
 
-/// The surface pixels covered by a document rectangle, clipped to the surface.
 fn document_rect_in_window(
     view: PaintViewSnapshot,
     rect: TextureRect,
@@ -2692,7 +2690,6 @@ fn validate_brush_stamp(stamp: &image::RgbaImage, max_dimension: u32) -> Result<
     Ok(())
 }
 
-/// Resolves a clipped layer to the nearest non-clipped layer below it.
 fn clipping_base_index(clipped: &[bool], layer_index: usize) -> Option<usize> {
     if !clipped.get(layer_index).copied().unwrap_or(false) {
         return None;
@@ -2762,7 +2759,6 @@ fn layer_tile_bind_group<'a>(
     }
 }
 
-/// The whole pixels covered by `points` grown by `padding`, clipped to a `size` area.
 fn pixel_rect_covering(points: &[[f32; 2]], padding: f32, size: [u32; 2]) -> Option<TextureRect> {
     if points.iter().flatten().any(|value| !value.is_finite()) {
         return None;

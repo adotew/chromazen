@@ -10,7 +10,6 @@ pub struct AbrBrush {
     pub name: Option<String>,
     pub width: u32,
     pub height: u32,
-    /// One byte of coverage per pixel, from transparent (0) to opaque (255).
     pub mask: Vec<u8>,
     /// ABR spacing is stored as a percentage of the brush diameter.
     pub spacing_percent: Option<f32>,
