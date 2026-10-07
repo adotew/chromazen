@@ -57,7 +57,7 @@
       Chromazen
       <span
         class="inline-flex translate-y-0.5 items-center rounded-lg bg-foreground px-1.5 py-1 text-[0.5em] leading-none font-bold tracking-[0.01em] text-background"
-        >Web</span
+        >Beta</span
       >
     </h1>
     <button
