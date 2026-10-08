@@ -1,6 +1,8 @@
+mod blend;
 mod renderer;
 mod smoothing;
 
+pub use blend::{BlendMode, LayerSample, composite_samples};
 pub use renderer::{
     BrushCursor, Canvas, CanvasDocument, CanvasSizeConstraints, DEFAULT_CANVAS_SIZE,
     DocumentVersions, DropEdge, LayerContentBounds, LayerId, LayerInfo, LayerReadback,

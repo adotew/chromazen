@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chromazen_canvas::{Canvas, DocumentVersions, LayerId};
+use chromazen_canvas::{BlendMode, Canvas, DocumentVersions, LayerId};
 use image::imageops::FilterType;
 
 use crate::artwork::{
@@ -429,6 +429,8 @@ fn encode_thumbnail(
             visible: metadata.visible,
             opacity: metadata.opacity,
             clipped: metadata.clipped,
+            // ponytail: manifests have no blend mode yet; step 7 adds it.
+            blend_mode: BlendMode::Normal,
         })
         .collect();
     let composite = flatten_premultiplied_layers(&composite_layers, document.background)?;

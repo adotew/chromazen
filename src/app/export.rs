@@ -5,7 +5,7 @@ use std::{
 };
 
 use atomic_write_file::AtomicWriteFile;
-use chromazen_canvas::Canvas;
+use chromazen_canvas::{BlendMode, Canvas};
 
 use crate::artwork::{CompositeLayer, encode_png, flatten_premultiplied_layers};
 
@@ -67,6 +67,8 @@ impl ExportController {
                         visible: metadata.visible,
                         opacity: metadata.opacity,
                         clipped: metadata.clipped,
+                        // ponytail: manifests have no blend mode yet; step 7 adds it.
+                        blend_mode: BlendMode::Normal,
                     })
                     .collect();
                 let composite =
