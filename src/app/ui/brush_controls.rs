@@ -151,7 +151,7 @@ fn brush_slider(
     value: &mut f32,
     range: std::ops::RangeInclusive<f32>,
     height: f32,
-    logarithmic: bool,
+    curved: bool,
 ) -> egui::Response {
     ui.push_id(label, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -172,16 +172,20 @@ fn brush_slider(
                     widget.bg_fill = egui::Color32::TRANSPARENT;
                     widget.fg_stroke = egui::Stroke::NONE;
                 }
-                ui.add(
-                    egui::Slider::new(value, range.clone())
+                let mut fraction = slider_fraction(*value, &range, curved);
+                let response = ui.add(
+                    egui::Slider::new(&mut fraction, 0.0..=1.0)
                         .vertical()
-                        .logarithmic(logarithmic)
                         .show_value(false)
                         .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 }),
-                )
+                );
+                if response.changed() {
+                    *value = slider_value(fraction, &range, curved);
+                }
+                response
             })
             .inner;
-        let fraction = slider_fraction(*value, &range, logarithmic);
+        let fraction = slider_fraction(*value, &range, curved);
         let track = egui::Rect::from_center_size(
             response.rect.center(),
             egui::vec2(26.0, response.rect.height()),
@@ -214,12 +218,20 @@ fn brush_slider(
     .inner
 }
 
-fn slider_fraction(value: f32, range: &std::ops::RangeInclusive<f32>, logarithmic: bool) -> f32 {
-    if logarithmic {
-        egui::remap_clamp(value.ln(), range.start().ln()..=range.end().ln(), 0.0..=1.0)
+// Like Procreate, size eases in quadratically: fine control for small brushes,
+// fast travel to large ones, without log scaling's cramped top end.
+fn slider_fraction(value: f32, range: &std::ops::RangeInclusive<f32>, curved: bool) -> f32 {
+    let linear = egui::remap_clamp(value, range.clone(), 0.0..=1.0);
+    if curved { linear.sqrt() } else { linear }
+}
+
+fn slider_value(fraction: f32, range: &std::ops::RangeInclusive<f32>, curved: bool) -> f32 {
+    let linear = if curved {
+        fraction * fraction
     } else {
-        egui::remap_clamp(value, range.clone(), 0.0..=1.0)
-    }
+        fraction
+    };
+    egui::remap_clamp(linear, 0.0..=1.0, range.clone())
 }
 
 #[cfg(test)]
@@ -265,9 +277,10 @@ mod tests {
     }
 
     #[test]
-    fn slider_fill_fraction_matches_linear_and_logarithmic_values() {
+    fn slider_fill_fraction_matches_linear_and_quadratic_values() {
         assert_eq!(slider_fraction(0.5, &(0.0..=1.0), false), 0.5);
-        assert!((slider_fraction(10.0, &(1.0..=100.0), true) - 0.5).abs() < f32::EPSILON);
+        assert!((slider_fraction(25.75, &(1.0..=100.0), true) - 0.5).abs() < f32::EPSILON);
+        assert!((slider_value(0.5, &(1.0..=100.0), true) - 25.75).abs() < 0.0001);
     }
 
     #[test]
