@@ -1507,15 +1507,18 @@ impl Canvas {
         let lower_name = self.layers[lower_index].name.clone();
         let selection_before = self.selection;
         let resource_id = self.allocate_layer_resource_id();
+        let upper = self.layers.remove(upper_index);
+        let lower = self.layers.remove(lower_index);
+        // Like the clipping group the pair resembles, the merged layer keeps the lower's mode.
         let mut merged = self.resources.create_paint_layer(
             &self.device,
             lower_id,
             resource_id,
-            LayerProperties::new(lower_name),
+            LayerProperties {
+                blend_mode: lower.blend_mode,
+                ..LayerProperties::new(lower_name)
+            },
         );
-
-        let upper = self.layers.remove(upper_index);
-        let lower = self.layers.remove(lower_index);
         let clipped_bind_group = upper.clipped.then(|| {
             self.resources
                 .create_clipped_layer_bind_group(&self.device, &upper, &lower)
@@ -1547,7 +1550,9 @@ impl Canvas {
                     pass.set_bind_group(1, &lower_tile.bind_group, &[]);
                     pass.draw(0..3, 0..1);
                 }
-                if let Some(upper_tile) = upper.tiles.get(coord) {
+                if let Some(upper_tile) = upper.tiles.get(coord)
+                    && upper.blend_mode == BlendMode::Normal
+                {
                     if let (Some(bind_group), Some(lower_tile)) = (&clipped_bind_group, lower_tile)
                     {
                         pass.set_pipeline(&self.resources.clipped_layer_merge_pipeline);
@@ -1561,6 +1566,31 @@ impl Canvas {
                     }
                     pass.draw(0..3, 0..1);
                 }
+            }
+            if let Some(upper_tile) = upper.tiles.get(coord)
+                && upper.blend_mode != BlendMode::Normal
+            {
+                let mut pass = begin_color_pass(
+                    &mut encoder,
+                    "blended layer merge pass",
+                    &self.resources.layer_scratch_tile_view,
+                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                );
+                draw_layer_into_tile(
+                    &mut pass,
+                    &self.resources,
+                    &upper,
+                    &upper_tile.bind_group,
+                    None,
+                );
+                drop(pass);
+                blend_layer_scratch_into_tile(
+                    &mut encoder,
+                    &self.resources,
+                    &upper,
+                    &tile.texture,
+                    &tile.view,
+                );
             }
             merged.tiles.insert(coord, tile);
         }

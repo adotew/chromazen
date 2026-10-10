@@ -95,6 +95,7 @@ async fn run() {
     run_adjustment_preview_over_reference(&device, &queue);
     run_workspace_background_colors(&device, &queue);
     blend_modes_match_cpu_compositing(&device, &queue);
+    merging_blended_layers_keeps_their_appearance(&device, &queue);
 }
 
 fn center_alpha(canvas: &Canvas) -> u8 {
@@ -571,30 +572,7 @@ fn blend_modes_match_cpu_compositing(device: &wgpu::Device, queue: &wgpu::Queue)
     ];
     let background = [230, 220, 40];
     for layers in scenarios {
-        canvas
-            .load_document(
-                &CanvasDocument {
-                    size: [16, 16],
-                    background,
-                    selected_layer: LayerId(1),
-                    layers: (1..)
-                        .zip(&layers)
-                        .map(|(id, layer)| LayerInfo {
-                            id: LayerId(id),
-                            name: format!("Layer {id}"),
-                            visible: layer.visible,
-                            opacity: layer.opacity,
-                            clipped: layer.clipped,
-                            blend_mode: layer.blend_mode,
-                        })
-                        .collect(),
-                },
-                layers
-                    .iter()
-                    .map(|layer| image::RgbaImage::from_pixel(16, 16, image::Rgba(layer.pixel)))
-                    .collect(),
-            )
-            .expect("load blend document");
+        load_samples(&mut canvas, background, &layers);
         let expected = composite_samples(
             [background[0], background[1], background[2], 255].map(|c| f32::from(c) / 255.0),
             &layers,
@@ -613,6 +591,90 @@ fn blend_modes_match_cpu_compositing(device: &wgpu::Device, queue: &wgpu::Queue)
             &expected[..3]
         );
     }
+}
+
+fn merging_blended_layers_keeps_their_appearance(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let brush = image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4]));
+    let mut canvas = Canvas::new(
+        device.clone(),
+        queue.clone(),
+        wgpu::TextureFormat::Rgba8Unorm,
+        RENDER_SIZE,
+        [16, 16],
+        &brush,
+        [0.5; 3],
+    )
+    .expect("merge canvas");
+    let sample = |pixel, clipped, blend_mode| LayerSample {
+        pixel,
+        opacity: 80,
+        visible: true,
+        clipped,
+        blend_mode,
+    };
+    let top = [40, 90, 120, 160];
+    let translucent_base = [90, 60, 20, 140];
+    // Merging matches the display when the upper layer blends only against the lower one, so
+    // an unclipped upper layer needs an opaque lower layer.
+    let scenarios = [
+        [
+            LayerSample {
+                opacity: 100,
+                ..sample([200, 60, 30, 255], false, BlendMode::Normal)
+            },
+            sample(top, false, BlendMode::Multiply),
+        ],
+        [
+            sample(translucent_base, false, BlendMode::Normal),
+            sample(top, true, BlendMode::Overlay),
+        ],
+        [
+            sample(translucent_base, false, BlendMode::Overlay),
+            sample(top, true, BlendMode::Normal),
+        ],
+    ];
+    let offset = ((32 * RENDER_SIZE[0] + 32) * 4) as usize;
+    for layers in scenarios {
+        load_samples(&mut canvas, [230, 220, 40], &layers);
+        let before = render_pixels(device, queue, &mut canvas, None)[offset..offset + 3].to_vec();
+        assert!(canvas.merge_layer_down(LayerId(2)));
+        let after = render_pixels(device, queue, &mut canvas, None)[offset..offset + 3].to_vec();
+        assert!(
+            before.iter().zip(&after).all(|(b, a)| b.abs_diff(*a) <= 1),
+            "{layers:?}: before merge {before:?} != after merge {after:?}"
+        );
+        assert_eq!(
+            canvas.document_snapshot().layers[0].blend_mode,
+            layers[0].blend_mode
+        );
+    }
+}
+
+fn load_samples(canvas: &mut Canvas, background: [u8; 3], layers: &[LayerSample]) {
+    canvas
+        .load_document(
+            &CanvasDocument {
+                size: [16, 16],
+                background,
+                selected_layer: LayerId(1),
+                layers: (1..)
+                    .zip(layers)
+                    .map(|(id, layer)| LayerInfo {
+                        id: LayerId(id),
+                        name: format!("Layer {id}"),
+                        visible: layer.visible,
+                        opacity: layer.opacity,
+                        clipped: layer.clipped,
+                        blend_mode: layer.blend_mode,
+                    })
+                    .collect(),
+            },
+            layers
+                .iter()
+                .map(|layer| image::RgbaImage::from_pixel(16, 16, image::Rgba(layer.pixel)))
+                .collect(),
+        )
+        .expect("load blend document");
 }
 
 fn render_pixels(
