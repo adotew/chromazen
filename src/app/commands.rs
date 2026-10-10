@@ -52,6 +52,7 @@ impl App {
                 | EditorCommand::MergeLayerDown(_)
                 | EditorCommand::SetLayerClipped { .. }
                 | EditorCommand::SetLayerVisibility { .. }
+                | EditorCommand::SetLayerBlendMode { .. }
                 | EditorCommand::SetLayerOpacity { .. }
                 | EditorCommand::CommitLayerOpacity { .. }
                 | EditorCommand::MoveLayer { .. }
@@ -199,6 +200,11 @@ impl App {
             EditorCommand::SetLayerVisibility { id, visible } => {
                 if let Some(paint) = self.paint.as_mut() {
                     paint.set_layer_visibility(id, visible);
+                }
+            }
+            EditorCommand::SetLayerBlendMode { id, blend_mode } => {
+                if let Some(paint) = self.paint.as_mut() {
+                    paint.set_layer_blend_mode(id, blend_mode);
                 }
             }
             EditorCommand::SetLayerOpacity { id, opacity } => {

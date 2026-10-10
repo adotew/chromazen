@@ -35,7 +35,7 @@ impl GuiLayer {
                             texture_id: thumbnail,
                             solid_color: None,
                             visible: Some(layer.visible),
-                            opacity: Some(layer.opacity),
+                            mode: Some((layer.blend_mode, layer.opacity)),
                             drag_id: Some(layer.id),
                         },
                     );
@@ -252,6 +252,27 @@ impl GuiLayer {
                                         ));
                                     }
                                 });
+                                ui.horizontal(|ui| {
+                                    ui.label("Blend");
+                                    let mut blend_mode = layer.blend_mode;
+                                    for mode in
+                                        [BlendMode::Normal, BlendMode::Multiply, BlendMode::Overlay]
+                                    {
+                                        ui.selectable_value(
+                                            &mut blend_mode,
+                                            mode,
+                                            blend_mode_label(mode),
+                                        );
+                                    }
+                                    if blend_mode != layer.blend_mode {
+                                        self.commands.push(AppCommand::Editor(
+                                            EditorCommand::SetLayerBlendMode {
+                                                id: layer.id,
+                                                blend_mode,
+                                            },
+                                        ));
+                                    }
+                                });
                             });
                     }
 
@@ -278,7 +299,7 @@ impl GuiLayer {
                         texture_id: None,
                         solid_color: Some(background),
                         visible: None,
-                        opacity: None,
+                        mode: None,
                         drag_id: None,
                     },
                 );

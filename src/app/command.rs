@@ -1,4 +1,4 @@
-use chromazen_canvas::{DropEdge, LayerId, LayerTransform};
+use chromazen_canvas::{BlendMode, DropEdge, LayerId, LayerTransform};
 
 use crate::{
     app::{input::EditorTool, references::ReferenceId},
@@ -54,6 +54,10 @@ pub(super) enum EditorCommand {
     SetLayerVisibility {
         id: LayerId,
         visible: bool,
+    },
+    SetLayerBlendMode {
+        id: LayerId,
+        blend_mode: BlendMode,
     },
     SetLayerOpacity {
         id: LayerId,
