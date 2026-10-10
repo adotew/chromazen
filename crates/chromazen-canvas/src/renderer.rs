@@ -1539,10 +1539,6 @@ impl Canvas {
                 ..LayerProperties::new(lower_name)
             },
         );
-        let clipped_bind_group = upper.clipped.then(|| {
-            self.resources
-                .create_clipped_layer_bind_group(&self.device, &upper, &lower)
-        });
         // A clipped layer only shows where its base has content.
         let coords: BTreeSet<_> = if upper.clipped {
             lower.tiles.coords().collect()
@@ -1563,36 +1559,17 @@ impl Canvas {
                     &tile.view,
                     wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                 );
-                let lower_tile = lower.tiles.get(coord);
-                if let Some(lower_tile) = lower_tile {
+                if let Some(lower_tile) = lower.tiles.get(coord) {
                     pass.set_pipeline(&self.resources.merge_pipeline);
                     pass.set_bind_group(0, &lower.blit_bind_group, &[]);
                     pass.set_bind_group(1, &lower_tile.bind_group, &[]);
                     pass.draw(0..3, 0..1);
                 }
-                if let Some(upper_tile) = upper.tiles.get(coord)
-                    && upper.blend_mode == BlendMode::Normal
-                {
-                    if let (Some(bind_group), Some(lower_tile)) = (&clipped_bind_group, lower_tile)
-                    {
-                        pass.set_pipeline(&self.resources.clipped_layer_merge_pipeline);
-                        pass.set_bind_group(0, bind_group, &[]);
-                        pass.set_bind_group(1, &upper_tile.bind_group, &[]);
-                        pass.set_bind_group(2, &lower_tile.bind_group, &[]);
-                    } else {
-                        pass.set_pipeline(&self.resources.merge_pipeline);
-                        pass.set_bind_group(0, &upper.blit_bind_group, &[]);
-                        pass.set_bind_group(1, &upper_tile.bind_group, &[]);
-                    }
-                    pass.draw(0..3, 0..1);
-                }
             }
-            if let Some(upper_tile) = upper.tiles.get(coord)
-                && upper.blend_mode != BlendMode::Normal
-            {
+            if let Some(upper_tile) = upper.tiles.get(coord) {
                 let mut pass = begin_color_pass(
                     &mut encoder,
-                    "blended layer merge pass",
+                    "upper layer merge pass",
                     &self.resources.layer_scratch_tile_view,
                     wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                 );
@@ -2116,38 +2093,24 @@ impl Canvas {
                         };
                         let base_tile = tile_bind_group(base, coord)
                             .expect("base coordinates have a tile or a preview");
-                        // Normal clips share one pass. Each blended clip ends it because it reads
-                        // the group composed so far.
-                        let mut next_clip = 0;
-                        loop {
-                            let first = next_clip == 0;
-                            let mut pass = begin_color_pass(
-                                encoder,
-                                "clipping group pass",
-                                &self.resources.scratch_tile_view,
-                                if first {
-                                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
-                                } else {
-                                    wgpu::LoadOp::Load
-                                },
-                            );
-                            if first {
-                                draw_layer_into_tile(
-                                    &mut pass,
-                                    &self.resources,
-                                    base,
-                                    base_tile,
-                                    preview_tool(base),
-                                );
-                            }
-                            while let Some(layer) = clips
-                                .get(next_clip)
-                                .filter(|layer| layer.blend_mode == BlendMode::Normal)
-                            {
-                                next_clip += 1;
-                                let Some(layer_tile) = tile_bind_group(layer, coord) else {
-                                    continue;
-                                };
+                        let mut pass = begin_color_pass(
+                            encoder,
+                            "clipping group pass",
+                            &self.resources.scratch_tile_view,
+                            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        );
+                        draw_layer_into_tile(
+                            &mut pass,
+                            &self.resources,
+                            base,
+                            base_tile,
+                            preview_tool(base),
+                        );
+                        for layer in &clips {
+                            let Some(layer_tile) = tile_bind_group(layer, coord) else {
+                                continue;
+                            };
+                            if layer.blend_mode == BlendMode::Normal {
                                 let clipped_bind_group = self
                                     .clipped_layer_bind_groups
                                     .get(&layer.id)
@@ -2169,37 +2132,39 @@ impl Canvas {
                                 pass.set_bind_group(1, layer_tile, &[]);
                                 pass.set_bind_group(2, base_tile, &[]);
                                 pass.draw(0..3, 0..1);
+                                continue;
                             }
+                            // A blended clip reads the group composed so far, so it ends the pass.
                             drop(pass);
-
-                            let Some(layer) = clips.get(next_clip) else {
-                                break;
-                            };
-                            next_clip += 1;
-                            if let Some(layer_tile) = tile_bind_group(layer, coord) {
-                                let mut pass = begin_color_pass(
-                                    encoder,
-                                    "blended clip layer pass",
-                                    &self.resources.layer_scratch_tile_view,
-                                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                                );
-                                draw_layer_into_tile(
-                                    &mut pass,
-                                    &self.resources,
-                                    layer,
-                                    layer_tile,
-                                    preview_tool(layer),
-                                );
-                                drop(pass);
-                                blend_layer_scratch_into_tile(
-                                    encoder,
-                                    &self.resources,
-                                    layer,
-                                    &self.resources.scratch_tile_texture,
-                                    &self.resources.scratch_tile_view,
-                                );
-                            }
+                            let mut layer_pass = begin_color_pass(
+                                encoder,
+                                "blended clip layer pass",
+                                &self.resources.layer_scratch_tile_view,
+                                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            );
+                            draw_layer_into_tile(
+                                &mut layer_pass,
+                                &self.resources,
+                                layer,
+                                layer_tile,
+                                preview_tool(layer),
+                            );
+                            drop(layer_pass);
+                            blend_layer_scratch_into_tile(
+                                encoder,
+                                &self.resources,
+                                layer,
+                                &self.resources.scratch_tile_texture,
+                                &self.resources.scratch_tile_view,
+                            );
+                            pass = begin_color_pass(
+                                encoder,
+                                "clipping group pass",
+                                &self.resources.scratch_tile_view,
+                                wgpu::LoadOp::Load,
+                            );
                         }
+                        drop(pass);
 
                         if blended {
                             let origin = [scissor.x, scissor.y];
