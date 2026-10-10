@@ -1,4 +1,6 @@
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Discriminants are shared with `blend.wgsl`; serialized names are persisted in artworks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum BlendMode {
     #[default]
     Normal = 0,

@@ -2,7 +2,7 @@ mod format;
 mod raster;
 mod store;
 
-use chromazen_canvas::{BlendMode, CanvasDocument, LayerId, LayerInfo};
+use chromazen_canvas::{CanvasDocument, LayerId, LayerInfo};
 
 pub(crate) use format::{
     DOCUMENT_SCHEMA_VERSION, DocumentManifest, LayerManifest, ReferenceManifest,
@@ -27,8 +27,7 @@ pub(crate) fn canvas_document(document: &DocumentManifest) -> CanvasDocument {
                 visible: layer.visible,
                 opacity: layer.opacity,
                 clipped: layer.clipped,
-                // ponytail: defaults to Normal until manifests support blend modes.
-                blend_mode: BlendMode::Normal,
+                blend_mode: layer.blend_mode,
             })
             .collect(),
     }
@@ -51,6 +50,7 @@ pub(crate) fn document_manifest(document: CanvasDocument) -> DocumentManifest {
                 visible: layer.visible,
                 opacity: layer.opacity,
                 clipped: layer.clipped,
+                blend_mode: layer.blend_mode,
                 file: format!("layers/{}.png", layer.id.0),
             })
             .collect(),
@@ -77,6 +77,7 @@ mod tests {
                 visible: true,
                 opacity: 80,
                 clipped: false,
+                blend_mode: chromazen_canvas::BlendMode::Multiply,
                 file: "layers/7.png".to_owned(),
             }],
             references: Vec::new(),

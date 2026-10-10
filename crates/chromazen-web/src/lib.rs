@@ -400,7 +400,7 @@ impl WebCanvas {
                     visible: layer.visible,
                     opacity: layer.opacity,
                     clipped: layer.clipped,
-                    // ponytail: defaults to Normal until stored web documents support blend modes.
+                    // The web app has no blend mode controls, so its stored layers are always Normal.
                     blend_mode: BlendMode::Normal,
                 })
                 .collect(),
