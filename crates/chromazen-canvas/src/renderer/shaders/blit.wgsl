@@ -8,6 +8,7 @@ const TILE_SIZE: i32 = 512;
 
 struct LayerSettings {
   opacity: f32,
+  blendMode: u32,
 };
 
 struct View {
@@ -51,8 +52,7 @@ fn fs_background(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   return view.backgroundColor;
 }
 
-@fragment
-fn fs_layer(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+fn layer_color(pos: vec4f) -> vec4f {
   let document = document_position(pos);
   if (is_outside_canvas(document)) {
     return vec4f(0.0);
@@ -62,6 +62,21 @@ fn fs_layer(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   if (any(texel < vec2i(0)) || any(texel >= vec2i(TILE_SIZE))) {
     return vec4f(0.0);
   }
+  return textureLoad(tileTexture, texel, 0);
+}
+
+@fragment
+fn fs_layer(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   // Paint textures are premultiplied, so opacity scales every channel.
-  return textureLoad(tileTexture, texel, 0) * layer.opacity;
+  return layer_color(pos) * layer.opacity;
+}
+
+// A copy of the canvas under the current scissor rect, in window pixels.
+@group(2) @binding(0) var backdropTexture: texture_2d<f32>;
+
+// Replaces the target, so texels outside this tile must reproduce the backdrop unchanged.
+@fragment
+fn fs_blend_layer(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let backdrop = textureLoad(backdropTexture, vec2i(pos.xy), 0);
+  return blend_premultiplied(layer.blendMode, layer_color(pos), backdrop, false);
 }

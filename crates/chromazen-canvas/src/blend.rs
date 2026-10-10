@@ -1,9 +1,9 @@
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BlendMode {
     #[default]
-    Normal,
-    Multiply,
-    Overlay,
+    Normal = 0,
+    Multiply = 1,
+    Overlay = 2,
 }
 
 impl BlendMode {

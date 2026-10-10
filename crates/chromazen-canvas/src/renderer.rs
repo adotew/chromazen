@@ -35,7 +35,7 @@ pub use self::{
     persistence::LayerReadback,
     view::PaintViewSnapshot,
 };
-use crate::{BrushSpacing, PaintTool, StrokePoint};
+use crate::{BlendMode, BrushSpacing, PaintTool, StrokePoint};
 
 pub const DEFAULT_CANVAS_SIZE: [u32; 2] = [4000, 4000];
 pub(crate) const DEFAULT_BACKGROUND_COLOR: [f32; 4] = [1.0; 4];
@@ -110,7 +110,18 @@ struct StrokeUniform {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct LayerSettingsUniform {
     opacity: f32,
-    padding: [f32; 3],
+    blend_mode: u32,
+    padding: [f32; 2],
+}
+
+impl LayerSettingsUniform {
+    fn new(opacity: u8, blend_mode: BlendMode) -> Self {
+        Self {
+            opacity: f32::from(opacity) / 100.0,
+            blend_mode: blend_mode as u32,
+            padding: [0.0; 2],
+        }
+    }
 }
 
 #[repr(C)]
@@ -966,6 +977,7 @@ impl Canvas {
                     visible: layer.visible,
                     opacity: layer.opacity,
                     clipped: layer.clipped,
+                    blend_mode: layer.blend_mode,
                 })
                 .collect(),
         }
@@ -1043,6 +1055,7 @@ impl Canvas {
                     visible: source.visible,
                     opacity: source.opacity,
                     clipped: source.clipped,
+                    blend_mode: source.blend_mode,
                 },
             );
             if let Some(copy) = copy {
@@ -1178,6 +1191,7 @@ impl Canvas {
                     visible: metadata.visible,
                     opacity: metadata.opacity,
                     clipped: metadata.clipped,
+                    blend_mode: metadata.blend_mode,
                 },
             );
             for coord in all_tile_coords(document_size) {
@@ -1219,6 +1233,7 @@ impl Canvas {
                     visible: layer.visible,
                     opacity: layer.opacity,
                     clipped: layer.clipped,
+                    blend_mode: layer.blend_mode,
                 })
                 .collect(),
             selection: self.selection,
@@ -1312,10 +1327,7 @@ impl Canvas {
         self.queue.write_buffer(
             &layer.settings_buffer,
             0,
-            bytemuck::bytes_of(&LayerSettingsUniform {
-                opacity: f32::from(opacity) / 100.0,
-                padding: [0.0; 3],
-            }),
+            bytemuck::bytes_of(&LayerSettingsUniform::new(opacity, layer.blend_mode)),
         );
         self.mark_metadata_changed();
         true
@@ -1435,6 +1447,7 @@ impl Canvas {
             visible: source.visible,
             opacity: source.opacity,
             clipped: source.clipped,
+            blend_mode: source.blend_mode,
         };
         let mut layer =
             self.resources
@@ -1942,9 +1955,13 @@ impl Canvas {
             self.write_brush_cursor(cursor);
         }
 
-        // The cursor and external backdrop consumers sample the completed canvas, so those frames
-        // compose offscreen first.
-        let use_backdrop = brush_cursor.is_some() || retain_backdrop;
+        // The cursor, external backdrop consumers, and blend modes sample the canvas, so those
+        // frames compose offscreen first.
+        let use_backdrop = brush_cursor.is_some()
+            || retain_backdrop
+            || self.layers.iter().any(|layer| {
+                layer.visible && !layer.clipped && layer.blend_mode != BlendMode::Normal
+            });
         let canvas_view = if use_backdrop {
             &self.resources.backdrop_view
         } else {
@@ -2037,7 +2054,8 @@ impl Canvas {
                     base_coords.extend(stroke_coords.iter().copied());
                 }
 
-                if !clips.is_empty() {
+                let blended = base.blend_mode != BlendMode::Normal;
+                if !clips.is_empty() || blended {
                     // Clipped layers must be composed with their base before the group is put over
                     // the canvas. Applying each masked layer directly over the canvas multiplies
                     // the base alpha twice and leaves translucent base color showing through.
@@ -2099,6 +2117,14 @@ impl Canvas {
                         }
                         drop(pass);
 
+                        if blended {
+                            copy_surface_rect(
+                                encoder,
+                                &self.resources.backdrop_texture,
+                                &self.resources.blend_backdrop_texture,
+                                scissor,
+                            );
+                        }
                         let mut pass = begin_color_pass(
                             encoder,
                             "clipping group blit pass",
@@ -2106,8 +2132,20 @@ impl Canvas {
                             wgpu::LoadOp::Load,
                         );
                         pass.set_scissor_rect(scissor.x, scissor.y, scissor.width, scissor.height);
-                        pass.set_pipeline(&self.resources.layer_pipeline);
-                        pass.set_bind_group(0, self.resources.full_opacity_blit_bind_group(), &[]);
+                        if blended {
+                            // The blend shader reads the base's mode but not its opacity, which
+                            // the scratch tile already includes.
+                            pass.set_pipeline(&self.resources.blend_layer_pipeline);
+                            pass.set_bind_group(0, &base.blit_bind_group, &[]);
+                            pass.set_bind_group(2, &self.resources.blend_backdrop_bind_group, &[]);
+                        } else {
+                            pass.set_pipeline(&self.resources.layer_pipeline);
+                            pass.set_bind_group(
+                                0,
+                                self.resources.full_opacity_blit_bind_group(),
+                                &[],
+                            );
+                        }
                         pass.set_bind_group(
                             1,
                             &self.resources.tile_slot(coord).scratch_tile_bind_group,
@@ -2528,10 +2566,7 @@ impl Canvas {
             self.queue.write_buffer(
                 &layer.settings_buffer,
                 0,
-                bytemuck::bytes_of(&LayerSettingsUniform {
-                    opacity: f32::from(layer.opacity) / 100.0,
-                    padding: [0.0; 3],
-                }),
+                bytemuck::bytes_of(&LayerSettingsUniform::new(layer.opacity, layer.blend_mode)),
             );
         }
     }
@@ -2705,6 +2740,39 @@ fn next_layer_number(layers: &[LayerInfo]) -> u64 {
         .unwrap_or(0)
         .saturating_add(1)
         .max(1)
+}
+
+/// Copies a window-space rect between surface-sized textures of the same format.
+fn copy_surface_rect(
+    encoder: &mut wgpu::CommandEncoder,
+    source: &wgpu::Texture,
+    destination: &wgpu::Texture,
+    rect: TextureRect,
+) {
+    let origin = wgpu::Origin3d {
+        x: rect.x,
+        y: rect.y,
+        z: 0,
+    };
+    encoder.copy_texture_to_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: source,
+            mip_level: 0,
+            origin,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyTextureInfo {
+            texture: destination,
+            mip_level: 0,
+            origin,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::Extent3d {
+            width: rect.width,
+            height: rect.height,
+            depth_or_array_layers: 1,
+        },
+    );
 }
 
 fn begin_color_pass<'encoder>(
@@ -2907,6 +2975,7 @@ mod tests {
                 visible: true,
                 opacity: 100,
                 clipped: false,
+                blend_mode: BlendMode::Normal,
             },
             LayerInfo {
                 id: LayerId(2),
@@ -2914,6 +2983,7 @@ mod tests {
                 visible: true,
                 opacity: 100,
                 clipped: false,
+                blend_mode: BlendMode::Normal,
             },
         ];
         assert_eq!(next_layer_number(&layers), 5);
@@ -2931,6 +3001,7 @@ mod tests {
                 visible: true,
                 opacity: 100,
                 clipped: false,
+                blend_mode: BlendMode::Normal,
             }],
         };
         assert!(document.validate().is_ok());

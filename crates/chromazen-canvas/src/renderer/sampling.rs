@@ -1,6 +1,6 @@
 use std::sync::mpsc;
 
-use crate::{BlendMode, LayerSample, composite_samples};
+use crate::{LayerSample, composite_samples};
 
 use super::{
     PaintLayer,
@@ -111,8 +111,7 @@ pub(super) fn read_composited_color(
             opacity: layer.opacity,
             visible: layer.visible,
             clipped: layer.clipped,
-            // ponytail: layers have no blend mode yet; step 6 adds the field.
-            blend_mode: BlendMode::Normal,
+            blend_mode: layer.blend_mode,
         })
         .collect();
     let color = rgb8(composite_samples(background, &samples));
@@ -128,6 +127,7 @@ fn rgb8(color: [f32; 4]) -> [u8; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::BlendMode;
 
     fn sample(pixel: [u8; 4], opacity: u8, visible: bool, clipped: bool) -> LayerSample {
         LayerSample {

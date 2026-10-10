@@ -1,8 +1,8 @@
 use std::sync::mpsc;
 
 use chromazen_canvas::{
-    BrushCursor, BrushSpacing, Canvas, CanvasDocument, LayerId, LayerInfo, LayerTransform,
-    PaintTool, StrokePoint,
+    BlendMode, BrushCursor, BrushSpacing, Canvas, CanvasDocument, LayerId, LayerInfo, LayerSample,
+    LayerTransform, PaintTool, StrokePoint, composite_samples,
 };
 
 const RENDER_SIZE: [u32; 2] = [64, 64];
@@ -94,6 +94,7 @@ async fn run() {
     run_brush_cursor_contrast(&device, &queue);
     run_adjustment_preview_over_reference(&device, &queue);
     run_workspace_background_colors(&device, &queue);
+    blend_modes_match_cpu_compositing(&device, &queue);
 }
 
 fn center_alpha(canvas: &Canvas) -> u8 {
@@ -147,6 +148,7 @@ fn load_single_layer(canvas: &mut Canvas, image: image::RgbaImage) {
                     visible: true,
                     opacity: 100,
                     clipped: false,
+                    blend_mode: BlendMode::Normal,
                 }],
             },
             vec![image],
@@ -521,6 +523,75 @@ fn run_workspace_background_colors(device: &wgpu::Device, queue: &wgpu::Queue) {
         }
         let document_offset = ((32 * RENDER_SIZE[0] + 32) * 4) as usize;
         assert_eq!(&pixels[document_offset..document_offset + 3], &[255; 3]);
+    }
+}
+
+fn blend_modes_match_cpu_compositing(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let brush = image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4]));
+    let mut canvas = Canvas::new(
+        device.clone(),
+        queue.clone(),
+        wgpu::TextureFormat::Rgba8Unorm,
+        RENDER_SIZE,
+        [16, 16],
+        &brush,
+        [0.5; 3],
+    )
+    .expect("blend canvas");
+    let background = [230, 220, 40];
+    let base = [200, 60, 30, 255];
+    // Premultiplied and translucent, so both blend terms contribute.
+    let top = [40, 90, 120, 160];
+    let layer = |id, name: &str, blend_mode| LayerInfo {
+        id: LayerId(id),
+        name: name.to_owned(),
+        visible: true,
+        opacity: 80,
+        clipped: false,
+        blend_mode,
+    };
+    for blend_mode in [BlendMode::Multiply, BlendMode::Overlay] {
+        canvas
+            .load_document(
+                &CanvasDocument {
+                    size: [16, 16],
+                    background,
+                    selected_layer: LayerId(1),
+                    layers: vec![
+                        layer(1, "Base", BlendMode::Normal),
+                        layer(2, "Top", blend_mode),
+                    ],
+                },
+                vec![
+                    image::RgbaImage::from_pixel(16, 16, image::Rgba(base)),
+                    image::RgbaImage::from_pixel(16, 16, image::Rgba(top)),
+                ],
+            )
+            .expect("load blend document");
+        let sample = |pixel, blend_mode| LayerSample {
+            pixel,
+            opacity: 80,
+            visible: true,
+            clipped: false,
+            blend_mode,
+        };
+        let expected = composite_samples(
+            [background[0], background[1], background[2], 255].map(|c| f32::from(c) / 255.0),
+            &[sample(base, BlendMode::Normal), sample(top, blend_mode)],
+        )
+        .map(|channel| (channel * 255.0).round() as u8);
+
+        let pixels = render_pixels(device, queue, &mut canvas, None);
+        let offset = ((32 * RENDER_SIZE[0] + 32) * 4) as usize;
+        let actual = &pixels[offset..offset + 3];
+        assert!(
+            actual
+                .iter()
+                .zip(&expected)
+                .all(|(a, e)| a.abs_diff(*e) <= 1),
+            "{blend_mode:?}: GPU {actual:?} != CPU {:?}",
+            &expected[..3]
+        );
     }
 }
 
