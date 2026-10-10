@@ -96,6 +96,7 @@ async fn run() {
     run_workspace_background_colors(&device, &queue);
     blend_modes_match_cpu_compositing(&device, &queue);
     merging_blended_layers_keeps_their_appearance(&device, &queue);
+    blend_mode_changes_render_and_undo(&device, &queue);
 }
 
 fn center_alpha(canvas: &Canvas) -> u8 {
@@ -648,6 +649,65 @@ fn merging_blended_layers_keeps_their_appearance(device: &wgpu::Device, queue: &
             layers[0].blend_mode
         );
     }
+}
+
+fn blend_mode_changes_render_and_undo(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let brush = image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4]));
+    let mut canvas = Canvas::new(
+        device.clone(),
+        queue.clone(),
+        wgpu::TextureFormat::Rgba8Unorm,
+        RENDER_SIZE,
+        [16, 16],
+        &brush,
+        [0.5; 3],
+    )
+    .expect("blend mode canvas");
+    let layer = |pixel, blend_mode| LayerSample {
+        pixel,
+        opacity: 100,
+        visible: true,
+        clipped: false,
+        blend_mode,
+    };
+    let mut layers = [
+        layer([200, 60, 30, 255], BlendMode::Normal),
+        layer([40, 90, 120, 160], BlendMode::Normal),
+    ];
+    load_samples(&mut canvas, [255; 3], &layers);
+    let offset = ((32 * RENDER_SIZE[0] + 32) * 4) as usize;
+    let center = |canvas: &mut Canvas| {
+        render_pixels(device, queue, canvas, None)[offset..offset + 3].to_vec()
+    };
+    let normal = center(&mut canvas);
+
+    assert!(canvas.set_layer_blend_mode(LayerId(2), BlendMode::Multiply));
+    assert!(!canvas.set_layer_blend_mode(LayerId(2), BlendMode::Multiply));
+    layers[1].blend_mode = BlendMode::Multiply;
+    let expected = composite_samples([1.0; 4], &layers).map(|c| (c * 255.0).round() as u8);
+    let multiply = center(&mut canvas);
+    assert!(
+        multiply
+            .iter()
+            .zip(&expected)
+            .all(|(a, e)| a.abs_diff(*e) <= 1),
+        "Multiply {multiply:?} != CPU {:?}",
+        &expected[..3]
+    );
+    assert_ne!(multiply, normal);
+
+    assert!(canvas.undo());
+    assert_eq!(
+        canvas.document_snapshot().layers[1].blend_mode,
+        BlendMode::Normal
+    );
+    assert_eq!(center(&mut canvas), normal);
+    assert!(canvas.redo());
+    assert_eq!(
+        canvas.document_snapshot().layers[1].blend_mode,
+        BlendMode::Multiply
+    );
+    assert_eq!(center(&mut canvas), multiply);
 }
 
 fn load_samples(canvas: &mut Canvas, background: [u8; 3], layers: &[LayerSample]) {

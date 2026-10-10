@@ -1297,6 +1297,27 @@ impl Canvas {
         true
     }
 
+    pub fn set_layer_blend_mode(&mut self, id: LayerId, blend_mode: BlendMode) -> bool {
+        if !self.document_is_idle() {
+            return false;
+        }
+        let Some(layer) = self.layers.iter_mut().find(|layer| layer.id == id) else {
+            return false;
+        };
+        if layer.blend_mode == blend_mode {
+            return false;
+        }
+        let before = std::mem::replace(&mut layer.blend_mode, blend_mode);
+        self.queue.write_buffer(
+            &layer.settings_buffer,
+            0,
+            bytemuck::bytes_of(&LayerSettingsUniform::new(layer.opacity, blend_mode)),
+        );
+        self.history.record_layer_blend_mode(id, before, blend_mode);
+        self.mark_metadata_changed();
+        true
+    }
+
     pub fn set_layer_visibility(&mut self, id: LayerId, visible: bool) -> bool {
         if !self.document_is_idle() {
             return false;
