@@ -217,7 +217,6 @@ impl GuiLayer {
                             })
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label("Opacity");
                                     let mut opacity = layer.opacity;
                                     let opacity_changed = ui
                                         .add(
@@ -252,27 +251,30 @@ impl GuiLayer {
                                         ));
                                     }
                                 });
-                                ui.horizontal(|ui| {
-                                    ui.label("Blend");
-                                    let mut blend_mode = layer.blend_mode;
-                                    for mode in
-                                        [BlendMode::Normal, BlendMode::Multiply, BlendMode::Overlay]
-                                    {
-                                        ui.selectable_value(
-                                            &mut blend_mode,
-                                            mode,
-                                            blend_mode_label(mode),
-                                        );
-                                    }
-                                    if blend_mode != layer.blend_mode {
-                                        self.commands.push(AppCommand::Editor(
-                                            EditorCommand::SetLayerBlendMode {
-                                                id: layer.id,
-                                                blend_mode,
-                                            },
-                                        ));
-                                    }
-                                });
+                                let mut blend_mode = layer.blend_mode;
+                                egui::ComboBox::from_id_salt(("layer_blend_mode", layer.id))
+                                    .selected_text(blend_mode_label(blend_mode))
+                                    .show_ui(ui, |ui| {
+                                        for mode in [
+                                            BlendMode::Normal,
+                                            BlendMode::Multiply,
+                                            BlendMode::Overlay,
+                                        ] {
+                                            ui.selectable_value(
+                                                &mut blend_mode,
+                                                mode,
+                                                blend_mode_label(mode),
+                                            );
+                                        }
+                                    });
+                                if blend_mode != layer.blend_mode {
+                                    self.commands.push(AppCommand::Editor(
+                                        EditorCommand::SetLayerBlendMode {
+                                            id: layer.id,
+                                            blend_mode,
+                                        },
+                                    ));
+                                }
                             });
                     }
 
