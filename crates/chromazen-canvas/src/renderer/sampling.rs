@@ -1,5 +1,7 @@
 use std::sync::mpsc;
 
+use crate::{LayerSample, composite_samples};
+
 use super::{
     PaintLayer,
     tiles::{TILE_SIZE, TileCoord},
@@ -104,64 +106,18 @@ pub(super) fn read_composited_color(
         .0
         .iter()
         .zip(layers)
-        .map(|(pixel, layer)| {
-            (
-                [pixel[0], pixel[1], pixel[2], pixel[3]],
-                layer.opacity,
-                layer.visible,
-                layer.clipped,
-            )
+        .map(|(pixel, layer)| LayerSample {
+            pixel: *pixel,
+            opacity: layer.opacity,
+            visible: layer.visible,
+            clipped: layer.clipped,
+            blend_mode: layer.blend_mode,
         })
         .collect();
-    let color = composite_premultiplied(background, &samples);
+    let color = rgb8(composite_samples(background, &samples));
     drop(mapped);
     readback.unmap();
     Some(color)
-}
-
-fn composite_premultiplied(background: [f32; 4], layers: &[([u8; 4], u8, bool, bool)]) -> [u8; 3] {
-    // Paint textures are premultiplied RGBA and arrive in bottom-to-top render order.
-    let mut color = background;
-    let mut base_index = 0;
-    while base_index < layers.len() {
-        if layers[base_index].3 {
-            base_index += 1;
-            continue;
-        }
-        let mut group_end = base_index + 1;
-        while group_end < layers.len() && layers[group_end].3 {
-            group_end += 1;
-        }
-        let (base_pixel, base_opacity, base_visible, _) = layers[base_index];
-        if base_visible {
-            let base_opacity = f32::from(base_opacity) / 100.0;
-            let base_alpha = f32::from(base_pixel[3]) / 255.0 * base_opacity;
-            let mut group = [0.0; 4];
-            for channel in 0..3 {
-                group[channel] = f32::from(base_pixel[channel]) / 255.0 * base_opacity;
-            }
-            group[3] = base_alpha;
-
-            for (pixel, opacity, visible, _) in &layers[base_index + 1..group_end] {
-                if !visible {
-                    continue;
-                }
-                let opacity = f32::from(*opacity) / 100.0;
-                let alpha = f32::from(pixel[3]) / 255.0 * opacity;
-                for channel in 0..3 {
-                    let source = f32::from(pixel[channel]) / 255.0 * opacity * base_alpha;
-                    group[channel] = source + group[channel] * (1.0 - alpha);
-                }
-            }
-
-            for channel in 0..3 {
-                color[channel] = group[channel] + color[channel] * (1.0 - base_alpha);
-            }
-            color[3] = base_alpha + color[3] * (1.0 - base_alpha);
-        }
-        base_index = group_end;
-    }
-    rgb8(color)
 }
 
 fn rgb8(color: [f32; 4]) -> [u8; 3] {
@@ -171,6 +127,21 @@ fn rgb8(color: [f32; 4]) -> [u8; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::BlendMode;
+
+    fn sample(pixel: [u8; 4], opacity: u8, visible: bool, clipped: bool) -> LayerSample {
+        LayerSample {
+            pixel,
+            opacity,
+            visible,
+            clipped,
+            blend_mode: BlendMode::Normal,
+        }
+    }
+
+    fn composite(background: [f32; 4], layers: &[LayerSample]) -> [u8; 3] {
+        rgb8(composite_samples(background, layers))
+    }
 
     #[test]
     fn maps_document_points_to_pixels() {
@@ -195,7 +166,10 @@ mod tests {
     #[test]
     fn transparent_layers_reveal_the_background() {
         assert_eq!(
-            composite_premultiplied([0.2, 0.4, 0.8, 1.0], &[([0, 0, 0, 0], 100, true, false)]),
+            composite(
+                [0.2, 0.4, 0.8, 1.0],
+                &[sample([0, 0, 0, 0], 100, true, false)]
+            ),
             [51, 102, 204]
         );
     }
@@ -204,19 +178,19 @@ mod tests {
     fn composites_premultiplied_layers_bottom_to_top() {
         // Half-red over blue, followed by half-green over that result.
         let pixels = [
-            ([128, 0, 0, 128], 100, true, false),
-            ([0, 128, 0, 128], 100, true, false),
+            sample([128, 0, 0, 128], 100, true, false),
+            sample([0, 128, 0, 128], 100, true, false),
         ];
-        assert_eq!(
-            composite_premultiplied([0.0, 0.0, 1.0, 1.0], &pixels),
-            [64, 128, 63]
-        );
+        assert_eq!(composite([0.0, 0.0, 1.0, 1.0], &pixels), [64, 128, 63]);
     }
 
     #[test]
     fn layer_opacity_scales_premultiplied_color_and_alpha() {
         assert_eq!(
-            composite_premultiplied([0.0, 0.0, 1.0, 1.0], &[([255, 0, 0, 255], 50, true, false)]),
+            composite(
+                [0.0, 0.0, 1.0, 1.0],
+                &[sample([255, 0, 0, 255], 50, true, false)]
+            ),
             [128, 0, 128]
         );
     }
@@ -224,36 +198,27 @@ mod tests {
     #[test]
     fn clipped_samples_recolor_translucent_base_without_revealing_its_color() {
         let pixels = [
-            ([128, 0, 0, 128], 100, true, false),
-            ([0, 255, 0, 255], 100, true, true),
+            sample([128, 0, 0, 128], 100, true, false),
+            sample([0, 255, 0, 255], 100, true, true),
         ];
-        assert_eq!(
-            composite_premultiplied([0.0, 0.0, 1.0, 1.0], &pixels),
-            [0, 128, 127]
-        );
+        assert_eq!(composite([0.0, 0.0, 1.0, 1.0], &pixels), [0, 128, 127]);
     }
 
     #[test]
     fn hidden_base_hides_clipped_samples() {
         let pixels = [
-            ([255, 0, 0, 255], 100, false, false),
-            ([0, 255, 0, 255], 100, true, true),
+            sample([255, 0, 0, 255], 100, false, false),
+            sample([0, 255, 0, 255], 100, true, true),
         ];
-        assert_eq!(
-            composite_premultiplied([0.0, 0.0, 1.0, 1.0], &pixels),
-            [0, 0, 255]
-        );
+        assert_eq!(composite([0.0, 0.0, 1.0, 1.0], &pixels), [0, 0, 255]);
     }
 
     #[test]
     fn opaque_top_layer_wins() {
         let pixels = [
-            ([255, 0, 0, 255], 100, true, false),
-            ([12, 34, 56, 255], 100, true, false),
+            sample([255, 0, 0, 255], 100, true, false),
+            sample([12, 34, 56, 255], 100, true, false),
         ];
-        assert_eq!(
-            composite_premultiplied([1.0, 1.0, 1.0, 1.0], &pixels),
-            [12, 34, 56]
-        );
+        assert_eq!(composite([1.0, 1.0, 1.0, 1.0], &pixels), [12, 34, 56]);
     }
 }

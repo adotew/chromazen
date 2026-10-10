@@ -23,7 +23,7 @@ use self::{
     selection::SelectionMask,
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue, StampRaw},
     tiles::{
-        Tile, TileCoord, TileSet, all_tile_coords, copy_texture_region, copy_tile,
+        TILE_SIZE, Tile, TileCoord, TileSet, all_tile_coords, copy_texture_region, copy_tile,
         region_has_alpha, tile_document_rect, tile_local_rect, tile_spans,
     },
     view::PaintView,
@@ -35,7 +35,7 @@ pub use self::{
     persistence::LayerReadback,
     view::PaintViewSnapshot,
 };
-use crate::{BrushSpacing, PaintTool, StrokePoint};
+use crate::{BlendMode, BrushSpacing, PaintTool, StrokePoint};
 
 pub const DEFAULT_CANVAS_SIZE: [u32; 2] = [4000, 4000];
 pub(crate) const DEFAULT_BACKGROUND_COLOR: [f32; 4] = [1.0; 4];
@@ -110,7 +110,18 @@ struct StrokeUniform {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct LayerSettingsUniform {
     opacity: f32,
-    padding: [f32; 3],
+    blend_mode: u32,
+    padding: [f32; 2],
+}
+
+impl LayerSettingsUniform {
+    fn new(opacity: u8, blend_mode: BlendMode) -> Self {
+        Self {
+            opacity: f32::from(opacity) / 100.0,
+            blend_mode: blend_mode as u32,
+            padding: [0.0; 2],
+        }
+    }
 }
 
 #[repr(C)]
@@ -966,6 +977,7 @@ impl Canvas {
                     visible: layer.visible,
                     opacity: layer.opacity,
                     clipped: layer.clipped,
+                    blend_mode: layer.blend_mode,
                 })
                 .collect(),
         }
@@ -1043,6 +1055,7 @@ impl Canvas {
                     visible: source.visible,
                     opacity: source.opacity,
                     clipped: source.clipped,
+                    blend_mode: source.blend_mode,
                 },
             );
             if let Some(copy) = copy {
@@ -1178,6 +1191,7 @@ impl Canvas {
                     visible: metadata.visible,
                     opacity: metadata.opacity,
                     clipped: metadata.clipped,
+                    blend_mode: metadata.blend_mode,
                 },
             );
             for coord in all_tile_coords(document_size) {
@@ -1219,6 +1233,7 @@ impl Canvas {
                     visible: layer.visible,
                     opacity: layer.opacity,
                     clipped: layer.clipped,
+                    blend_mode: layer.blend_mode,
                 })
                 .collect(),
             selection: self.selection,
@@ -1282,6 +1297,27 @@ impl Canvas {
         true
     }
 
+    pub fn set_layer_blend_mode(&mut self, id: LayerId, blend_mode: BlendMode) -> bool {
+        if !self.document_is_idle() {
+            return false;
+        }
+        let Some(layer) = self.layers.iter_mut().find(|layer| layer.id == id) else {
+            return false;
+        };
+        if layer.blend_mode == blend_mode {
+            return false;
+        }
+        let before = std::mem::replace(&mut layer.blend_mode, blend_mode);
+        self.queue.write_buffer(
+            &layer.settings_buffer,
+            0,
+            bytemuck::bytes_of(&LayerSettingsUniform::new(layer.opacity, blend_mode)),
+        );
+        self.history.record_layer_blend_mode(id, before, blend_mode);
+        self.mark_metadata_changed();
+        true
+    }
+
     pub fn set_layer_visibility(&mut self, id: LayerId, visible: bool) -> bool {
         if !self.document_is_idle() {
             return false;
@@ -1312,10 +1348,7 @@ impl Canvas {
         self.queue.write_buffer(
             &layer.settings_buffer,
             0,
-            bytemuck::bytes_of(&LayerSettingsUniform {
-                opacity: f32::from(opacity) / 100.0,
-                padding: [0.0; 3],
-            }),
+            bytemuck::bytes_of(&LayerSettingsUniform::new(opacity, layer.blend_mode)),
         );
         self.mark_metadata_changed();
         true
@@ -1435,6 +1468,7 @@ impl Canvas {
             visible: source.visible,
             opacity: source.opacity,
             clipped: source.clipped,
+            blend_mode: source.blend_mode,
         };
         let mut layer =
             self.resources
@@ -1494,19 +1528,17 @@ impl Canvas {
         let lower_name = self.layers[lower_index].name.clone();
         let selection_before = self.selection;
         let resource_id = self.allocate_layer_resource_id();
+        let upper = self.layers.remove(upper_index);
+        let lower = self.layers.remove(lower_index);
         let mut merged = self.resources.create_paint_layer(
             &self.device,
             lower_id,
             resource_id,
-            LayerProperties::new(lower_name),
+            LayerProperties {
+                blend_mode: lower.blend_mode,
+                ..LayerProperties::new(lower_name)
+            },
         );
-
-        let upper = self.layers.remove(upper_index);
-        let lower = self.layers.remove(lower_index);
-        let clipped_bind_group = upper.clipped.then(|| {
-            self.resources
-                .create_clipped_layer_bind_group(&self.device, &upper, &lower)
-        });
         // A clipped layer only shows where its base has content.
         let coords: BTreeSet<_> = if upper.clipped {
             lower.tiles.coords().collect()
@@ -1527,27 +1559,35 @@ impl Canvas {
                     &tile.view,
                     wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                 );
-                let lower_tile = lower.tiles.get(coord);
-                if let Some(lower_tile) = lower_tile {
+                if let Some(lower_tile) = lower.tiles.get(coord) {
                     pass.set_pipeline(&self.resources.merge_pipeline);
                     pass.set_bind_group(0, &lower.blit_bind_group, &[]);
                     pass.set_bind_group(1, &lower_tile.bind_group, &[]);
                     pass.draw(0..3, 0..1);
                 }
-                if let Some(upper_tile) = upper.tiles.get(coord) {
-                    if let (Some(bind_group), Some(lower_tile)) = (&clipped_bind_group, lower_tile)
-                    {
-                        pass.set_pipeline(&self.resources.clipped_layer_merge_pipeline);
-                        pass.set_bind_group(0, bind_group, &[]);
-                        pass.set_bind_group(1, &upper_tile.bind_group, &[]);
-                        pass.set_bind_group(2, &lower_tile.bind_group, &[]);
-                    } else {
-                        pass.set_pipeline(&self.resources.merge_pipeline);
-                        pass.set_bind_group(0, &upper.blit_bind_group, &[]);
-                        pass.set_bind_group(1, &upper_tile.bind_group, &[]);
-                    }
-                    pass.draw(0..3, 0..1);
-                }
+            }
+            if let Some(upper_tile) = upper.tiles.get(coord) {
+                let mut pass = begin_color_pass(
+                    &mut encoder,
+                    "upper layer merge pass",
+                    &self.resources.layer_scratch_tile_view,
+                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                );
+                draw_layer_into_tile(
+                    &mut pass,
+                    &self.resources,
+                    &upper,
+                    &upper_tile.bind_group,
+                    None,
+                );
+                drop(pass);
+                blend_layer_scratch_into_tile(
+                    &mut encoder,
+                    &self.resources,
+                    &upper,
+                    &tile.texture,
+                    &tile.view,
+                );
             }
             merged.tiles.insert(coord, tile);
         }
@@ -1942,9 +1982,13 @@ impl Canvas {
             self.write_brush_cursor(cursor);
         }
 
-        // The cursor and external backdrop consumers sample the completed canvas, so those frames
-        // compose offscreen first.
-        let use_backdrop = brush_cursor.is_some() || retain_backdrop;
+        // The cursor, external backdrop consumers, and blend modes sample the canvas, so those
+        // frames compose offscreen first.
+        let use_backdrop = brush_cursor.is_some()
+            || retain_backdrop
+            || self.layers.iter().any(|layer| {
+                layer.visible && !layer.clipped && layer.blend_mode != BlendMode::Normal
+            });
         let canvas_view = if use_backdrop {
             &self.resources.backdrop_view
         } else {
@@ -2037,10 +2081,12 @@ impl Canvas {
                     base_coords.extend(stroke_coords.iter().copied());
                 }
 
-                if !clips.is_empty() {
+                let blended = base.blend_mode != BlendMode::Normal;
+                if !clips.is_empty() || blended {
                     // Clipped layers must be composed with their base before the group is put over
                     // the canvas. Applying each masked layer directly over the canvas multiplies
                     // the base alpha twice and leaves translucent base color showing through.
+                    // The base's blend mode applies to the whole group.
                     for coord in base_coords {
                         let Some(scissor) = window_tile_rect(coord) else {
                             continue;
@@ -2053,52 +2099,84 @@ impl Canvas {
                             &self.resources.scratch_tile_view,
                             wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         );
-                        let (pipeline, bind_group) = layer_program(
+                        draw_layer_into_tile(
+                            &mut pass,
                             &self.resources,
+                            base,
+                            base_tile,
                             preview_tool(base),
-                            [
-                                &self.resources.group_brush_preview_pipeline,
-                                &self.resources.group_eraser_preview_pipeline,
-                            ],
-                            (&self.resources.merge_pipeline, &base.blit_bind_group),
                         );
-                        pass.set_pipeline(pipeline);
-                        pass.set_bind_group(0, bind_group, &[]);
-                        pass.set_bind_group(1, base_tile, &[]);
-                        if preview_tool(base).is_some() {
-                            // The base preview ignores group 2, but its layout declares it.
-                            pass.set_bind_group(2, base_tile, &[]);
-                        }
-                        pass.draw(0..3, 0..1);
-
                         for layer in &clips {
                             let Some(layer_tile) = tile_bind_group(layer, coord) else {
                                 continue;
                             };
-                            let clipped_bind_group = self
-                                .clipped_layer_bind_groups
-                                .get(&layer.id)
-                                .expect("clipped layer must have a bind group");
-                            let (pipeline, bind_group) = layer_program(
-                                &self.resources,
-                                preview_tool(layer),
-                                [
-                                    &self.resources.group_clipped_brush_preview_pipeline,
-                                    &self.resources.group_clipped_eraser_preview_pipeline,
-                                ],
-                                (
-                                    &self.resources.clipped_layer_merge_pipeline,
-                                    clipped_bind_group,
-                                ),
+                            if layer.blend_mode == BlendMode::Normal {
+                                let clipped_bind_group = self
+                                    .clipped_layer_bind_groups
+                                    .get(&layer.id)
+                                    .expect("clipped layer must have a bind group");
+                                let (pipeline, bind_group) = layer_program(
+                                    &self.resources,
+                                    preview_tool(layer),
+                                    [
+                                        &self.resources.group_clipped_brush_preview_pipeline,
+                                        &self.resources.group_clipped_eraser_preview_pipeline,
+                                    ],
+                                    (
+                                        &self.resources.clipped_layer_merge_pipeline,
+                                        clipped_bind_group,
+                                    ),
+                                );
+                                pass.set_pipeline(pipeline);
+                                pass.set_bind_group(0, bind_group, &[]);
+                                pass.set_bind_group(1, layer_tile, &[]);
+                                pass.set_bind_group(2, base_tile, &[]);
+                                pass.draw(0..3, 0..1);
+                                continue;
+                            }
+                            // A blended clip reads the group composed so far, so it ends the pass.
+                            drop(pass);
+                            let mut layer_pass = begin_color_pass(
+                                encoder,
+                                "blended clip layer pass",
+                                &self.resources.layer_scratch_tile_view,
+                                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                             );
-                            pass.set_pipeline(pipeline);
-                            pass.set_bind_group(0, bind_group, &[]);
-                            pass.set_bind_group(1, layer_tile, &[]);
-                            pass.set_bind_group(2, base_tile, &[]);
-                            pass.draw(0..3, 0..1);
+                            draw_layer_into_tile(
+                                &mut layer_pass,
+                                &self.resources,
+                                layer,
+                                layer_tile,
+                                preview_tool(layer),
+                            );
+                            drop(layer_pass);
+                            blend_layer_scratch_into_tile(
+                                encoder,
+                                &self.resources,
+                                layer,
+                                &self.resources.scratch_tile_texture,
+                                &self.resources.scratch_tile_view,
+                            );
+                            pass = begin_color_pass(
+                                encoder,
+                                "clipping group pass",
+                                &self.resources.scratch_tile_view,
+                                wgpu::LoadOp::Load,
+                            );
                         }
                         drop(pass);
 
+                        if blended {
+                            let origin = [scissor.x, scissor.y];
+                            copy_texture_region(
+                                encoder,
+                                &self.resources.backdrop_texture,
+                                origin,
+                                &self.resources.blend_backdrop_texture,
+                                origin,
+                                [scissor.width, scissor.height],
+                            );
+                        }
                         let mut pass = begin_color_pass(
                             encoder,
                             "clipping group blit pass",
@@ -2106,8 +2184,20 @@ impl Canvas {
                             wgpu::LoadOp::Load,
                         );
                         pass.set_scissor_rect(scissor.x, scissor.y, scissor.width, scissor.height);
-                        pass.set_pipeline(&self.resources.layer_pipeline);
-                        pass.set_bind_group(0, self.resources.full_opacity_blit_bind_group(), &[]);
+                        if blended {
+                            // The blend shader reads the base's mode but not its opacity, which
+                            // the scratch tile already includes.
+                            pass.set_pipeline(&self.resources.blend_layer_pipeline);
+                            pass.set_bind_group(0, &base.blit_bind_group, &[]);
+                            pass.set_bind_group(2, &self.resources.blend_backdrop_bind_group, &[]);
+                        } else {
+                            pass.set_pipeline(&self.resources.layer_pipeline);
+                            pass.set_bind_group(
+                                0,
+                                self.resources.full_opacity_blit_bind_group(),
+                                &[],
+                            );
+                        }
                         pass.set_bind_group(
                             1,
                             &self.resources.tile_slot(coord).scratch_tile_bind_group,
@@ -2528,10 +2618,7 @@ impl Canvas {
             self.queue.write_buffer(
                 &layer.settings_buffer,
                 0,
-                bytemuck::bytes_of(&LayerSettingsUniform {
-                    opacity: f32::from(layer.opacity) / 100.0,
-                    padding: [0.0; 3],
-                }),
+                bytemuck::bytes_of(&LayerSettingsUniform::new(layer.opacity, layer.blend_mode)),
             );
         }
     }
@@ -2746,6 +2833,61 @@ fn layer_program<'a>(
     }
 }
 
+fn draw_layer_into_tile(
+    pass: &mut wgpu::RenderPass<'_>,
+    resources: &RenderResources,
+    layer: &PaintLayer,
+    tile: &wgpu::BindGroup,
+    preview_tool: Option<PaintTool>,
+) {
+    let (pipeline, bind_group) = layer_program(
+        resources,
+        preview_tool,
+        [
+            &resources.group_brush_preview_pipeline,
+            &resources.group_eraser_preview_pipeline,
+        ],
+        (&resources.merge_pipeline, &layer.blit_bind_group),
+    );
+    pass.set_pipeline(pipeline);
+    pass.set_bind_group(0, bind_group, &[]);
+    pass.set_bind_group(1, tile, &[]);
+    if preview_tool.is_some() {
+        // The preview ignores group 2, but its layout declares it.
+        pass.set_bind_group(2, tile, &[]);
+    }
+    pass.draw(0..3, 0..1);
+}
+
+// Copy the target because a render pass cannot sample its own attachment.
+fn blend_layer_scratch_into_tile(
+    encoder: &mut wgpu::CommandEncoder,
+    resources: &RenderResources,
+    layer: &PaintLayer,
+    target: &wgpu::Texture,
+    target_view: &wgpu::TextureView,
+) {
+    copy_texture_region(
+        encoder,
+        target,
+        [0, 0],
+        &resources.group_backdrop_tile_texture,
+        [0, 0],
+        [TILE_SIZE; 2],
+    );
+    let mut pass = begin_color_pass(encoder, "tile blend pass", target_view, wgpu::LoadOp::Load);
+    pass.set_pipeline(if layer.clipped {
+        &resources.blend_clipped_tile_pipeline
+    } else {
+        &resources.blend_tile_pipeline
+    });
+    // The shader reads the mode but not the opacity, which the layer scratch tile includes.
+    pass.set_bind_group(0, &layer.blit_bind_group, &[]);
+    pass.set_bind_group(1, &resources.layer_scratch_bind_group, &[]);
+    pass.set_bind_group(2, &resources.group_backdrop_bind_group, &[]);
+    pass.draw(0..3, 0..1);
+}
+
 /// A layer's tile at `coord`, or a transparent stand-in when a stroke preview may draw there.
 fn layer_tile_bind_group<'a>(
     resources: &'a RenderResources,
@@ -2907,6 +3049,7 @@ mod tests {
                 visible: true,
                 opacity: 100,
                 clipped: false,
+                blend_mode: BlendMode::Normal,
             },
             LayerInfo {
                 id: LayerId(2),
@@ -2914,6 +3057,7 @@ mod tests {
                 visible: true,
                 opacity: 100,
                 clipped: false,
+                blend_mode: BlendMode::Normal,
             },
         ];
         assert_eq!(next_layer_number(&layers), 5);
@@ -2931,6 +3075,7 @@ mod tests {
                 visible: true,
                 opacity: 100,
                 clipped: false,
+                blend_mode: BlendMode::Normal,
             }],
         };
         assert!(document.validate().is_ok());

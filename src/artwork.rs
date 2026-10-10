@@ -27,6 +27,7 @@ pub(crate) fn canvas_document(document: &DocumentManifest) -> CanvasDocument {
                 visible: layer.visible,
                 opacity: layer.opacity,
                 clipped: layer.clipped,
+                blend_mode: layer.blend_mode,
             })
             .collect(),
     }
@@ -49,6 +50,7 @@ pub(crate) fn document_manifest(document: CanvasDocument) -> DocumentManifest {
                 visible: layer.visible,
                 opacity: layer.opacity,
                 clipped: layer.clipped,
+                blend_mode: layer.blend_mode,
                 file: format!("layers/{}.png", layer.id.0),
             })
             .collect(),
@@ -75,6 +77,7 @@ mod tests {
                 visible: true,
                 opacity: 80,
                 clipped: false,
+                blend_mode: chromazen_canvas::BlendMode::Multiply,
                 file: "layers/7.png".to_owned(),
             }],
             references: Vec::new(),

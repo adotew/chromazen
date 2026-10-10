@@ -1,4 +1,5 @@
 use super::{LAYER_PREVIEW_SIZE, tiles::TileSet};
+use crate::BlendMode;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LayerId(pub u64);
@@ -19,6 +20,7 @@ pub(crate) struct LayerProperties {
     pub(crate) visible: bool,
     pub(crate) opacity: u8,
     pub(crate) clipped: bool,
+    pub(crate) blend_mode: BlendMode,
 }
 
 impl LayerProperties {
@@ -28,6 +30,7 @@ impl LayerProperties {
             visible: true,
             opacity: 100,
             clipped: false,
+            blend_mode: BlendMode::Normal,
         }
     }
 }
@@ -39,6 +42,7 @@ pub(crate) struct PaintLayer {
     pub(crate) visible: bool,
     pub(crate) opacity: u8,
     pub(crate) clipped: bool,
+    pub(crate) blend_mode: BlendMode,
     pub(crate) settings_buffer: wgpu::Buffer,
     pub(crate) tiles: TileSet,
     pub(crate) blit_bind_group: wgpu::BindGroup,
@@ -62,6 +66,7 @@ pub struct LayerInfo {
     pub visible: bool,
     pub opacity: u8,
     pub clipped: bool,
+    pub blend_mode: BlendMode,
 }
 
 #[derive(Clone, Debug, PartialEq)]

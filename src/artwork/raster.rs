@@ -1,3 +1,4 @@
+use chromazen_canvas::{BlendMode, LayerSample, composite_samples};
 use image::ImageEncoder;
 
 pub(crate) struct CompositeLayer<'a> {
@@ -5,6 +6,7 @@ pub(crate) struct CompositeLayer<'a> {
     pub(crate) visible: bool,
     pub(crate) opacity: u8,
     pub(crate) clipped: bool,
+    pub(crate) blend_mode: BlendMode,
 }
 
 /// Flattens bottom-to-top paint layers over an opaque background.
@@ -26,56 +28,22 @@ pub(crate) fn flatten_premultiplied_layers(
         return Err("composited layers must have matching dimensions".to_owned());
     }
 
-    let mut composite = image::RgbaImage::from_pixel(
-        size.0,
-        size.1,
-        image::Rgba([background[0], background[1], background[2], 255]),
-    );
-    let mut base_index = 0;
-    while base_index < layers.len() {
-        if layers[base_index].clipped {
-            base_index += 1;
-            continue;
-        }
-        let mut group_end = base_index + 1;
-        while group_end < layers.len() && layers[group_end].clipped {
-            group_end += 1;
-        }
-        let base = &layers[base_index];
-        if base.visible {
-            let base_opacity = u32::from(base.opacity.min(100));
-            for (pixel_index, (destination, base_pixel)) in
-                composite.pixels_mut().zip(base.image.pixels()).enumerate()
-            {
-                let base_alpha = u32::from(base_pixel[3]) * base_opacity / 100;
-                let mut group_rgb = [0; 3];
-                for channel in 0..3 {
-                    group_rgb[channel] = u32::from(base_pixel[channel]) * base_opacity / 100;
-                }
-
-                for layer in layers[base_index + 1..group_end]
-                    .iter()
-                    .filter(|layer| layer.visible)
-                {
-                    let source = &layer.image.as_raw()[pixel_index * 4..pixel_index * 4 + 4];
-                    let opacity = u32::from(layer.opacity.min(100));
-                    let alpha = u32::from(source[3]) * opacity / 100;
-                    let inverse = 255 - alpha;
-                    for channel in 0..3 {
-                        let source = u32::from(source[channel]) * opacity / 100 * base_alpha / 255;
-                        group_rgb[channel] = (source + group_rgb[channel] * inverse / 255).min(255);
-                    }
-                }
-
-                let inverse_base = 255 - base_alpha;
-                for channel in 0..3 {
-                    destination[channel] = (group_rgb[channel]
-                        + u32::from(destination[channel]) * inverse_base / 255)
-                        .min(255) as u8;
-                }
-            }
-        }
-        base_index = group_end;
+    let background = [background[0], background[1], background[2], 255]
+        .map(|channel| f32::from(channel) / 255.0);
+    let mut samples = Vec::with_capacity(layers.len());
+    let mut composite = image::RgbaImage::new(size.0, size.1);
+    for (x, y, destination) in composite.enumerate_pixels_mut() {
+        samples.clear();
+        samples.extend(layers.iter().map(|layer| LayerSample {
+            pixel: layer.image.get_pixel(x, y).0,
+            opacity: layer.opacity,
+            visible: layer.visible,
+            clipped: layer.clipped,
+            blend_mode: layer.blend_mode,
+        }));
+        let color = composite_samples(background, &samples);
+        *destination =
+            image::Rgba(color.map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8));
     }
     Ok(composite)
 }
@@ -103,6 +71,7 @@ mod tests {
             visible: true,
             opacity: 100,
             clipped: false,
+            blend_mode: BlendMode::Normal,
         }
     }
 
@@ -119,7 +88,7 @@ mod tests {
         let top = image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 128, 0, 128]));
         let composite =
             flatten_premultiplied_layers(&[layer(&bottom), layer(&top)], [0, 0, 255]).unwrap();
-        assert_eq!(composite.get_pixel(0, 0), &image::Rgba([63, 128, 63, 255]));
+        assert_eq!(composite.get_pixel(0, 0), &image::Rgba([64, 128, 63, 255]));
     }
 
     #[test]
@@ -132,16 +101,18 @@ mod tests {
                 visible: true,
                 opacity: 50,
                 clipped: false,
+                blend_mode: BlendMode::Normal,
             },
             CompositeLayer {
                 image: &green,
                 visible: false,
                 opacity: 100,
                 clipped: false,
+                blend_mode: BlendMode::Normal,
             },
         ];
         let composite = flatten_premultiplied_layers(&layers, [0, 0, 255]).unwrap();
-        assert_eq!(composite.get_pixel(0, 0), &image::Rgba([127, 0, 128, 255]));
+        assert_eq!(composite.get_pixel(0, 0), &image::Rgba([128, 0, 128, 255]));
     }
 
     #[test]
@@ -154,12 +125,14 @@ mod tests {
                 visible: true,
                 opacity: 100,
                 clipped: false,
+                blend_mode: BlendMode::Normal,
             },
             CompositeLayer {
                 image: &clipped,
                 visible: true,
                 opacity: 100,
                 clipped: true,
+                blend_mode: BlendMode::Normal,
             },
         ];
         let composite = flatten_premultiplied_layers(&layers, [0, 0, 255]).unwrap();
@@ -176,12 +149,14 @@ mod tests {
                 visible: true,
                 opacity: 100,
                 clipped: false,
+                blend_mode: BlendMode::Normal,
             },
             CompositeLayer {
                 image: &black,
                 visible: true,
                 opacity: 100,
                 clipped: true,
+                blend_mode: BlendMode::Normal,
             },
         ];
         let composite = flatten_premultiplied_layers(&layers, [255; 3]).unwrap();
@@ -201,12 +176,14 @@ mod tests {
                 visible: false,
                 opacity: 100,
                 clipped: false,
+                blend_mode: BlendMode::Normal,
             },
             CompositeLayer {
                 image: &clipped,
                 visible: true,
                 opacity: 100,
                 clipped: true,
+                blend_mode: BlendMode::Normal,
             },
         ];
         let composite = flatten_premultiplied_layers(&layers, [0, 0, 255]).unwrap();

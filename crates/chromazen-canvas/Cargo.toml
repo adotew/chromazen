@@ -9,6 +9,7 @@ bytemuck = { version = "1.16", features = ["derive"] }
 futures-channel = "0.3"
 image = { version = "0.25", default-features = false }
 log = "0.4"
+serde = { version = "1", features = ["derive"] }
 wgpu = "29.0.3"
 
 [dev-dependencies]

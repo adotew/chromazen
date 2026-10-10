@@ -17,6 +17,7 @@ const TILE_SIZE: i32 = 512;
 
 struct LayerSettings {
   opacity: f32,
+  blendMode: u32,
 };
 
 struct View {

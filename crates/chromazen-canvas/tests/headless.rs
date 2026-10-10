@@ -1,8 +1,8 @@
 use std::sync::mpsc;
 
 use chromazen_canvas::{
-    BrushCursor, BrushSpacing, Canvas, CanvasDocument, LayerId, LayerInfo, LayerTransform,
-    PaintTool, StrokePoint,
+    BlendMode, BrushCursor, BrushSpacing, Canvas, CanvasDocument, LayerId, LayerInfo, LayerSample,
+    LayerTransform, PaintTool, StrokePoint, composite_samples,
 };
 
 const RENDER_SIZE: [u32; 2] = [64, 64];
@@ -94,6 +94,9 @@ async fn run() {
     run_brush_cursor_contrast(&device, &queue);
     run_adjustment_preview_over_reference(&device, &queue);
     run_workspace_background_colors(&device, &queue);
+    blend_modes_match_cpu_compositing(&device, &queue);
+    merging_blended_layers_keeps_their_appearance(&device, &queue);
+    blend_mode_changes_render_and_undo(&device, &queue);
 }
 
 fn center_alpha(canvas: &Canvas) -> u8 {
@@ -147,6 +150,7 @@ fn load_single_layer(canvas: &mut Canvas, image: image::RgbaImage) {
                     visible: true,
                     opacity: 100,
                     clipped: false,
+                    blend_mode: BlendMode::Normal,
                 }],
             },
             vec![image],
@@ -522,6 +526,179 @@ fn run_workspace_background_colors(device: &wgpu::Device, queue: &wgpu::Queue) {
         let document_offset = ((32 * RENDER_SIZE[0] + 32) * 4) as usize;
         assert_eq!(&pixels[document_offset..document_offset + 3], &[255; 3]);
     }
+}
+
+fn blend_canvas(device: &wgpu::Device, queue: &wgpu::Queue) -> Canvas {
+    let brush = image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4]));
+    Canvas::new(
+        device.clone(),
+        queue.clone(),
+        wgpu::TextureFormat::Rgba8Unorm,
+        RENDER_SIZE,
+        [16, 16],
+        &brush,
+        [0.5; 3],
+    )
+    .expect("blend canvas")
+}
+
+fn sample(pixel: [u8; 4], clipped: bool, blend_mode: BlendMode) -> LayerSample {
+    LayerSample {
+        pixel,
+        opacity: 80,
+        visible: true,
+        clipped,
+        blend_mode,
+    }
+}
+
+fn center_rgb(device: &wgpu::Device, queue: &wgpu::Queue, canvas: &mut Canvas) -> [u8; 3] {
+    let pixels = render_pixels(device, queue, canvas, None);
+    let offset = ((32 * RENDER_SIZE[0] + 32) * 4) as usize;
+    [pixels[offset], pixels[offset + 1], pixels[offset + 2]]
+}
+
+fn cpu_rgb(background: [u8; 3], layers: &[LayerSample]) -> [u8; 3] {
+    let background = [background[0], background[1], background[2], 255];
+    let color = composite_samples(background.map(|c| f32::from(c) / 255.0), layers);
+    [color[0], color[1], color[2]].map(|c| (c * 255.0).round() as u8)
+}
+
+fn assert_rgb_close(actual: [u8; 3], expected: [u8; 3], context: &str) {
+    assert!(
+        actual.iter().zip(expected).all(|(a, e)| a.abs_diff(e) <= 1),
+        "{context}: {actual:?} != {expected:?}"
+    );
+}
+
+fn blend_modes_match_cpu_compositing(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let mut canvas = blend_canvas(device, queue);
+    let base = [200, 60, 30, 255];
+    // Premultiplied and translucent, so every blend term contributes.
+    let top = [40, 90, 120, 160];
+    let translucent_base = [90, 60, 20, 140];
+    let scenarios = [
+        vec![
+            sample(base, false, BlendMode::Normal),
+            sample(top, false, BlendMode::Multiply),
+        ],
+        vec![
+            sample(base, false, BlendMode::Normal),
+            sample(top, false, BlendMode::Overlay),
+        ],
+        // A Normal clip after a blended one continues the group in a new pass.
+        vec![
+            sample(translucent_base, false, BlendMode::Normal),
+            sample(top, true, BlendMode::Multiply),
+            sample([20, 10, 0, 40], true, BlendMode::Normal),
+        ],
+        vec![
+            sample(translucent_base, false, BlendMode::Overlay),
+            sample(top, true, BlendMode::Overlay),
+        ],
+    ];
+    let background = [230, 220, 40];
+    for layers in scenarios {
+        load_samples(&mut canvas, background, &layers);
+        assert_rgb_close(
+            center_rgb(device, queue, &mut canvas),
+            cpu_rgb(background, &layers),
+            &format!("{layers:?}"),
+        );
+    }
+}
+
+fn merging_blended_layers_keeps_their_appearance(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let mut canvas = blend_canvas(device, queue);
+    let opaque_base = LayerSample {
+        opacity: 100,
+        ..sample([200, 60, 30, 255], false, BlendMode::Normal)
+    };
+    let top = [40, 90, 120, 160];
+    let translucent_base = [90, 60, 20, 140];
+    // Merging matches the display when the upper layer blends only against the lower one, so
+    // an unclipped upper layer needs an opaque lower layer.
+    let scenarios = [
+        [opaque_base, sample(top, false, BlendMode::Normal)],
+        [opaque_base, sample(top, false, BlendMode::Multiply)],
+        [
+            sample(translucent_base, false, BlendMode::Normal),
+            sample(top, true, BlendMode::Overlay),
+        ],
+        [
+            sample(translucent_base, false, BlendMode::Overlay),
+            sample(top, true, BlendMode::Normal),
+        ],
+    ];
+    for layers in scenarios {
+        load_samples(&mut canvas, [230, 220, 40], &layers);
+        let before = center_rgb(device, queue, &mut canvas);
+        assert!(canvas.merge_layer_down(LayerId(2)));
+        let after = center_rgb(device, queue, &mut canvas);
+        assert_rgb_close(after, before, &format!("merge {layers:?}"));
+        assert_eq!(
+            canvas.document_snapshot().layers[0].blend_mode,
+            layers[0].blend_mode
+        );
+    }
+}
+
+fn blend_mode_changes_render_and_undo(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let mut canvas = blend_canvas(device, queue);
+    let opaque = |pixel| LayerSample {
+        opacity: 100,
+        ..sample(pixel, false, BlendMode::Normal)
+    };
+    let mut layers = [opaque([200, 60, 30, 255]), opaque([40, 90, 120, 160])];
+    load_samples(&mut canvas, [255; 3], &layers);
+    let normal = center_rgb(device, queue, &mut canvas);
+
+    assert!(canvas.set_layer_blend_mode(LayerId(2), BlendMode::Multiply));
+    assert!(!canvas.set_layer_blend_mode(LayerId(2), BlendMode::Multiply));
+    layers[1].blend_mode = BlendMode::Multiply;
+    let multiply = center_rgb(device, queue, &mut canvas);
+    assert_rgb_close(multiply, cpu_rgb([255; 3], &layers), "Multiply");
+    assert_ne!(multiply, normal);
+
+    assert!(canvas.undo());
+    assert_eq!(
+        canvas.document_snapshot().layers[1].blend_mode,
+        BlendMode::Normal
+    );
+    assert_eq!(center_rgb(device, queue, &mut canvas), normal);
+    assert!(canvas.redo());
+    assert_eq!(
+        canvas.document_snapshot().layers[1].blend_mode,
+        BlendMode::Multiply
+    );
+    assert_eq!(center_rgb(device, queue, &mut canvas), multiply);
+}
+
+fn load_samples(canvas: &mut Canvas, background: [u8; 3], layers: &[LayerSample]) {
+    canvas
+        .load_document(
+            &CanvasDocument {
+                size: [16, 16],
+                background,
+                selected_layer: LayerId(1),
+                layers: (1..)
+                    .zip(layers)
+                    .map(|(id, layer)| LayerInfo {
+                        id: LayerId(id),
+                        name: format!("Layer {id}"),
+                        visible: layer.visible,
+                        opacity: layer.opacity,
+                        clipped: layer.clipped,
+                        blend_mode: layer.blend_mode,
+                    })
+                    .collect(),
+            },
+            layers
+                .iter()
+                .map(|layer| image::RgbaImage::from_pixel(16, 16, image::Rgba(layer.pixel)))
+                .collect(),
+        )
+        .expect("load blend document");
 }
 
 fn render_pixels(

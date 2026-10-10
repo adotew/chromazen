@@ -5,6 +5,7 @@
 
 struct LayerSettings {
   opacity: f32,
+  blendMode: u32,
 };
 
 @vertex

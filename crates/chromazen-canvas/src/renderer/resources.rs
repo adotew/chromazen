@@ -1,5 +1,7 @@
 use wgpu::util::DeviceExt;
 
+use crate::BlendMode;
+
 use super::layers::{LayerId, LayerProperties, LayerResourceId, PaintLayer};
 use super::selection::SelectionMask;
 use super::stamps::{MAX_STAMPS_PER_FRAME, StampRaw};
@@ -41,10 +43,18 @@ pub(crate) struct RenderResources {
     pub(crate) cursor_bind_group: wgpu::BindGroup,
     pub(crate) backdrop_texture: wgpu::Texture,
     pub(crate) backdrop_view: wgpu::TextureView,
+    pub(crate) blend_backdrop_texture: wgpu::Texture,
+    pub(crate) blend_backdrop_bind_group: wgpu::BindGroup,
+    blend_backdrop_bind_group_layout: wgpu::BindGroupLayout,
     smudge_snapshot: Option<SmudgeSnapshot>,
     // Clipping groups are composed here one tile at a time before being drawn to the canvas.
-    _scratch_tile_texture: wgpu::Texture,
+    pub(crate) scratch_tile_texture: wgpu::Texture,
     pub(crate) scratch_tile_view: wgpu::TextureView,
+    _layer_scratch_tile_texture: wgpu::Texture,
+    pub(crate) layer_scratch_tile_view: wgpu::TextureView,
+    pub(crate) layer_scratch_bind_group: wgpu::BindGroup,
+    pub(crate) group_backdrop_tile_texture: wgpu::Texture,
+    pub(crate) group_backdrop_bind_group: wgpu::BindGroup,
     _empty_tile_texture: wgpu::Texture,
     empty_tile_view: wgpu::TextureView,
     tile_slots: Vec<TileSlot>,
@@ -77,8 +87,11 @@ pub(crate) struct RenderResources {
     pub(crate) screen_pipeline: wgpu::RenderPipeline,
     pub(crate) background_pipeline: wgpu::RenderPipeline,
     pub(crate) layer_pipeline: wgpu::RenderPipeline,
+    pub(crate) blend_layer_pipeline: wgpu::RenderPipeline,
     pub(crate) clipped_layer_merge_pipeline: wgpu::RenderPipeline,
     pub(crate) merge_pipeline: wgpu::RenderPipeline,
+    pub(crate) blend_tile_pipeline: wgpu::RenderPipeline,
+    pub(crate) blend_clipped_tile_pipeline: wgpu::RenderPipeline,
     pub(crate) brush_preview_pipeline: wgpu::RenderPipeline,
     pub(crate) eraser_preview_pipeline: wgpu::RenderPipeline,
     pub(crate) group_brush_preview_pipeline: wgpu::RenderPipeline,
@@ -182,8 +195,14 @@ impl RenderResources {
         });
         let (backdrop_texture, backdrop_view) =
             create_backdrop_texture(device, surface_size, surface_format);
+        let (blend_backdrop_texture, blend_backdrop_view) =
+            create_backdrop_texture(device, surface_size, surface_format);
         let (scratch_tile_texture, scratch_tile_view) =
             create_tile_texture(device, "clipping group scratch tile");
+        let (layer_scratch_tile_texture, layer_scratch_tile_view) =
+            create_tile_texture(device, "blended layer scratch tile");
+        let (group_backdrop_tile_texture, group_backdrop_tile_view) =
+            create_tile_texture(device, "blend backdrop tile");
         // Shaders load tile texels by integer coordinate without bounds checks, so this stand-in
         // for a missing tile matches a tile's size. wgpu zero-initializes it, which is transparent.
         let (empty_tile_texture, empty_tile_view) =
@@ -191,10 +210,7 @@ impl RenderResources {
         let full_opacity_settings_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("full opacity settings uniform buffer"),
-                contents: bytemuck::bytes_of(&LayerSettingsUniform {
-                    opacity: 1.0,
-                    padding: [0.0; 3],
-                }),
+                contents: bytemuck::bytes_of(&LayerSettingsUniform::new(100, BlendMode::Normal)),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
         let (stroke_mask_texture, stroke_mask_view) =
@@ -304,6 +320,26 @@ impl RenderResources {
                 label: Some("blit bind group layout"),
                 entries: &[uniform_layout_entry(0), uniform_layout_entry(1)],
             });
+        let blend_backdrop_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("blend backdrop bind group layout"),
+                entries: &[texture_layout_entry(0)],
+            });
+        let blend_backdrop_bind_group = create_blend_backdrop_bind_group(
+            device,
+            &blend_backdrop_bind_group_layout,
+            &blend_backdrop_view,
+        );
+        let layer_scratch_bind_group = create_blend_backdrop_bind_group(
+            device,
+            &blend_backdrop_bind_group_layout,
+            &layer_scratch_tile_view,
+        );
+        let group_backdrop_bind_group = create_blend_backdrop_bind_group(
+            device,
+            &blend_backdrop_bind_group_layout,
+            &group_backdrop_tile_view,
+        );
         let tile_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("tile bind group layout"),
@@ -461,6 +497,27 @@ impl RenderResources {
             bind_group_layouts: &[Some(&blit_bind_group_layout), Some(&tile_bind_group_layout)],
             immediate_size: 0,
         });
+        let blend_layer_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("blend layer pipeline layout"),
+                bind_group_layouts: &[
+                    Some(&blit_bind_group_layout),
+                    Some(&tile_bind_group_layout),
+                    Some(&blend_backdrop_bind_group_layout),
+                ],
+                immediate_size: 0,
+            });
+        // Tile-space blends load both textures at the fragment position, so neither needs an origin.
+        let blend_tile_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("tile blend pipeline layout"),
+                bind_group_layouts: &[
+                    Some(&blit_bind_group_layout),
+                    Some(&blend_backdrop_bind_group_layout),
+                    Some(&blend_backdrop_bind_group_layout),
+                ],
+                immediate_size: 0,
+            });
         let full_opacity_blit_bind_group = create_blit_bind_group(
             device,
             &blit_bind_group_layout,
@@ -533,7 +590,13 @@ impl RenderResources {
         });
         let blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("blit shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blit.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                concat!(
+                    include_str!("shaders/blend.wgsl"),
+                    include_str!("shaders/blit.wgsl")
+                )
+                .into(),
+            ),
         });
         let clipped_layer_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("clipped layer shader"),
@@ -541,7 +604,13 @@ impl RenderResources {
         });
         let merge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("layer merge shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/merge.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                concat!(
+                    include_str!("shaders/blend.wgsl"),
+                    include_str!("shaders/merge.wgsl")
+                )
+                .into(),
+            ),
         });
         let stroke_composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("stroke composite shader"),
@@ -722,7 +791,7 @@ impl RenderResources {
             multiview_mask: None,
             cache: None,
         });
-        let create_blit_pipeline = |label, layout, entry_point| {
+        let create_blit_pipeline = |label, layout, entry_point, blend| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(layout),
@@ -738,7 +807,7 @@ impl RenderResources {
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: surface_format,
-                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        blend,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
@@ -756,9 +825,20 @@ impl RenderResources {
             "background pipeline",
             &background_pipeline_layout,
             "fs_background",
+            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
         );
-        let layer_pipeline =
-            create_blit_pipeline("layer pipeline", &blit_pipeline_layout, "fs_layer");
+        let layer_pipeline = create_blit_pipeline(
+            "layer pipeline",
+            &blit_pipeline_layout,
+            "fs_layer",
+            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+        );
+        let blend_layer_pipeline = create_blit_pipeline(
+            "blend layer pipeline",
+            &blend_layer_pipeline_layout,
+            "fs_blend_layer",
+            None,
+        );
         let clipping_group_blend = wgpu::BlendState {
             color: wgpu::BlendComponent {
                 operation: wgpu::BlendOperation::Add,
@@ -829,6 +909,39 @@ impl RenderResources {
             multiview_mask: None,
             cache: None,
         });
+        let create_blend_tile_pipeline = |label, entry_point| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&blend_tile_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &merge_shader,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &merge_shader,
+                    entry_point: Some(entry_point),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: DOCUMENT_FORMAT,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let blend_tile_pipeline = create_blend_tile_pipeline("tile blend pipeline", "fs_blend");
+        let blend_clipped_tile_pipeline =
+            create_blend_tile_pipeline("clipped tile blend pipeline", "fs_blend_clipped");
         let create_preview_pipeline = |label, entry_point| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
@@ -1036,9 +1149,17 @@ impl RenderResources {
             cursor_bind_group,
             backdrop_texture,
             backdrop_view,
+            blend_backdrop_texture,
+            blend_backdrop_bind_group,
+            blend_backdrop_bind_group_layout,
             smudge_snapshot: None,
-            _scratch_tile_texture: scratch_tile_texture,
+            scratch_tile_texture,
             scratch_tile_view,
+            _layer_scratch_tile_texture: layer_scratch_tile_texture,
+            layer_scratch_tile_view,
+            layer_scratch_bind_group,
+            group_backdrop_tile_texture,
+            group_backdrop_bind_group,
             _empty_tile_texture: empty_tile_texture,
             empty_tile_view,
             tile_slots,
@@ -1071,8 +1192,11 @@ impl RenderResources {
             screen_pipeline,
             background_pipeline,
             layer_pipeline,
+            blend_layer_pipeline,
             clipped_layer_merge_pipeline,
             merge_pipeline,
+            blend_tile_pipeline,
+            blend_clipped_tile_pipeline,
             brush_preview_pipeline,
             eraser_preview_pipeline,
             group_brush_preview_pipeline,
@@ -1207,6 +1331,10 @@ impl RenderResources {
         );
         self.backdrop_texture = texture;
         self.backdrop_view = view;
+        let (texture, view) = create_backdrop_texture(device, size, format);
+        self.blend_backdrop_bind_group =
+            create_blend_backdrop_bind_group(device, &self.blend_backdrop_bind_group_layout, &view);
+        self.blend_backdrop_texture = texture;
     }
 
     pub(crate) fn resize_document(
@@ -1293,10 +1421,10 @@ impl RenderResources {
     ) -> PaintLayer {
         let settings_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("layer settings uniform buffer"),
-            contents: bytemuck::bytes_of(&LayerSettingsUniform {
-                opacity: f32::from(properties.opacity) / 100.0,
-                padding: [0.0; 3],
-            }),
+            contents: bytemuck::bytes_of(&LayerSettingsUniform::new(
+                properties.opacity,
+                properties.blend_mode,
+            )),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let blit_bind_group = create_blit_bind_group(
@@ -1313,6 +1441,7 @@ impl RenderResources {
             visible: properties.visible,
             opacity: properties.opacity,
             clipped: properties.clipped,
+            blend_mode: properties.blend_mode,
             settings_buffer,
             tiles: TileSet::default(),
             blit_bind_group,
@@ -1604,6 +1733,7 @@ fn create_backdrop_texture(
         format,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT
             | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC
             | wgpu::TextureUsages::COPY_DST,
         view_formats: &[format],
     });
@@ -1618,6 +1748,21 @@ fn sampler_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
         count: None,
     }
+}
+
+fn create_blend_backdrop_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    view: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("blend backdrop bind group"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(view),
+        }],
+    })
 }
 
 fn texture_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {

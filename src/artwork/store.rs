@@ -558,6 +558,7 @@ mod tests {
                     visible: true,
                     opacity: 100,
                     clipped: false,
+                    blend_mode: chromazen_canvas::BlendMode::Normal,
                     file: "layers/1.png".to_owned(),
                 }],
                 references: Vec::new(),

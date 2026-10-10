@@ -2,6 +2,7 @@ use super::{
     layers::{LayerId, PaintLayer},
     tiles::{TILE_BYTES, Tile, TileCoord, TileSet},
 };
+use crate::BlendMode;
 
 const HISTORY_BUDGET_BYTES: u64 = 256 * 1024 * 1024;
 
@@ -100,6 +101,11 @@ enum HistoryAction {
         before: u8,
         after: u8,
     },
+    LayerBlendMode {
+        layer_id: LayerId,
+        before: BlendMode,
+        after: BlendMode,
+    },
     MoveLayer {
         layer_id: LayerId,
         before: usize,
@@ -163,6 +169,7 @@ impl HistoryAction {
             | Self::LayerVisibility { .. }
             | Self::LayerClipping { .. }
             | Self::LayerOpacity { .. }
+            | Self::LayerBlendMode { .. }
             | Self::MoveLayer { .. } => 0,
         }
     }
@@ -177,6 +184,7 @@ impl HistoryAction {
             | Self::LayerVisibility { .. }
             | Self::LayerClipping { .. }
             | Self::LayerOpacity { .. }
+            | Self::LayerBlendMode { .. }
             | Self::MoveLayer { .. }
             | Self::CanvasResize { .. }
             | Self::MergeDown { .. } => HistoryTarget::Structure,
@@ -379,6 +387,21 @@ impl PaintHistory {
         }
     }
 
+    pub(crate) fn record_layer_blend_mode(
+        &mut self,
+        layer_id: LayerId,
+        before: BlendMode,
+        after: BlendMode,
+    ) {
+        if before != after {
+            self.push_structural_action(HistoryAction::LayerBlendMode {
+                layer_id,
+                before,
+                after,
+            });
+        }
+    }
+
     pub(crate) fn record_move_layer(&mut self, layer_id: LayerId, before: usize, after: usize) {
         if before != after {
             self.push_structural_action(HistoryAction::MoveLayer {
@@ -483,6 +506,12 @@ impl PaintHistory {
                 layer_id, before, ..
             } => {
                 layer_mut(layers, *layer_id).opacity = *before;
+                StructureEffect::MetadataOnly
+            }
+            HistoryAction::LayerBlendMode {
+                layer_id, before, ..
+            } => {
+                layer_mut(layers, *layer_id).blend_mode = *before;
                 StructureEffect::MetadataOnly
             }
             HistoryAction::MoveLayer {
@@ -593,6 +622,12 @@ impl PaintHistory {
                 layer_id, after, ..
             } => {
                 layer_mut(layers, *layer_id).opacity = *after;
+                StructureEffect::MetadataOnly
+            }
+            HistoryAction::LayerBlendMode {
+                layer_id, after, ..
+            } => {
+                layer_mut(layers, *layer_id).blend_mode = *after;
                 StructureEffect::MetadataOnly
             }
             HistoryAction::MoveLayer {
@@ -767,6 +802,11 @@ mod tests {
                 layer_id: LayerId(1),
                 before: 100,
                 after: 50,
+            },
+            HistoryAction::LayerBlendMode {
+                layer_id: LayerId(1),
+                before: BlendMode::Normal,
+                after: BlendMode::Multiply,
             },
             HistoryAction::MoveLayer {
                 layer_id: LayerId(1),

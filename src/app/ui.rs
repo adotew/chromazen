@@ -25,8 +25,9 @@ use egui_winit::State as EguiWinitState;
 use winit::window::Window;
 
 use chromazen_canvas::{
-    Canvas, CanvasSizeConstraints, DEFAULT_CANVAS_SIZE, DropEdge, LayerContentBounds, LayerId,
-    LayerResourceId, LayerSnapshot, LayerTransform, PaintViewSnapshot, merge_down_target_index,
+    BlendMode, Canvas, CanvasSizeConstraints, DEFAULT_CANVAS_SIZE, DropEdge, LayerContentBounds,
+    LayerId, LayerResourceId, LayerSnapshot, LayerTransform, PaintViewSnapshot,
+    merge_down_target_index,
 };
 
 use crate::{
@@ -892,7 +893,7 @@ struct LayerRow<'a> {
     texture_id: Option<egui::TextureId>,
     solid_color: Option<egui::Color32>,
     visible: Option<bool>,
-    opacity: Option<u8>,
+    mode: Option<(BlendMode, u8)>,
     drag_id: Option<LayerId>,
 }
 
@@ -903,6 +904,14 @@ struct LayerRowResponse {
     name_rect: egui::Rect,
 }
 
+fn blend_mode_label(blend_mode: BlendMode) -> &'static str {
+    match blend_mode {
+        BlendMode::Normal => "Normal",
+        BlendMode::Multiply => "Multiply",
+        BlendMode::Overlay => "Overlay",
+    }
+}
+
 fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
     let LayerRow {
         name,
@@ -910,7 +919,7 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
         texture_id,
         solid_color,
         visible,
-        opacity,
+        mode: layer_mode,
         drag_id,
     } = layer;
     let sense = if drag_id.is_some() {
@@ -934,14 +943,14 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand)
     });
-    let mode = opacity.map(|opacity| {
+    let mode = layer_mode.map(|(blend_mode, opacity)| {
         let mode_rect = egui::Rect::from_center_size(
             egui::pos2(rect.right() - 45.0, rect.center().y),
             egui::vec2(24.0, 28.0),
         );
         ui.interact(mode_rect, response.id.with("mode"), egui::Sense::click())
             .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text(format!("Normal · {opacity}%"))
+            .on_hover_text(format!("{} · {opacity}%", blend_mode_label(blend_mode)))
     });
     let visuals = ui.style().interact(&response);
     let dark_mode = ui.visuals().dark_mode;
@@ -959,7 +968,7 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
             .paint_at(ui, visibility.rect.shrink(4.0));
     }
 
-    if let Some(mode) = &mode {
+    if let (Some(mode), Some((blend_mode, _))) = (&mode, layer_mode) {
         if mode.hovered() {
             painter.rect_filled(
                 mode.rect,
@@ -970,7 +979,7 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
         painter.text(
             mode.rect.center(),
             egui::Align2::CENTER_CENTER,
-            "N",
+            &blend_mode_label(blend_mode)[..1],
             egui::TextStyle::Small.resolve(ui.style()),
             ui.visuals().weak_text_color(),
         );

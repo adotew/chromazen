@@ -429,6 +429,7 @@ fn encode_thumbnail(
             visible: metadata.visible,
             opacity: metadata.opacity,
             clipped: metadata.clipped,
+            blend_mode: metadata.blend_mode,
         })
         .collect();
     let composite = flatten_premultiplied_layers(&composite_layers, document.background)?;
@@ -475,6 +476,7 @@ mod tests {
                 visible: true,
                 opacity: 100,
                 clipped: false,
+                blend_mode: chromazen_canvas::BlendMode::Normal,
                 file: "layers/1.png".to_owned(),
             }],
             references: Vec::new(),

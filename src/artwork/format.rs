@@ -1,7 +1,9 @@
+use chromazen_canvas::BlendMode;
 use serde::{Deserialize, Serialize};
 
 pub(crate) const PROJECT_SCHEMA_VERSION: u32 = 1;
-pub(crate) const DOCUMENT_SCHEMA_VERSION: u32 = 3;
+pub(crate) const DOCUMENT_SCHEMA_VERSION: u32 = 4;
+const BLEND_MODELESS_DOCUMENT_SCHEMA_VERSION: u32 = 3;
 const LEGACY_DOCUMENT_SCHEMA_VERSION: u32 = 2;
 
 fn default_brush_color() -> [u8; 4] {
@@ -53,6 +55,8 @@ pub(crate) struct LayerManifest {
     pub(crate) opacity: u8,
     #[serde(default)]
     pub(crate) clipped: bool,
+    #[serde(default)]
+    pub(crate) blend_mode: BlendMode,
     pub(crate) file: String,
 }
 
@@ -60,6 +64,10 @@ impl DocumentManifest {
     pub(crate) fn migrate(mut self) -> Result<Self, String> {
         match self.schema_version {
             DOCUMENT_SCHEMA_VERSION => Ok(self),
+            BLEND_MODELESS_DOCUMENT_SCHEMA_VERSION => {
+                self.schema_version = DOCUMENT_SCHEMA_VERSION;
+                Ok(self)
+            }
             LEGACY_DOCUMENT_SCHEMA_VERSION => {
                 self.schema_version = DOCUMENT_SCHEMA_VERSION;
                 self.references.clear();
@@ -165,6 +173,7 @@ mod tests {
                 visible: true,
                 opacity: 100,
                 clipped: false,
+                blend_mode: BlendMode::Normal,
                 file: "layers/1.png".to_owned(),
             }],
             references: Vec::new(),
@@ -211,6 +220,37 @@ mod tests {
         let without_clipping = source.replace("clipped = false\n", "");
         let decoded: DocumentManifest = toml::from_str(&without_clipping).unwrap();
         assert!(!decoded.layers[0].clipped);
+    }
+
+    #[test]
+    fn blend_modes_round_trip_by_name() {
+        let mut document = document();
+        document.layers[0].blend_mode = BlendMode::Overlay;
+        let source = toml::to_string(&document).unwrap();
+        assert!(source.contains("blend_mode = \"overlay\"\n"));
+        let decoded: DocumentManifest = toml::from_str(&source).unwrap();
+        assert_eq!(decoded.layers[0].blend_mode, BlendMode::Overlay);
+    }
+
+    #[test]
+    fn unknown_blend_mode_is_rejected() {
+        let source = toml::to_string(&document()).unwrap();
+        let unknown = source.replace("blend_mode = \"normal\"", "blend_mode = \"dissolve\"");
+        assert_ne!(unknown, source);
+        assert!(toml::from_str::<DocumentManifest>(&unknown).is_err());
+    }
+
+    #[test]
+    fn version_three_document_is_migrated_with_normal_blend_modes() {
+        let source = toml::to_string(&document()).unwrap();
+        let version_three = source
+            .replace("schema_version = 4\n", "schema_version = 3\n")
+            .replace("blend_mode = \"normal\"\n", "");
+        let decoded: DocumentManifest = toml::from_str(&version_three).unwrap();
+        let migrated = decoded.migrate().unwrap();
+        assert_eq!(migrated.schema_version, DOCUMENT_SCHEMA_VERSION);
+        assert_eq!(migrated.layers[0].blend_mode, BlendMode::Normal);
+        assert!(migrated.validate().is_ok());
     }
 
     #[test]

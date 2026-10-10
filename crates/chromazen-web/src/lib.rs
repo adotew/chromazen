@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use chromazen_brush::{BUNDLED_BRUSH_IDS, BrushPreset, LoadedBrushPreset, bundled_preset};
 use chromazen_canvas::{
-    Canvas, CanvasDocument, LayerId, LayerInfo, PaintTool, StrokePoint, StrokePositionFilter,
-    StrokeSmoother,
+    BlendMode, Canvas, CanvasDocument, LayerId, LayerInfo, PaintTool, StrokePoint,
+    StrokePositionFilter, StrokeSmoother,
 };
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -400,6 +400,8 @@ impl WebCanvas {
                     visible: layer.visible,
                     opacity: layer.opacity,
                     clipped: layer.clipped,
+                    // The web document format has no blend modes.
+                    blend_mode: BlendMode::Normal,
                 })
                 .collect(),
         };
