@@ -48,8 +48,14 @@ pub(crate) struct RenderResources {
     blend_backdrop_bind_group_layout: wgpu::BindGroupLayout,
     smudge_snapshot: Option<SmudgeSnapshot>,
     // Clipping groups are composed here one tile at a time before being drawn to the canvas.
-    _scratch_tile_texture: wgpu::Texture,
+    pub(crate) scratch_tile_texture: wgpu::Texture,
     pub(crate) scratch_tile_view: wgpu::TextureView,
+    // Blended layers are drawn here alone, then blended over a copy of their target tile.
+    _layer_scratch_tile_texture: wgpu::Texture,
+    pub(crate) layer_scratch_tile_view: wgpu::TextureView,
+    pub(crate) layer_scratch_bind_group: wgpu::BindGroup,
+    pub(crate) group_backdrop_tile_texture: wgpu::Texture,
+    pub(crate) group_backdrop_bind_group: wgpu::BindGroup,
     _empty_tile_texture: wgpu::Texture,
     empty_tile_view: wgpu::TextureView,
     tile_slots: Vec<TileSlot>,
@@ -85,6 +91,8 @@ pub(crate) struct RenderResources {
     pub(crate) blend_layer_pipeline: wgpu::RenderPipeline,
     pub(crate) clipped_layer_merge_pipeline: wgpu::RenderPipeline,
     pub(crate) merge_pipeline: wgpu::RenderPipeline,
+    pub(crate) blend_tile_pipeline: wgpu::RenderPipeline,
+    pub(crate) blend_clipped_tile_pipeline: wgpu::RenderPipeline,
     pub(crate) brush_preview_pipeline: wgpu::RenderPipeline,
     pub(crate) eraser_preview_pipeline: wgpu::RenderPipeline,
     pub(crate) group_brush_preview_pipeline: wgpu::RenderPipeline,
@@ -192,6 +200,10 @@ impl RenderResources {
             create_backdrop_texture(device, surface_size, surface_format);
         let (scratch_tile_texture, scratch_tile_view) =
             create_tile_texture(device, "clipping group scratch tile");
+        let (layer_scratch_tile_texture, layer_scratch_tile_view) =
+            create_tile_texture(device, "blended layer scratch tile");
+        let (group_backdrop_tile_texture, group_backdrop_tile_view) =
+            create_tile_texture(device, "blend backdrop tile");
         // Shaders load tile texels by integer coordinate without bounds checks, so this stand-in
         // for a missing tile matches a tile's size. wgpu zero-initializes it, which is transparent.
         let (empty_tile_texture, empty_tile_view) =
@@ -318,6 +330,16 @@ impl RenderResources {
             device,
             &blend_backdrop_bind_group_layout,
             &blend_backdrop_view,
+        );
+        let layer_scratch_bind_group = create_blend_backdrop_bind_group(
+            device,
+            &blend_backdrop_bind_group_layout,
+            &layer_scratch_tile_view,
+        );
+        let group_backdrop_bind_group = create_blend_backdrop_bind_group(
+            device,
+            &blend_backdrop_bind_group_layout,
+            &group_backdrop_tile_view,
         );
         let tile_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -486,6 +508,17 @@ impl RenderResources {
                 ],
                 immediate_size: 0,
             });
+        // Tile-space blends load both textures at the fragment position, so neither needs an origin.
+        let blend_tile_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("tile blend pipeline layout"),
+                bind_group_layouts: &[
+                    Some(&blit_bind_group_layout),
+                    Some(&blend_backdrop_bind_group_layout),
+                    Some(&blend_backdrop_bind_group_layout),
+                ],
+                immediate_size: 0,
+            });
         let full_opacity_blit_bind_group = create_blit_bind_group(
             device,
             &blit_bind_group_layout,
@@ -572,7 +605,13 @@ impl RenderResources {
         });
         let merge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("layer merge shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/merge.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                concat!(
+                    include_str!("shaders/blend.wgsl"),
+                    include_str!("shaders/merge.wgsl")
+                )
+                .into(),
+            ),
         });
         let stroke_composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("stroke composite shader"),
@@ -871,6 +910,39 @@ impl RenderResources {
             multiview_mask: None,
             cache: None,
         });
+        let create_blend_tile_pipeline = |label, entry_point| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&blend_tile_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &merge_shader,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &merge_shader,
+                    entry_point: Some(entry_point),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: DOCUMENT_FORMAT,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let blend_tile_pipeline = create_blend_tile_pipeline("tile blend pipeline", "fs_blend");
+        let blend_clipped_tile_pipeline =
+            create_blend_tile_pipeline("clipped tile blend pipeline", "fs_blend_clipped");
         let create_preview_pipeline = |label, entry_point| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
@@ -1082,8 +1154,13 @@ impl RenderResources {
             blend_backdrop_bind_group,
             blend_backdrop_bind_group_layout,
             smudge_snapshot: None,
-            _scratch_tile_texture: scratch_tile_texture,
+            scratch_tile_texture,
             scratch_tile_view,
+            _layer_scratch_tile_texture: layer_scratch_tile_texture,
+            layer_scratch_tile_view,
+            layer_scratch_bind_group,
+            group_backdrop_tile_texture,
+            group_backdrop_bind_group,
             _empty_tile_texture: empty_tile_texture,
             empty_tile_view,
             tile_slots,
@@ -1119,6 +1196,8 @@ impl RenderResources {
             blend_layer_pipeline,
             clipped_layer_merge_pipeline,
             merge_pipeline,
+            blend_tile_pipeline,
+            blend_clipped_tile_pipeline,
             brush_preview_pipeline,
             eraser_preview_pipeline,
             group_brush_preview_pipeline,

@@ -23,7 +23,7 @@ use self::{
     selection::SelectionMask,
     stamps::{MAX_STAMPS_PER_FRAME, StampQueue, StampRaw},
     tiles::{
-        Tile, TileCoord, TileSet, all_tile_coords, copy_texture_region, copy_tile,
+        TILE_SIZE, Tile, TileCoord, TileSet, all_tile_coords, copy_texture_region, copy_tile,
         region_has_alpha, tile_document_rect, tile_local_rect, tile_spans,
     },
     view::PaintView,
@@ -2059,70 +2059,107 @@ impl Canvas {
                     // Clipped layers must be composed with their base before the group is put over
                     // the canvas. Applying each masked layer directly over the canvas multiplies
                     // the base alpha twice and leaves translucent base color showing through.
+                    // A base blend mode applies to the whole group, so it composes the group too.
                     for coord in base_coords {
                         let Some(scissor) = window_tile_rect(coord) else {
                             continue;
                         };
                         let base_tile = tile_bind_group(base, coord)
                             .expect("base coordinates have a tile or a preview");
-                        let mut pass = begin_color_pass(
-                            encoder,
-                            "clipping group pass",
-                            &self.resources.scratch_tile_view,
-                            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        );
-                        let (pipeline, bind_group) = layer_program(
-                            &self.resources,
-                            preview_tool(base),
-                            [
-                                &self.resources.group_brush_preview_pipeline,
-                                &self.resources.group_eraser_preview_pipeline,
-                            ],
-                            (&self.resources.merge_pipeline, &base.blit_bind_group),
-                        );
-                        pass.set_pipeline(pipeline);
-                        pass.set_bind_group(0, bind_group, &[]);
-                        pass.set_bind_group(1, base_tile, &[]);
-                        if preview_tool(base).is_some() {
-                            // The base preview ignores group 2, but its layout declares it.
-                            pass.set_bind_group(2, base_tile, &[]);
-                        }
-                        pass.draw(0..3, 0..1);
-
-                        for layer in &clips {
-                            let Some(layer_tile) = tile_bind_group(layer, coord) else {
-                                continue;
-                            };
-                            let clipped_bind_group = self
-                                .clipped_layer_bind_groups
-                                .get(&layer.id)
-                                .expect("clipped layer must have a bind group");
-                            let (pipeline, bind_group) = layer_program(
-                                &self.resources,
-                                preview_tool(layer),
-                                [
-                                    &self.resources.group_clipped_brush_preview_pipeline,
-                                    &self.resources.group_clipped_eraser_preview_pipeline,
-                                ],
-                                (
-                                    &self.resources.clipped_layer_merge_pipeline,
-                                    clipped_bind_group,
-                                ),
+                        // Normal clips share one pass. Each blended clip ends it because it reads
+                        // the group composed so far.
+                        let mut next_clip = 0;
+                        loop {
+                            let first = next_clip == 0;
+                            let mut pass = begin_color_pass(
+                                encoder,
+                                "clipping group pass",
+                                &self.resources.scratch_tile_view,
+                                if first {
+                                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                                } else {
+                                    wgpu::LoadOp::Load
+                                },
                             );
-                            pass.set_pipeline(pipeline);
-                            pass.set_bind_group(0, bind_group, &[]);
-                            pass.set_bind_group(1, layer_tile, &[]);
-                            pass.set_bind_group(2, base_tile, &[]);
-                            pass.draw(0..3, 0..1);
+                            if first {
+                                draw_layer_into_tile(
+                                    &mut pass,
+                                    &self.resources,
+                                    base,
+                                    base_tile,
+                                    preview_tool(base),
+                                );
+                            }
+                            while let Some(layer) = clips
+                                .get(next_clip)
+                                .filter(|layer| layer.blend_mode == BlendMode::Normal)
+                            {
+                                next_clip += 1;
+                                let Some(layer_tile) = tile_bind_group(layer, coord) else {
+                                    continue;
+                                };
+                                let clipped_bind_group = self
+                                    .clipped_layer_bind_groups
+                                    .get(&layer.id)
+                                    .expect("clipped layer must have a bind group");
+                                let (pipeline, bind_group) = layer_program(
+                                    &self.resources,
+                                    preview_tool(layer),
+                                    [
+                                        &self.resources.group_clipped_brush_preview_pipeline,
+                                        &self.resources.group_clipped_eraser_preview_pipeline,
+                                    ],
+                                    (
+                                        &self.resources.clipped_layer_merge_pipeline,
+                                        clipped_bind_group,
+                                    ),
+                                );
+                                pass.set_pipeline(pipeline);
+                                pass.set_bind_group(0, bind_group, &[]);
+                                pass.set_bind_group(1, layer_tile, &[]);
+                                pass.set_bind_group(2, base_tile, &[]);
+                                pass.draw(0..3, 0..1);
+                            }
+                            drop(pass);
+
+                            let Some(layer) = clips.get(next_clip) else {
+                                break;
+                            };
+                            next_clip += 1;
+                            if let Some(layer_tile) = tile_bind_group(layer, coord) {
+                                let mut pass = begin_color_pass(
+                                    encoder,
+                                    "blended clip layer pass",
+                                    &self.resources.layer_scratch_tile_view,
+                                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                );
+                                draw_layer_into_tile(
+                                    &mut pass,
+                                    &self.resources,
+                                    layer,
+                                    layer_tile,
+                                    preview_tool(layer),
+                                );
+                                drop(pass);
+                                blend_layer_scratch_into_tile(
+                                    encoder,
+                                    &self.resources,
+                                    layer,
+                                    &self.resources.scratch_tile_texture,
+                                    &self.resources.scratch_tile_view,
+                                );
+                            }
                         }
-                        drop(pass);
 
                         if blended {
-                            copy_surface_rect(
+                            let origin = [scissor.x, scissor.y];
+                            copy_texture_region(
                                 encoder,
                                 &self.resources.backdrop_texture,
+                                origin,
                                 &self.resources.blend_backdrop_texture,
-                                scissor,
+                                origin,
+                                [scissor.width, scissor.height],
                             );
                         }
                         let mut pass = begin_color_pass(
@@ -2742,39 +2779,6 @@ fn next_layer_number(layers: &[LayerInfo]) -> u64 {
         .max(1)
 }
 
-/// Copies a window-space rect between surface-sized textures of the same format.
-fn copy_surface_rect(
-    encoder: &mut wgpu::CommandEncoder,
-    source: &wgpu::Texture,
-    destination: &wgpu::Texture,
-    rect: TextureRect,
-) {
-    let origin = wgpu::Origin3d {
-        x: rect.x,
-        y: rect.y,
-        z: 0,
-    };
-    encoder.copy_texture_to_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: source,
-            mip_level: 0,
-            origin,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyTextureInfo {
-            texture: destination,
-            mip_level: 0,
-            origin,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::Extent3d {
-            width: rect.width,
-            height: rect.height,
-            depth_or_array_layers: 1,
-        },
-    );
-}
-
 fn begin_color_pass<'encoder>(
     encoder: &'encoder mut wgpu::CommandEncoder,
     label: &str,
@@ -2812,6 +2816,63 @@ fn layer_program<'a>(
         Some(PaintTool::Eraser) => (eraser_preview, resources.stroke_preview_bind_group()),
         Some(PaintTool::Smudge) | None => fallback,
     }
+}
+
+/// Draws `layer`'s tile, or its stroke preview, into a tile-sized target with its opacity applied.
+fn draw_layer_into_tile(
+    pass: &mut wgpu::RenderPass<'_>,
+    resources: &RenderResources,
+    layer: &PaintLayer,
+    tile: &wgpu::BindGroup,
+    preview_tool: Option<PaintTool>,
+) {
+    let (pipeline, bind_group) = layer_program(
+        resources,
+        preview_tool,
+        [
+            &resources.group_brush_preview_pipeline,
+            &resources.group_eraser_preview_pipeline,
+        ],
+        (&resources.merge_pipeline, &layer.blit_bind_group),
+    );
+    pass.set_pipeline(pipeline);
+    pass.set_bind_group(0, bind_group, &[]);
+    pass.set_bind_group(1, tile, &[]);
+    if preview_tool.is_some() {
+        // The preview ignores group 2, but its layout declares it.
+        pass.set_bind_group(2, tile, &[]);
+    }
+    pass.draw(0..3, 0..1);
+}
+
+/// Blends the layer color in the layer scratch tile into `target`, a tile-sized texture, with
+/// `layer`'s mode. The target is copied first because a pass cannot read its own attachment.
+fn blend_layer_scratch_into_tile(
+    encoder: &mut wgpu::CommandEncoder,
+    resources: &RenderResources,
+    layer: &PaintLayer,
+    target: &wgpu::Texture,
+    target_view: &wgpu::TextureView,
+) {
+    copy_texture_region(
+        encoder,
+        target,
+        [0, 0],
+        &resources.group_backdrop_tile_texture,
+        [0, 0],
+        [TILE_SIZE; 2],
+    );
+    let mut pass = begin_color_pass(encoder, "tile blend pass", target_view, wgpu::LoadOp::Load);
+    pass.set_pipeline(if layer.clipped {
+        &resources.blend_clipped_tile_pipeline
+    } else {
+        &resources.blend_tile_pipeline
+    });
+    // The shader reads the mode but not the opacity, which the layer scratch tile includes.
+    pass.set_bind_group(0, &layer.blit_bind_group, &[]);
+    pass.set_bind_group(1, &resources.layer_scratch_bind_group, &[]);
+    pass.set_bind_group(2, &resources.group_backdrop_bind_group, &[]);
+    pass.draw(0..3, 0..1);
 }
 
 /// A layer's tile at `coord`, or a transparent stand-in when a stroke preview may draw there.

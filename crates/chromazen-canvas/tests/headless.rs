@@ -538,46 +538,66 @@ fn blend_modes_match_cpu_compositing(device: &wgpu::Device, queue: &wgpu::Queue)
         [0.5; 3],
     )
     .expect("blend canvas");
-    let background = [230, 220, 40];
-    let base = [200, 60, 30, 255];
-    // Premultiplied and translucent, so both blend terms contribute.
-    let top = [40, 90, 120, 160];
-    let layer = |id, name: &str, blend_mode| LayerInfo {
-        id: LayerId(id),
-        name: name.to_owned(),
-        visible: true,
+    let sample = |pixel, clipped, blend_mode| LayerSample {
+        pixel,
         opacity: 80,
-        clipped: false,
+        visible: true,
+        clipped,
         blend_mode,
     };
-    for blend_mode in [BlendMode::Multiply, BlendMode::Overlay] {
+    let base = [200, 60, 30, 255];
+    // Premultiplied and translucent, so every blend term contributes.
+    let top = [40, 90, 120, 160];
+    let translucent_base = [90, 60, 20, 140];
+    let scenarios = [
+        vec![
+            sample(base, false, BlendMode::Normal),
+            sample(top, false, BlendMode::Multiply),
+        ],
+        vec![
+            sample(base, false, BlendMode::Normal),
+            sample(top, false, BlendMode::Overlay),
+        ],
+        // A Normal clip after a blended one continues the group in a new pass.
+        vec![
+            sample(translucent_base, false, BlendMode::Normal),
+            sample(top, true, BlendMode::Multiply),
+            sample([20, 10, 0, 40], true, BlendMode::Normal),
+        ],
+        vec![
+            sample(translucent_base, false, BlendMode::Overlay),
+            sample(top, true, BlendMode::Overlay),
+        ],
+    ];
+    let background = [230, 220, 40];
+    for layers in scenarios {
         canvas
             .load_document(
                 &CanvasDocument {
                     size: [16, 16],
                     background,
                     selected_layer: LayerId(1),
-                    layers: vec![
-                        layer(1, "Base", BlendMode::Normal),
-                        layer(2, "Top", blend_mode),
-                    ],
+                    layers: (1..)
+                        .zip(&layers)
+                        .map(|(id, layer)| LayerInfo {
+                            id: LayerId(id),
+                            name: format!("Layer {id}"),
+                            visible: layer.visible,
+                            opacity: layer.opacity,
+                            clipped: layer.clipped,
+                            blend_mode: layer.blend_mode,
+                        })
+                        .collect(),
                 },
-                vec![
-                    image::RgbaImage::from_pixel(16, 16, image::Rgba(base)),
-                    image::RgbaImage::from_pixel(16, 16, image::Rgba(top)),
-                ],
+                layers
+                    .iter()
+                    .map(|layer| image::RgbaImage::from_pixel(16, 16, image::Rgba(layer.pixel)))
+                    .collect(),
             )
             .expect("load blend document");
-        let sample = |pixel, blend_mode| LayerSample {
-            pixel,
-            opacity: 80,
-            visible: true,
-            clipped: false,
-            blend_mode,
-        };
         let expected = composite_samples(
             [background[0], background[1], background[2], 255].map(|c| f32::from(c) / 255.0),
-            &[sample(base, BlendMode::Normal), sample(top, blend_mode)],
+            &layers,
         )
         .map(|channel| (channel * 255.0).round() as u8);
 
@@ -589,7 +609,7 @@ fn blend_modes_match_cpu_compositing(device: &wgpu::Device, queue: &wgpu::Queue)
                 .iter()
                 .zip(&expected)
                 .all(|(a, e)| a.abs_diff(*e) <= 1),
-            "{blend_mode:?}: GPU {actual:?} != CPU {:?}",
+            "{layers:?}: GPU {actual:?} != CPU {:?}",
             &expected[..3]
         );
     }
