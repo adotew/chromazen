@@ -6,14 +6,14 @@ pub const DEFAULT_BRUSH_ID: &str = "charcoal";
 const SKETCH_ID: &str = "sketch";
 const ROUNDED_ID: &str = "rounded";
 const RECTANGLE_ID: &str = "rectangle";
-const BRISTLE_ID: &str = "bristle";
+const PAINT_ID: &str = "paint";
 
 pub const BUNDLED_BRUSH_IDS: [&str; 5] = [
     DEFAULT_BRUSH_ID,
     SKETCH_ID,
     ROUNDED_ID,
     RECTANGLE_ID,
-    BRISTLE_ID,
+    PAINT_ID,
 ];
 
 #[derive(Debug)]
@@ -62,7 +62,15 @@ pub fn bundled_preset(id: &str) -> Option<BrushPreset> {
         },
         ROUNDED_ID => stamp_preset(ROUNDED_ID, "Rounded", 60.0, 0.001),
         RECTANGLE_ID => stamp_preset(RECTANGLE_ID, "Rectangle", 80.0, 0.001),
-        BRISTLE_ID => stamp_preset(BRISTLE_ID, "Bristle", 500.0, 0.03),
+        PAINT_ID => BrushPreset {
+            pressure: PressureConfig {
+                min_size: 0.5,
+                min_opacity: 0.3,
+                full_opacity_pressure: 0.8,
+                opacity_gamma: 1.2,
+            },
+            ..stamp_preset(PAINT_ID, "Paint", 80.0, 0.05)
+        },
         _ => return None,
     })
 }
@@ -87,7 +95,7 @@ pub fn bundled_stamp(id: &str) -> Result<RgbaImage, BrushError> {
     let bytes: &[u8] = match id {
         ROUNDED_ID => include_bytes!("../../../assets/stamps/rounded.png"),
         RECTANGLE_ID => include_bytes!("../../../assets/stamps/rectangle.png"),
-        BRISTLE_ID => include_bytes!("../../../assets/stamps/bristle.png"),
+        PAINT_ID => include_bytes!("../../../assets/stamps/paint.png"),
         _ => include_bytes!("../../../assets/stamps/charcoal.png"),
     };
     image::load_from_memory(bytes)

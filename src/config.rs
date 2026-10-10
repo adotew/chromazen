@@ -546,7 +546,7 @@ mod tests {
         let sketch = store.load_brush("sketch").expect("sketch brush");
         let rounded = store.load_brush("rounded").expect("rounded brush");
         let rectangle = store.load_brush("rectangle").expect("rectangle brush");
-        let bristle = store.load_brush("bristle").expect("bristle brush");
+        let paint = store.load_brush("paint").expect("paint brush");
 
         assert_eq!(charcoal.id, "charcoal");
         assert_eq!(charcoal.preset.spacing.ratio, 0.03);
@@ -561,7 +561,7 @@ mod tests {
         assert_eq!(rectangle.preset.spacing.minimum, 0.5);
         assert_eq!(rounded.stamp_image.dimensions(), (128, 128));
         assert_eq!(rectangle.stamp_image.dimensions(), (192, 96));
-        assert_eq!(bristle.stamp_image.dimensions(), (982, 561));
+        assert_eq!(paint.stamp_image.dimensions(), (256, 256));
         assert_eq!(rounded.stamp_image.get_pixel(0, 0)[3], 0);
         assert_eq!(rectangle.stamp_image.get_pixel(0, 0)[3], 255);
         assert_eq!(
@@ -575,7 +575,7 @@ mod tests {
                 .into_iter()
                 .map(|brush| brush.id)
                 .collect::<Vec<_>>(),
-            ["charcoal", "sketch", "rounded", "rectangle", "bristle"]
+            ["charcoal", "sketch", "rounded", "rectangle", "paint"]
         );
     }
 
