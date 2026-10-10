@@ -1530,7 +1530,6 @@ impl Canvas {
         let resource_id = self.allocate_layer_resource_id();
         let upper = self.layers.remove(upper_index);
         let lower = self.layers.remove(lower_index);
-        // Like the clipping group the pair resembles, the merged layer keeps the lower's mode.
         let mut merged = self.resources.create_paint_layer(
             &self.device,
             lower_id,
@@ -2110,7 +2109,7 @@ impl Canvas {
                     // Clipped layers must be composed with their base before the group is put over
                     // the canvas. Applying each masked layer directly over the canvas multiplies
                     // the base alpha twice and leaves translucent base color showing through.
-                    // A base blend mode applies to the whole group, so it composes the group too.
+                    // The base's blend mode applies to the whole group.
                     for coord in base_coords {
                         let Some(scissor) = window_tile_rect(coord) else {
                             continue;
@@ -2869,7 +2868,6 @@ fn layer_program<'a>(
     }
 }
 
-/// Draws `layer`'s tile, or its stroke preview, into a tile-sized target with its opacity applied.
 fn draw_layer_into_tile(
     pass: &mut wgpu::RenderPass<'_>,
     resources: &RenderResources,
@@ -2896,8 +2894,7 @@ fn draw_layer_into_tile(
     pass.draw(0..3, 0..1);
 }
 
-/// Blends the layer color in the layer scratch tile into `target`, a tile-sized texture, with
-/// `layer`'s mode. The target is copied first because a pass cannot read its own attachment.
+// Copy the target because a render pass cannot sample its own attachment.
 fn blend_layer_scratch_into_tile(
     encoder: &mut wgpu::CommandEncoder,
     resources: &RenderResources,

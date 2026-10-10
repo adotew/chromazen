@@ -400,7 +400,7 @@ impl WebCanvas {
                     visible: layer.visible,
                     opacity: layer.opacity,
                     clipped: layer.clipped,
-                    // The web app has no blend mode controls, so its stored layers are always Normal.
+                    // The web document format has no blend modes.
                     blend_mode: BlendMode::Normal,
                 })
                 .collect(),

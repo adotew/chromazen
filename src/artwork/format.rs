@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const PROJECT_SCHEMA_VERSION: u32 = 1;
 pub(crate) const DOCUMENT_SCHEMA_VERSION: u32 = 4;
-/// Version 3 documents predate layer blend modes, which default to Normal.
 const BLEND_MODELESS_DOCUMENT_SCHEMA_VERSION: u32 = 3;
 const LEGACY_DOCUMENT_SCHEMA_VERSION: u32 = 2;
 

@@ -9,7 +9,6 @@ pub enum BlendMode {
 }
 
 impl BlendMode {
-    /// Separable blend function `B(Cb, Cs)` on unpremultiplied channels.
     fn channel(self, backdrop: f32, source: f32) -> f32 {
         match self {
             Self::Normal => source,
@@ -23,8 +22,7 @@ impl BlendMode {
 /// Composites premultiplied `source` over premultiplied `backdrop` (W3C Compositing Level 1):
 /// `co = cs·(1−αb) + cb·(1−αs) + αs·αb·B(Cb, Cs)`.
 ///
-/// A clipped source only shows where the backdrop has coverage, so it drops the
-/// `cs·(1−αb)` term and keeps the backdrop's alpha.
+/// Clipping drops `cs·(1−αb)` and preserves the backdrop's alpha.
 pub fn blend_premultiplied(
     mode: BlendMode,
     source: [f32; 4],
@@ -57,7 +55,7 @@ pub fn blend_premultiplied(
     output
 }
 
-/// One layer's premultiplied texel and the properties that affect compositing.
+/// A premultiplied RGBA8 layer sample.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LayerSample {
     pub pixel: [u8; 4],
@@ -69,8 +67,7 @@ pub struct LayerSample {
 
 /// Composites bottom-to-top layer samples over a premultiplied background.
 ///
-/// Clipped layers blend into their base's isolated group, and the group then blends over the
-/// layers below with the base's mode.
+/// Clips blend within their base's isolated group; the base's mode then blends the whole group.
 pub fn composite_samples(background: [f32; 4], layers: &[LayerSample]) -> [f32; 4] {
     let mut color = background;
     let mut base_index = 0;
@@ -165,7 +162,6 @@ mod tests {
 
     #[test]
     fn translucent_multiply_mixes_with_backdrop() {
-        // Half-covered black: cb·(1−αs) + cs·cb = 0.5·cb.
         assert_close(
             blend_premultiplied(BlendMode::Multiply, [0.0, 0.0, 0.0, 0.5], RED, false),
             [0.5, 0.1, 0.1, 1.0],
@@ -221,7 +217,6 @@ mod tests {
 
     #[test]
     fn clipped_multiply_shades_only_the_base() {
-        // Opaque red base with a clipped gray Multiply layer, over a blue background.
         let layers = [
             sample([255, 0, 0, 255], BlendMode::Normal, false),
             sample([128, 128, 128, 255], BlendMode::Multiply, true),

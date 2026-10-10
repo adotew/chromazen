@@ -23,7 +23,7 @@ fn fs(@builtin(position) position: vec4f) -> @location(0) vec4f {
 // The target tile's contents before this pass.
 @group(2) @binding(0) var backdropTile: texture_2d<f32>;
 
-// Replaces the target, so `tileTexture` must already include the layer's opacity.
+// `tileTexture` already includes the layer's opacity.
 fn blend_tile(position: vec4f, clipped: bool) -> vec4f {
   let texel = vec2i(position.xy);
   let source = textureLoad(tileTexture, texel, 0);

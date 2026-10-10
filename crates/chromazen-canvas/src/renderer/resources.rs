@@ -50,7 +50,6 @@ pub(crate) struct RenderResources {
     // Clipping groups are composed here one tile at a time before being drawn to the canvas.
     pub(crate) scratch_tile_texture: wgpu::Texture,
     pub(crate) scratch_tile_view: wgpu::TextureView,
-    // Blended layers are drawn here alone, then blended over a copy of their target tile.
     _layer_scratch_tile_texture: wgpu::Texture,
     pub(crate) layer_scratch_tile_view: wgpu::TextureView,
     pub(crate) layer_scratch_bind_group: wgpu::BindGroup,
