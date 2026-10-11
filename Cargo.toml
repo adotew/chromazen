@@ -61,7 +61,7 @@ windows-sys = { version = "0.61", features = [
 raw-window-handle = "0.6.2"
 rustix = { version = "1.1", features = ["event"] }
 wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

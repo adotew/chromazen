@@ -9,6 +9,8 @@ mod imp {
     pub struct WaylandTabletMonitor;
 
     impl WaylandTabletMonitor {
+        pub fn set_cursor_visible(&self, _visible: bool) {}
+
         pub fn install(
             _window: Arc<Window>,
             _sink: impl Fn(PenEvent) + Send + 'static,
@@ -26,13 +28,14 @@ mod imp {
 /// [`PenEvent`]s that the app feeds through its regular mouse input pipeline.
 #[cfg(target_os = "linux")]
 mod imp {
+    use std::os::fd::OwnedFd;
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     };
 
     use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
-    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    use rustix::event::{EventfdFlags, PollFd, PollFlags, Timespec, eventfd, poll};
     use wayland_client::{
         Connection, Dispatch, Proxy, QueueHandle,
         backend::Backend,
@@ -40,6 +43,10 @@ mod imp {
             wl_registry,
             wl_seat::{self, WlSeat},
         },
+    };
+    use wayland_protocols::wp::cursor_shape::v1::client::{
+        wp_cursor_shape_device_v1::{Shape, WpCursorShapeDeviceV1},
+        wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
     };
     use wayland_protocols::wp::tablet::zv2::client::{
         zwp_tablet_manager_v2::{self, ZwpTabletManagerV2},
@@ -57,10 +64,20 @@ mod imp {
 
     pub struct WaylandTabletMonitor {
         shutdown: Arc<AtomicBool>,
+        cursor_visible: Arc<AtomicBool>,
+        wake: Arc<OwnedFd>,
         thread: Option<std::thread::JoinHandle<()>>,
     }
 
     impl WaylandTabletMonitor {
+        pub fn set_cursor_visible(&self, visible: bool) {
+            if self.cursor_visible.swap(visible, Ordering::AcqRel) != visible
+                && let Err(error) = rustix::io::write(&*self.wake, &1u64.to_ne_bytes())
+            {
+                log::debug!("failed to wake tablet thread: {error}");
+            }
+        }
+
         pub fn install(
             window: Arc<Window>,
             sink: impl Fn(PenEvent) + Send + 'static,
@@ -103,15 +120,25 @@ mod imp {
                 return Ok(None);
             }
 
+            let cursor_visible = Arc::clone(&state.cursor_visible);
+            let wake = Arc::new(
+                eventfd(0, EventfdFlags::CLOEXEC | EventfdFlags::NONBLOCK)
+                    .map_err(|error| format!("failed to create tablet wake eventfd: {error}"))?,
+            );
+            let thread_wake = Arc::clone(&wake);
             let shutdown = Arc::new(AtomicBool::new(false));
             let thread_shutdown = Arc::clone(&shutdown);
             let thread = std::thread::Builder::new()
                 .name("chromazen-tablet".to_owned())
-                .spawn(move || dispatch_tablet_events(connection, queue, state, thread_shutdown))
+                .spawn(move || {
+                    dispatch_tablet_events(connection, queue, state, &thread_wake, thread_shutdown)
+                })
                 .map_err(|error| format!("failed to spawn tablet event thread: {error}"))?;
 
             Ok(Some(Self {
                 shutdown,
+                cursor_visible,
+                wake,
                 thread: Some(thread),
             }))
         }
@@ -132,6 +159,7 @@ mod imp {
         connection: Connection,
         mut queue: wayland_client::EventQueue<TabletState>,
         mut state: TabletState,
+        wake: &OwnedFd,
         shutdown: Arc<AtomicBool>,
     ) {
         const POLL_TIMEOUT: Timespec = Timespec {
@@ -147,6 +175,7 @@ mod imp {
                     break;
                 }
             }
+            state.update_tool_cursors(&queue.handle());
             if let Err(error) = queue.flush() {
                 log::debug!("tablet event flush ended: {error}");
                 break;
@@ -156,16 +185,23 @@ mod imp {
                 continue;
             };
             let backend = connection.backend();
-            let mut poll_fds = [PollFd::from_borrowed_fd(backend.poll_fd(), PollFlags::IN)];
+            let mut poll_fds = [
+                PollFd::from_borrowed_fd(backend.poll_fd(), PollFlags::IN),
+                PollFd::new(wake, PollFlags::IN),
+            ];
             match poll(&mut poll_fds, Some(&POLL_TIMEOUT)) {
-                Ok(0) => drop(read_guard),
-                Ok(_) if poll_fds[0].revents().contains(PollFlags::IN) => {
-                    if let Err(error) = read_guard.read() {
+                Ok(_) => {
+                    // Reset the eventfd counter; the next loop pass applies the new visibility.
+                    if poll_fds[1].revents().contains(PollFlags::IN) {
+                        let _ = rustix::io::read(wake, &mut [0; 8]);
+                    }
+                    if poll_fds[0].revents().contains(PollFlags::IN)
+                        && let Err(error) = read_guard.read()
+                    {
                         log::debug!("tablet event read ended: {error}");
                         break;
                     }
                 }
-                Ok(_) => drop(read_guard),
                 Err(error) => {
                     drop(read_guard);
                     log::debug!("tablet event poll ended: {error}");
@@ -186,9 +222,34 @@ mod imp {
         seats: Vec<WlSeat>,
         tablet_seats: Vec<ZwpTabletSeatV2>,
         tablets: Vec<ZwpTabletV2>,
-        tools: Vec<ZwpTabletToolV2>,
+        tools: Vec<ToolCursor>,
+        cursor_shape_manager: Option<WpCursorShapeManagerV1>,
+        cursor_visible: Arc<AtomicBool>,
         clock: MillisecondClock,
         frame: TabletFrame,
+    }
+
+    struct ToolCursor {
+        tool: ZwpTabletToolV2,
+        shape_device: Option<WpCursorShapeDeviceV1>,
+        visibility: ToolCursorVisibility,
+    }
+
+    #[derive(Default)]
+    struct ToolCursorVisibility {
+        enter_serial: Option<u32>,
+        applied: Option<bool>,
+    }
+
+    impl ToolCursorVisibility {
+        fn enter(&mut self, serial: Option<u32>) {
+            self.enter_serial = serial;
+            self.applied = None;
+        }
+
+        fn update_serial(&self, visible: bool) -> Option<u32> {
+            self.enter_serial.filter(|_| self.applied != Some(visible))
+        }
     }
 
     #[derive(Debug, Default)]
@@ -228,8 +289,38 @@ mod imp {
                 tablet_seats: Vec::new(),
                 tablets: Vec::new(),
                 tools: Vec::new(),
+                cursor_shape_manager: None,
+                cursor_visible: Arc::new(AtomicBool::new(true)),
                 clock: MillisecondClock::default(),
                 frame: TabletFrame::default(),
+            }
+        }
+
+        fn update_tool_cursors(&mut self, qh: &QueueHandle<Self>) {
+            // Without cursor-shape support, hiding would leave no way to restore the cursor.
+            let Some(manager) = &self.cursor_shape_manager else {
+                return;
+            };
+            let visible = self.cursor_visible.load(Ordering::Acquire);
+            for cursor in &mut self.tools {
+                let Some(serial) = cursor.visibility.update_serial(visible) else {
+                    continue;
+                };
+                if visible {
+                    cursor
+                        .shape_device
+                        .get_or_insert_with(|| manager.get_tablet_tool_v2(&cursor.tool, qh, ()))
+                        .set_shape(serial, Shape::Default);
+                } else {
+                    cursor.tool.set_cursor(serial, None, 0, 0);
+                }
+                cursor.visibility.applied = Some(visible);
+            }
+        }
+
+        fn enter_tool_cursor(&mut self, tool: &ZwpTabletToolV2, serial: Option<u32>) {
+            if let Some(cursor) = self.tools.iter_mut().find(|cursor| cursor.tool == *tool) {
+                cursor.visibility.enter(serial);
             }
         }
 
@@ -317,6 +408,9 @@ mod imp {
                     state.manager = Some(manager);
                     state.bind_pending_seats(qh);
                 }
+                "wp_cursor_shape_manager_v1" => {
+                    state.cursor_shape_manager = Some(registry.bind(name, 1, qh, ()));
+                }
                 "wl_seat" => {
                     let seat = registry.bind::<WlSeat, _, _>(name, version.min(1), qh, ());
                     state.pending_seats.push(seat);
@@ -338,6 +432,9 @@ mod imp {
         ) {
         }
     }
+
+    wayland_client::delegate_noop!(TabletState: ignore WpCursorShapeManagerV1);
+    wayland_client::delegate_noop!(TabletState: ignore WpCursorShapeDeviceV1);
 
     impl Dispatch<WlSeat, ()> for TabletState {
         fn event(
@@ -362,7 +459,11 @@ mod imp {
         ) {
             match event {
                 zwp_tablet_seat_v2::Event::TabletAdded { id } => state.tablets.push(id),
-                zwp_tablet_seat_v2::Event::ToolAdded { id } => state.tools.push(id),
+                zwp_tablet_seat_v2::Event::ToolAdded { id } => state.tools.push(ToolCursor {
+                    tool: id,
+                    shape_device: None,
+                    visibility: ToolCursorVisibility::default(),
+                }),
                 _ => {}
             }
         }
@@ -451,20 +552,24 @@ mod imp {
     impl Dispatch<ZwpTabletToolV2, ()> for TabletState {
         fn event(
             state: &mut Self,
-            _: &ZwpTabletToolV2,
+            tool: &ZwpTabletToolV2,
             event: zwp_tablet_tool_v2::Event,
             _: &(),
             _: &Connection,
             _: &QueueHandle<Self>,
         ) {
             match event {
-                zwp_tablet_tool_v2::Event::ProximityIn { surface, .. } => {
+                zwp_tablet_tool_v2::Event::ProximityIn {
+                    surface, serial, ..
+                } => {
                     state.frame.proximity = surface.id().as_ptr() as usize == state.window_surface;
+                    state.enter_tool_cursor(tool, state.frame.proximity.then_some(serial));
                     state.frame.tip_down = false;
                     state.frame.pressure = 0.0;
                 }
                 zwp_tablet_tool_v2::Event::ProximityOut if state.frame.proximity => {
                     state.frame.proximity = false;
+                    state.enter_tool_cursor(tool, None);
                     state.frame.tip_down = false;
                     state.frame.action = FrameAction::Leave;
                 }
@@ -496,6 +601,31 @@ mod imp {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn tablet_cursor_follows_visibility_changes() {
+            let mut cursor = ToolCursorVisibility::default();
+            assert_eq!(cursor.update_serial(false), None);
+            cursor.enter(Some(10));
+            assert_eq!(cursor.update_serial(false), Some(10));
+            cursor.applied = Some(false);
+            assert_eq!(cursor.update_serial(false), None);
+            assert_eq!(cursor.update_serial(true), Some(10));
+            cursor.applied = Some(true);
+            assert_eq!(cursor.update_serial(true), None);
+            assert_eq!(cursor.update_serial(false), Some(10));
+        }
+
+        #[test]
+        fn tablet_cursor_is_reapplied_with_new_proximity_serial() {
+            let mut cursor = ToolCursorVisibility::default();
+            cursor.enter(Some(10));
+            cursor.applied = Some(false);
+            cursor.enter(None);
+            assert_eq!(cursor.update_serial(true), None);
+            cursor.enter(Some(20));
+            assert_eq!(cursor.update_serial(false), Some(20));
+        }
 
         #[test]
         fn frame_combines_motion_with_latest_pressure() {

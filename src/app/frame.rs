@@ -322,11 +322,13 @@ impl App {
         gui.state
             .handle_platform_output(window, full_output.platform_output);
         let eyedropper_over_canvas = is_eyedropper_active && !pointer_over_ui_or_reference;
-        window.set_cursor_visible(
-            is_resizing_brush
-                || gui.brush_slider_active()
-                || (brush_cursor.is_none() && !eyedropper_over_canvas),
-        );
+        let native_cursor_visible = is_resizing_brush
+            || gui.brush_slider_active()
+            || (brush_cursor.is_none() && !eyedropper_over_canvas);
+        window.set_cursor_visible(native_cursor_visible);
+        if let Some(tablet_monitor) = &self.tablet_monitor {
+            tablet_monitor.set_cursor_visible(native_cursor_visible);
+        }
 
         for (id, image_delta) in &full_output.textures_delta.set {
             gui.renderer
