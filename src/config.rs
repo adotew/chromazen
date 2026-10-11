@@ -19,6 +19,7 @@ pub(crate) use brush::{BrushCatalog, BrushSummary};
 pub(crate) use chromazen_brush::LoadedBrushPreset;
 
 const APP_NAME: &str = "Chromazen";
+const DATA_DIR_ENV: &str = "CHROMAZEN_DATA_DIR";
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 pub(crate) const DEFAULT_ACCENT_COLOR: [u8; 3] = [10, 132, 255];
@@ -223,8 +224,17 @@ pub(crate) struct ConfigStore {
     root: PathBuf,
 }
 
+pub(crate) fn data_dir_override() -> Option<PathBuf> {
+    std::env::var_os(DATA_DIR_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
 impl ConfigStore {
     pub(crate) fn discover() -> Result<Self, ConfigError> {
+        if let Some(root) = data_dir_override() {
+            return Ok(Self::from_root(root.join("config")));
+        }
         let project_dirs = ProjectDirs::from("", "", APP_NAME).ok_or_else(|| {
             ConfigError::new("could not determine the user configuration directory")
         })?;

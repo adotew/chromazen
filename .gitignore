@@ -34,3 +34,5 @@ tarpaulin-report.html
 # Pix Agent
 .pi/
 .pi-lens/
+
+/.dev-data/

@@ -95,6 +95,9 @@ pub(crate) struct ArtworkStore {
 
 impl ArtworkStore {
     pub(crate) fn discover() -> Result<Self, ArtworkError> {
+        if let Some(root) = crate::config::data_dir_override() {
+            return Ok(Self::from_root(root.join("artworks")));
+        }
         let dirs = ProjectDirs::from("", "", APP_NAME)
             .ok_or_else(|| ArtworkError::new("could not determine application data directory"))?;
         Ok(Self::from_root(dirs.data_dir().join("artworks")))

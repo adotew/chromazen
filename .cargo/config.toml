@@ -1,0 +1,2 @@
+[env]
+CHROMAZEN_DATA_DIR = { value = ".dev-data", relative = true }
