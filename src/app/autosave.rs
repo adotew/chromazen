@@ -57,7 +57,6 @@ pub(super) struct AutosaveController {
     brush_color: [u8; 4],
     completion_sender: mpsc::Sender<SaveCompletion>,
     completion_receiver: mpsc::Receiver<SaveCompletion>,
-    catalog_dirty: bool,
     wake: WakeCallback,
 }
 
@@ -70,7 +69,6 @@ impl AutosaveController {
             brush_color: [170, 187, 204, 255],
             completion_sender,
             completion_receiver,
-            catalog_dirty: false,
             wake,
         }
     }
@@ -137,17 +135,6 @@ impl AutosaveController {
 
     pub(super) fn artwork_title(&self) -> Option<&str> {
         self.session.as_ref().map(|session| session.title.as_str())
-    }
-
-    pub(super) fn rename_artwork(&mut self, title: String) {
-        if let Some(session) = self.session.as_mut() {
-            session.title = title;
-            session.save_requested = true;
-        }
-    }
-
-    pub(super) fn take_catalog_dirty(&mut self) -> bool {
-        std::mem::take(&mut self.catalog_dirty)
     }
 
     pub(super) fn status(&self, paint: &Canvas, references: &ReferenceBoard) -> SaveStatus {
@@ -295,7 +282,6 @@ impl AutosaveController {
                 Ok(()) => {
                     session.saved_versions = completion.versions;
                     session.error = None;
-                    self.catalog_dirty = true;
                     if capture_save_versions(paint, references, self.brush_color)
                         != session.saved_versions
                     {
@@ -492,17 +478,6 @@ mod tests {
                 .map(|(id, version)| (LayerId(*id), *version))
                 .collect(),
         }
-    }
-
-    #[test]
-    fn active_rename_updates_the_title_and_requests_a_save() {
-        let mut autosave = AutosaveController::new(None, Arc::new(|| {}));
-        autosave.begin_new_session(ArtworkId::new(), "Untitled".to_owned(), [0; 4]);
-
-        autosave.rename_artwork("Study".to_owned());
-
-        assert_eq!(autosave.artwork_title(), Some("Study"));
-        assert!(autosave.session.as_ref().unwrap().save_requested);
     }
 
     #[test]

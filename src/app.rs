@@ -79,15 +79,13 @@ enum AppEvent {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AppScreen {
-    Empty,
+    Gallery,
     Editor,
 }
 
 enum PendingArtwork {
-    Open(crate::artwork::ArtworkId),
+    Gallery,
     Create([u32; 2]),
-    Duplicate(crate::artwork::ArtworkId),
-    Delete(crate::artwork::ArtworkId),
 }
 
 struct RenderOutcome {
@@ -240,14 +238,6 @@ impl ApplicationHandler<AppEvent> for App {
         self.tablet_monitor = tablet_monitor;
         self.windows_pen_monitor = windows_pen_monitor;
         self.sync_history_menu();
-        if let Some(id) = self
-            .gallery
-            .artworks()
-            .first()
-            .map(|artwork| artwork.id.clone())
-        {
-            self.open_artwork(&id);
-        }
         window.request_redraw();
     }
 
@@ -299,19 +289,14 @@ impl ApplicationHandler<AppEvent> for App {
                 let cursor_changed = self.input.update_pointer_and_modifier_state(&event);
                 let canvas_crop_active =
                     self.screen == AppScreen::Editor && gui.canvas_crop_active();
-                if !navigation_pending
+                if self.screen == AppScreen::Editor
+                    && !navigation_pending
                     && !canvas_crop_active
                     && let Some(shortcut) = self.input.keyboard_shortcut(&event)
-                    && (self.screen == AppScreen::Editor
-                        || shortcut == KeyboardShortcut::ToggleArtworkRail)
                 {
                     let changed = match shortcut {
                         KeyboardShortcut::ToggleSidebar => {
                             gui.toggle_sidebar();
-                            true
-                        }
-                        KeyboardShortcut::ToggleArtworkRail => {
-                            gui.toggle_artwork_rail();
                             true
                         }
                         KeyboardShortcut::CycleTool => {
@@ -556,7 +541,7 @@ impl App {
             reference_import: imports.reference,
             reference_load: imports.reference_load,
             pending_reference_load: None,
-            screen: AppScreen::Empty,
+            screen: AppScreen::Gallery,
             pending_artwork: None,
             pending_exit: false,
         }

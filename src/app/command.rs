@@ -106,6 +106,7 @@ pub(super) enum NavigationCommand {
     NewArtwork,
     CreateArtwork { width: u32, height: u32 },
     OpenArtwork(ArtworkId),
+    ShowGallery,
     CancelPending,
     Quit,
 }

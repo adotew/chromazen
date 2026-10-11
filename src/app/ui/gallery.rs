@@ -8,33 +8,13 @@ use super::super::{
     command::{AppCommand, GalleryCommand, NavigationCommand},
     gallery::ThumbnailCompletion,
 };
-use super::*;
+use super::apply_menu_item_padding;
 
-pub(super) const ARTWORK_RAIL_WIDTH: f32 = 264.0;
-const ARTWORK_ROW_HEIGHT: f32 = 72.0;
-const ARTWORK_TEXT_GAP: f32 = 5.0;
-const THUMBNAIL_SIZE: f32 = 53.0;
-const ARTWORK_TITLE_SIZE: f32 = 16.0;
-const ARTWORK_DIMENSIONS_SIZE: f32 = 12.0;
-const RAIL_ICON_SIZE: f32 = 22.0;
-const RAIL_BUTTON_SIZE: f32 = 38.0;
-
+#[derive(Default)]
 pub(super) struct GalleryUi {
     thumbnails: Vec<Thumbnail>,
     rename: Option<(ArtworkId, String)>,
     delete: Option<(ArtworkId, String)>,
-    collapsed: bool,
-}
-
-impl Default for GalleryUi {
-    fn default() -> Self {
-        Self {
-            thumbnails: Vec::new(),
-            rename: None,
-            delete: None,
-            collapsed: true,
-        }
-    }
 }
 
 struct Thumbnail {
@@ -50,249 +30,117 @@ impl GalleryUi {
         &mut self,
         ui: &mut egui::Ui,
         artworks: &[ArtworkSummary],
-        active: Option<(&ArtworkId, &str, [u32; 2])>,
         warning: Option<&str>,
         commands: &mut Vec<AppCommand>,
-    ) -> f32 {
-        self.sync_thumbnails(artworks);
-        let rail_progress = ui.ctx().animate_bool_with_time_and_easing(
-            egui::Id::new("artwork sidebar animation"),
-            !self.collapsed,
-            0.18,
-            egui::emath::easing::cubic_in_out,
-        );
-        if rail_progress > 0.0 {
-            self.show_rail(ui, artworks, active, warning, commands, rail_progress);
-        }
-        self.show_rename_dialog(ui.ctx(), commands);
-        self.show_delete_dialog(ui.ctx(), commands);
-        rail_progress
-    }
-
-    pub(super) fn toggle_visible(&mut self) {
-        self.collapsed = !self.collapsed;
-    }
-
-    fn show_rail(
-        &mut self,
-        ui: &mut egui::Ui,
-        artworks: &[ArtworkSummary],
-        active: Option<(&ArtworkId, &str, [u32; 2])>,
-        warning: Option<&str>,
-        commands: &mut Vec<AppCommand>,
-        rail_progress: f32,
     ) {
-        let rail_fill = ui.visuals().window_fill();
-        let rail_frame = egui::Frame::side_top_panel(ui.style())
-            .fill(egui::Color32::TRANSPARENT)
-            .stroke(egui::Stroke::NONE);
-        egui::Panel::left("artwork tabs")
-            .frame(rail_frame)
-            .exact_size(ARTWORK_RAIL_WIDTH * rail_progress)
-            .resizable(false)
-            .show_separator_line(false)
-            .show_inside(ui, |panel_ui| {
-                let layer_id =
-                    egui::LayerId::new(egui::Order::Middle, egui::Id::new("artwork sidebar"));
-                let panel_rect = panel_ui.max_rect();
-                egui::Area::new(layer_id.id)
-                    .order(layer_id.order)
-                    .fixed_pos(panel_rect.min)
-                    .default_size(panel_rect.size())
-                    .show(panel_ui.ctx(), |ui| ui.set_min_size(panel_rect.size()));
-                panel_ui.ctx().move_to_top(layer_id);
-                let mut panel_ui = panel_ui.new_child(
-                    egui::UiBuilder::new()
-                        .id_salt("foreground")
-                        .layer_id(layer_id),
+        self.sync_thumbnails(artworks);
+        let panel_frame =
+            egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin::symmetric(24, 8));
+        egui::CentralPanel::default()
+            .frame(panel_frame)
+            .show_inside(ui, |ui| {
+                ui.add_space(40.0);
+                let (header_rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), 32.0),
+                    egui::Sense::hover(),
                 );
-                let component_rect = egui::Frame::side_top_panel(panel_ui.style())
-                    .fill(egui::Color32::TRANSPARENT)
-                    .stroke(egui::Stroke::NONE)
-                    .widget_rect(panel_ui.max_rect());
-                paint_rounded_panel(&panel_ui, component_rect, egui::CornerRadius::ZERO);
-                let inner_width = ARTWORK_RAIL_WIDTH
-                    - egui::Frame::side_top_panel(panel_ui.style())
-                        .inner_margin
-                        .sum()
-                        .x;
-                let content_rect = egui::Rect::from_min_size(
-                    egui::pos2(
-                        panel_ui.max_rect().right() - inner_width,
-                        panel_ui.min_rect().top(),
-                    ),
-                    egui::vec2(inner_width, panel_ui.available_height()),
+                ui.painter().text(
+                    header_rect.left_center(),
+                    egui::Align2::LEFT_CENTER,
+                    "Chromazen",
+                    egui::FontId::new(28.0, egui::FontFamily::Name("elms_sans_light".into())),
+                    ui.visuals().text_color(),
                 );
-                let mut ui = panel_ui.new_child(
-                    egui::UiBuilder::new()
-                        .id_salt("sidebar contents")
-                        .max_rect(content_rect),
-                );
-                ui.set_clip_rect(panel_ui.clip_rect());
-                ui.style_mut().visuals.panel_fill = rail_fill;
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    ui.set_height(RAIL_BUTTON_SIZE);
-                    ui.add_space(10.0);
-                    ui.heading("Gallery");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let add_icon = egui::Image::new(egui::include_image!(
-                            "../../../assets/icons/plus.svg"
-                        ))
-                        .fit_to_exact_size(egui::Vec2::splat(RAIL_ICON_SIZE))
+                let add_icon =
+                    egui::Image::new(egui::include_image!("../../../assets/icons/plus.svg"))
+                        .fit_to_exact_size(egui::Vec2::splat(18.0))
                         .alt_text("New artwork");
-                        if ui
-                            .add(
-                                egui::Button::image(add_icon)
-                                    .frame_when_inactive(false)
-                                    .image_tint_follows_text_color(true)
-                                    .corner_radius(10)
-                                    .min_size(egui::Vec2::splat(RAIL_BUTTON_SIZE)),
-                            )
-                            .on_hover_text("New artwork")
-                            .clicked()
-                        {
-                            commands.push(AppCommand::Navigation(NavigationCommand::NewArtwork));
+                let add_button = egui::Button::image(add_icon)
+                    .frame_when_inactive(false)
+                    .image_tint_follows_text_color(true)
+                    .corner_radius(8);
+                let add_rect = egui::Rect::from_min_size(
+                    egui::pos2(header_rect.right() - 32.0, header_rect.top()),
+                    egui::Vec2::splat(32.0),
+                );
+                if ui
+                    .put(add_rect, add_button)
+                    .on_hover_text("New artwork")
+                    .clicked()
+                {
+                    commands.push(AppCommand::Navigation(NavigationCommand::NewArtwork));
+                }
+                if let Some(warning) = warning {
+                    ui.add_space(8.0);
+                    ui.colored_label(egui::Color32::LIGHT_RED, warning);
+                }
+                ui.add_space(48.0);
+
+                if artworks.is_empty() {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(100.0);
+                        ui.heading("No artwork yet");
+                        ui.label("Use the + button to begin painting.");
+                    });
+                    return;
+                }
+
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(32.0, 10.0);
+                        for artwork in artworks {
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(220.0, 250.0),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    egui::Frame::NONE.inner_margin(0).show(ui, |ui| {
+                                        ui.set_width(198.0);
+                                        let open =
+                                            show_artwork_thumbnail(ui, self.thumbnail(&artwork.id));
+                                        open.context_menu(|ui| {
+                                            self.show_artwork_menu(ui, artwork, commands);
+                                        });
+                                        if open.clicked() {
+                                            commands.push(AppCommand::Navigation(
+                                                NavigationCommand::OpenArtwork(artwork.id.clone()),
+                                            ));
+                                        }
+                                        ui.add_space(8.0);
+                                        ui.horizontal_top(|ui| {
+                                            ui.vertical(|ui| {
+                                                ui.strong(&artwork.title);
+                                                ui.label(format_dimensions(artwork.dimensions));
+                                            });
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    let icon = egui::Image::new(egui::include_image!(
+                                                        "../../../assets/icons/ellipsis-vertical.svg"
+                                                    ))
+                                                    .fit_to_exact_size(egui::Vec2::splat(18.0))
+                                                    .alt_text("Artwork menu");
+                                                    let (menu, _) = MenuButton::from_button(
+                                                        egui::Button::image(icon)
+                                                            .frame_when_inactive(false)
+                                                            .corner_radius(8)
+                                                            .min_size(egui::Vec2::splat(32.0)),
+                                                    )
+                                                    .ui(ui, |ui| {
+                                                        self.show_artwork_menu(ui, artwork, commands);
+                                                    });
+                                                    menu.on_hover_text("Artwork menu");
+                                                },
+                                            );
+                                        });
+                                    });
+                                },
+                            );
                         }
                     });
                 });
-                ui.add_space(14.0);
-                if let Some(warning) = warning {
-                    ui.colored_label(egui::Color32::LIGHT_RED, warning);
-                    ui.add_space(10.0);
-                }
-
-                ui.spacing_mut().item_spacing.y = 5.0;
-                let pending_active =
-                    active.filter(|(id, _, _)| artworks.iter().all(|artwork| artwork.id != **id));
-                let pending_count = usize::from(pending_active.is_some());
-                egui::ScrollArea::vertical().show_rows(
-                    &mut ui,
-                    ARTWORK_ROW_HEIGHT,
-                    artworks.len() + pending_count,
-                    |ui, rows| {
-                        for row in rows {
-                            if row == 0
-                                && let Some((id, title, dimensions)) = pending_active
-                            {
-                                self.show_artwork_row(ui, id, title, dimensions, true, commands);
-                                continue;
-                            }
-                            let artwork = &artworks[row - pending_count];
-                            let selected = active.is_some_and(|(id, _, _)| id == &artwork.id);
-                            let (title, dimensions) = if selected {
-                                active
-                                    .map(|(_, title, dimensions)| (title, dimensions))
-                                    .unwrap_or((&artwork.title, artwork.dimensions))
-                            } else {
-                                (artwork.title.as_str(), artwork.dimensions)
-                            };
-                            self.show_artwork_row(
-                                ui,
-                                &artwork.id,
-                                title,
-                                dimensions,
-                                selected,
-                                commands,
-                            );
-                        }
-                    },
-                );
             });
-    }
-
-    fn show_artwork_row(
-        &mut self,
-        ui: &mut egui::Ui,
-        id: &ArtworkId,
-        title: &str,
-        dimensions: [u32; 2],
-        selected: bool,
-        commands: &mut Vec<AppCommand>,
-    ) {
-        let (rect, response) =
-            selectable_row(ui, ARTWORK_ROW_HEIGHT, egui::Sense::click(), selected);
-        response.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, title)
-        });
-
-        let thumbnail_rect = egui::Rect::from_center_size(
-            egui::pos2(rect.left() + 10.0 + THUMBNAIL_SIZE / 2.0, rect.center().y),
-            egui::Vec2::splat(THUMBNAIL_SIZE),
-        );
-        paint_artwork_thumbnail(ui, thumbnail_rect, self.thumbnail(id));
-
-        let menu_rect = egui::Rect::from_center_size(
-            egui::pos2(rect.right() - 23.0, rect.center().y),
-            egui::Vec2::splat(RAIL_BUTTON_SIZE),
-        );
-        let text_height = ARTWORK_TITLE_SIZE + ARTWORK_TEXT_GAP + ARTWORK_DIMENSIONS_SIZE;
-        let title_rect = egui::Rect::from_min_max(
-            egui::pos2(
-                thumbnail_rect.right() + 12.0,
-                rect.center().y - text_height / 2.0,
-            ),
-            egui::pos2(menu_rect.left() - 5.0, rect.center().y + text_height / 2.0),
-        );
-        let mut title_ui = ui.new_child(
-            egui::UiBuilder::new()
-                .id_salt(("artwork title", id.as_str()))
-                .max_rect(title_rect)
-                .layout(egui::Layout::top_down(egui::Align::LEFT)),
-        );
-        title_ui.spacing_mut().item_spacing.y = ARTWORK_TEXT_GAP;
-        title_ui.add(
-            egui::Label::new(
-                egui::RichText::new(title)
-                    .color(ui.visuals().text_color().gamma_multiply(0.85))
-                    .size(ARTWORK_TITLE_SIZE),
-            )
-            .truncate()
-            .selectable(false),
-        );
-        title_ui.add(
-            egui::Label::new(
-                egui::RichText::new(format_dimensions(dimensions))
-                    .weak()
-                    .size(ARTWORK_DIMENSIONS_SIZE),
-            )
-            .truncate()
-            .selectable(false),
-        );
-
-        let mut menu_ui = ui.new_child(
-            egui::UiBuilder::new()
-                .id_salt(("artwork menu", id.as_str()))
-                .max_rect(menu_rect),
-        );
-        let icon = egui::Image::new(egui::include_image!(
-            "../../../assets/icons/ellipsis-vertical.svg"
-        ))
-        .fit_to_exact_size(egui::Vec2::splat(RAIL_ICON_SIZE))
-        .tint(ui.visuals().weak_text_color())
-        .alt_text("Artwork menu");
-        let (menu_response, _) = MenuButton::from_button(
-            egui::Button::image(icon)
-                .frame(false)
-                .corner_radius(10)
-                .min_size(egui::Vec2::splat(RAIL_BUTTON_SIZE)),
-        )
-        .ui(&mut menu_ui, |ui| {
-            self.show_artwork_menu(ui, id, title, commands);
-        });
-        menu_response.on_hover_text("Artwork menu");
-
-        response.context_menu(|ui| self.show_artwork_menu(ui, id, title, commands));
-        if response.clicked() {
-            commands.push(AppCommand::Navigation(NavigationCommand::OpenArtwork(
-                id.clone(),
-            )));
-        }
-    }
-
-    #[cfg(test)]
-    fn is_collapsed(&self) -> bool {
-        self.collapsed
+        self.show_rename_dialog(ui.ctx(), commands);
+        self.show_delete_dialog(ui.ctx(), commands);
     }
 
     fn sync_thumbnails(&mut self, artworks: &[ArtworkSummary]) {
@@ -407,51 +255,55 @@ impl GalleryUi {
     fn show_artwork_menu(
         &mut self,
         ui: &mut egui::Ui,
-        id: &ArtworkId,
-        title: &str,
+        artwork: &ArtworkSummary,
         commands: &mut Vec<AppCommand>,
     ) {
         apply_menu_item_padding(ui);
         if ui.button("Rename").clicked() {
-            self.rename = Some((id.clone(), title.to_owned()));
+            self.rename = Some((artwork.id.clone(), artwork.title.clone()));
             ui.close();
         }
         if ui.button("Duplicate").clicked() {
-            commands.push(AppCommand::Gallery(GalleryCommand::Duplicate(id.clone())));
+            commands.push(AppCommand::Gallery(GalleryCommand::Duplicate(
+                artwork.id.clone(),
+            )));
             ui.close();
         }
         if ui.button("Delete").clicked() {
-            self.delete = Some((id.clone(), title.to_owned()));
+            self.delete = Some((artwork.id.clone(), artwork.title.clone()));
             ui.close();
         }
     }
 }
 
 fn format_dimensions(dimensions: [u32; 2]) -> String {
-    format!("{} × {}", dimensions[0], dimensions[1])
+    format!("{} \u{00d7} {}", dimensions[0], dimensions[1])
 }
 
-fn paint_artwork_thumbnail(ui: &egui::Ui, slot: egui::Rect, thumbnail: Option<&Thumbnail>) {
+fn show_artwork_thumbnail(ui: &mut egui::Ui, thumbnail: Option<&Thumbnail>) -> egui::Response {
+    const SIZE: f32 = 198.0;
+    let slot_size = egui::Vec2::splat(SIZE);
     let Some(thumbnail) = thumbnail else {
-        egui::Image::new(egui::include_image!("../../../assets/icons/paintbrush.svg"))
+        let image = egui::Image::new(egui::include_image!("../../../assets/icons/paintbrush.svg"))
             .tint(ui.visuals().weak_text_color())
-            .corner_radius(8)
-            .fit_to_exact_size(slot.size())
-            .paint_at(ui, slot);
-        return;
+            .corner_radius(12)
+            .fit_to_exact_size(slot_size);
+        return ui.add(egui::Button::image(image).frame(false));
     };
 
+    let (slot, response) = ui.allocate_exact_size(slot_size, egui::Sense::click());
     let content_size = if thumbnail.content_aspect >= 1.0 {
-        egui::vec2(THUMBNAIL_SIZE, THUMBNAIL_SIZE / thumbnail.content_aspect)
+        egui::vec2(SIZE, SIZE / thumbnail.content_aspect)
     } else {
-        egui::vec2(THUMBNAIL_SIZE * thumbnail.content_aspect, THUMBNAIL_SIZE)
+        egui::vec2(SIZE * thumbnail.content_aspect, SIZE)
     };
     let content = egui::Rect::from_center_size(slot.center(), content_size);
     egui::Image::new((thumbnail.texture.id(), content_size))
         .uv(thumbnail.content_uv)
-        .corner_radius(8)
+        .corner_radius(12)
         .alt_text("Open artwork")
         .paint_at(ui, content);
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn thumbnail_content_bounds(image: &image::RgbaImage) -> (egui::Rect, f32) {
@@ -496,18 +348,6 @@ fn thumbnail_content_bounds(image: &image::RgbaImage) -> (egui::Rect, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_rail_starts_collapsed_and_toggles_on() {
-        let mut gallery = GalleryUi::default();
-        assert!(gallery.is_collapsed());
-
-        gallery.toggle_visible();
-        assert!(!gallery.is_collapsed());
-
-        gallery.toggle_visible();
-        assert!(gallery.is_collapsed());
-    }
 
     #[test]
     fn transparent_bars_are_excluded_from_thumbnail_bounds() {

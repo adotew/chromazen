@@ -1,8 +1,6 @@
 use super::*;
 
 #[cfg(not(target_os = "macos"))]
-use super::gallery::ARTWORK_RAIL_WIDTH;
-#[cfg(not(target_os = "macos"))]
 use egui::containers::menu::SubMenuButton;
 
 #[cfg(not(target_os = "macos"))]
@@ -11,12 +9,9 @@ impl GuiLayer {
         &mut self,
         context: &egui::Context,
         state: ApplicationMenuState,
-        gallery_progress: f32,
     ) {
-        // The rail owns the left edge of the window; keep the menu over the canvas.
-        let rail_offset = ARTWORK_RAIL_WIDTH * gallery_progress;
         egui::Area::new(egui::Id::new("application menu"))
-            .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0 + rail_offset, 12.0))
+            .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 12.0))
             .order(egui::Order::Foreground)
             .show(context, |ui| {
                 let response = ui.allocate_response(egui::Vec2::splat(36.0), egui::Sense::click());
@@ -78,6 +73,14 @@ impl GuiLayer {
                             None,
                             state.document_enabled,
                             AppCommand::Settings(SettingsCommand::ImportBrushes),
+                            &mut self.commands,
+                        );
+                        menu_item(
+                            ui,
+                            "Return to Gallery",
+                            Some(GALLERY_SHORTCUT),
+                            state.document_enabled,
+                            AppCommand::Navigation(NavigationCommand::ShowGallery),
                             &mut self.commands,
                         );
                         ui.separator();
@@ -254,7 +257,6 @@ impl GuiLayer {
         &mut self,
         _context: &egui::Context,
         _state: ApplicationMenuState,
-        _gallery_progress: f32,
     ) {
     }
 }

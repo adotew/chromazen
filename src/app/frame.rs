@@ -117,17 +117,13 @@ impl App {
         app_action_processed |= self.dispatch_pending_commands();
         let mut brush_switched = self.apply_pending_brush_change();
 
-        if self.pending_exit && self.screen == AppScreen::Empty && !self.export.is_exporting() {
+        if self.pending_exit && self.screen == AppScreen::Gallery && !self.export.is_exporting() {
             event_loop.exit();
             return;
         }
         if self.screen == AppScreen::Editor {
             if let Some(paint) = self.paint.as_ref() {
                 app_action_processed |= self.autosave.update(paint, &self.references);
-            }
-            if self.autosave.take_catalog_dirty() {
-                self.gallery.refresh();
-                app_action_processed = true;
             }
             if self.pending_exit
                 && !self.reference_load.is_loading()
@@ -170,14 +166,16 @@ impl App {
             let Some(gui) = self.gui.as_mut() else {
                 return;
             };
-            let warning = self.gallery.warning();
             let output = match self.screen {
-                AppScreen::Empty => gui.run_empty(
-                    window,
-                    self.gallery.artworks(),
-                    warning.as_deref(),
-                    self.gallery.load_dialog_delay(),
-                ),
+                AppScreen::Gallery => {
+                    let warning = self.gallery.warning();
+                    gui.run_gallery(
+                        window,
+                        self.gallery.artworks(),
+                        warning.as_deref(),
+                        self.gallery.load_dialog_delay(),
+                    )
+                }
                 AppScreen::Editor => {
                     gui.sync_layer_thumbnails(paint, gpu.device());
                     let layer_snapshot = paint.layer_snapshot();
@@ -195,36 +193,14 @@ impl App {
                         Some("Closing Chromazen")
                     } else {
                         self.pending_artwork.as_ref().map(|pending| match pending {
-                            PendingArtwork::Open(_) => "Switching Artwork",
+                            PendingArtwork::Gallery => "Returning to Gallery",
                             PendingArtwork::Create(_) => "Creating New Artwork",
-                            PendingArtwork::Duplicate(_) => "Duplicating Artwork",
-                            PendingArtwork::Delete(_) => "Deleting Artwork",
                         })
-                    };
-                    let Some(active_artwork_id) = self
-                        .autosave
-                        .artwork_id()
-                        .or_else(|| self.pending_reference_load.as_ref().map(|load| &load.id))
-                    else {
-                        return;
-                    };
-                    let Some(active_artwork_title) = self.autosave.artwork_title().or_else(|| {
-                        self.pending_reference_load
-                            .as_ref()
-                            .map(|load| load.title.as_str())
-                    }) else {
-                        return;
                     };
                     gui.run_editor(
                         window,
                         EditorUiState {
                             menu,
-                            artworks: self.gallery.artworks(),
-                            active_artwork_id,
-                            active_artwork_title,
-                            active_artwork_dimensions: paint.document_size(),
-                            artwork_warning: warning.as_deref(),
-                            artwork_load_dialog_delay: self.gallery.load_dialog_delay(),
                             layers: &layer_snapshot,
                             tool: self.input.tool(),
                             layer_transform: paint.active_layer_transform(),
@@ -254,10 +230,6 @@ impl App {
             && let Some(paint) = self.paint.as_ref()
         {
             app_action_processed |= self.autosave.update(paint, &self.references);
-        }
-        if self.autosave.take_catalog_dirty() {
-            self.gallery.refresh();
-            app_action_processed = true;
         }
         let Some(outcome) = self.render_and_present_frame(window, full_output) else {
             return;

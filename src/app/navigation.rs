@@ -98,22 +98,13 @@ impl App {
     }
 
     pub(super) fn open_artwork(&mut self, id: &crate::artwork::ArtworkId) {
-        if self.autosave.artwork_id() == Some(id) || self.has_pending_navigation() {
+        if self.screen != AppScreen::Gallery || self.has_pending_navigation() {
             return;
         }
-        if self.screen == AppScreen::Editor {
-            self.pending_artwork = Some(PendingArtwork::Open(id.clone()));
-            self.autosave.request_save();
-        } else {
-            self.start_open_artwork(id.clone());
-        }
-    }
-
-    fn start_open_artwork(&mut self, id: crate::artwork::ArtworkId) {
         let Some(constraints) = self.paint.as_ref().map(Canvas::canvas_size_constraints) else {
             return;
         };
-        if let Err(error) = self.gallery.start_load_artwork(id, constraints)
+        if let Err(error) = self.gallery.start_load_artwork(id.clone(), constraints)
             && let Some(gui) = self.gui.as_mut()
         {
             gui.open_error_dialog("Chromazen couldn’t open the artwork.", error);
@@ -121,69 +112,35 @@ impl App {
     }
 
     pub(super) fn apply_pending_artwork(&mut self) -> bool {
-        let Some(pending) = self.pending_artwork.as_ref() else {
-            return false;
-        };
-        if self.reference_load.is_loading() {
-            return false;
-        }
-        let ready = match pending {
-            PendingArtwork::Delete(_) => self.paint.as_ref().is_some_and(|paint| {
-                !matches!(
-                    self.autosave.status(paint, &self.references),
-                    autosave::SaveStatus::Saving
-                )
-            }),
-            _ => self
+        if self.pending_artwork.is_none()
+            || self.reference_load.is_loading()
+            || !self
                 .paint
                 .as_ref()
-                .is_some_and(|paint| self.autosave.is_clean(paint, &self.references)),
-        };
-        if !ready {
+                .is_some_and(|paint| self.autosave.is_clean(paint, &self.references))
+        {
             return false;
         }
-        let Some(pending) = self.pending_artwork.take() else {
-            return false;
-        };
-        match pending {
-            PendingArtwork::Open(id) => self.start_open_artwork(id),
-            PendingArtwork::Create(size) => self.finish_create_artwork(size),
-            PendingArtwork::Duplicate(id) => {
-                if let Err(error) = self.gallery.start_duplicate(id)
-                    && let Some(gui) = self.gui.as_mut()
-                {
-                    gui.open_error_dialog("Chromazen couldn’t duplicate the artwork.", error);
-                }
-            }
-            PendingArtwork::Delete(id) => self.delete_active_artwork(id),
+        let pending = self.pending_artwork.take();
+        self.enter_gallery();
+        if let Some(PendingArtwork::Create(size)) = pending {
+            self.finish_create_artwork(size);
         }
         true
     }
 
-    pub(super) fn delete_active_artwork(&mut self, id: crate::artwork::ArtworkId) {
-        let artworks = self.gallery.artworks();
-        let next = next_artwork_after(artworks, &id);
-        if artworks.iter().any(|artwork| artwork.id == id)
-            && let Err(error) = self.gallery.delete(&id)
-        {
-            if let Some(gui) = self.gui.as_mut() {
-                gui.open_error_dialog("Chromazen couldn’t delete the artwork.", error);
-            }
-            return;
-        }
-
+    pub(super) fn enter_gallery(&mut self) {
+        self.gallery.refresh();
         self.autosave.clear_session();
         self.references.clear();
         self.pending_reference_load = None;
-        self.screen = AppScreen::Empty;
+        self.screen = AppScreen::Gallery;
         self.pending_artwork = None;
+        self.pending_exit = false;
         if let Some(window) = self.window.as_ref() {
             window.set_title(WINDOW_TITLE);
         }
         self.sync_history_menu();
-        if let Some(id) = next {
-            self.start_open_artwork(id);
-        }
     }
 
     pub(super) fn finish_open_artwork(&mut self, opened: gallery::OpenedArtwork) {
@@ -227,56 +184,5 @@ impl App {
             self.reference_load
                 .start(opened.id, opened.reference_sources);
         }
-    }
-}
-
-fn next_artwork_after(
-    artworks: &[crate::artwork::ArtworkSummary],
-    id: &crate::artwork::ArtworkId,
-) -> Option<crate::artwork::ArtworkId> {
-    artworks
-        .iter()
-        .position(|artwork| artwork.id == *id)
-        .and_then(|index| {
-            artworks
-                .get(index + 1)
-                .or_else(|| index.checked_sub(1).and_then(|index| artworks.get(index)))
-        })
-        .or_else(|| artworks.iter().find(|artwork| artwork.id != *id))
-        .map(|artwork| artwork.id.clone())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn summary(id: crate::artwork::ArtworkId) -> crate::artwork::ArtworkSummary {
-        crate::artwork::ArtworkSummary {
-            id,
-            title: "Artwork".to_owned(),
-            modified_unix_ms: 0,
-            dimensions: [1, 1],
-            thumbnail_path: std::path::PathBuf::new(),
-        }
-    }
-
-    #[test]
-    fn deleting_active_artwork_selects_a_neighbor() {
-        let first = crate::artwork::ArtworkId::new();
-        let middle = crate::artwork::ArtworkId::new();
-        let last = crate::artwork::ArtworkId::new();
-        let artworks = vec![
-            summary(first.clone()),
-            summary(middle.clone()),
-            summary(last.clone()),
-        ];
-
-        assert_eq!(next_artwork_after(&artworks, &middle), Some(last));
-        assert_eq!(next_artwork_after(&artworks, &first), Some(middle));
-        assert_eq!(
-            next_artwork_after(&artworks, &artworks[2].id),
-            Some(artworks[1].id.clone())
-        );
-        assert_eq!(next_artwork_after(&[summary(first.clone())], &first), None);
     }
 }
