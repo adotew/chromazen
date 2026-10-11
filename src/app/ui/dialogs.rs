@@ -292,7 +292,7 @@ impl GuiLayer {
             .show(context, |ui| {
                 let visuals = ui.visuals_mut();
                 visuals.selection.bg_fill = visuals.text_color().gamma_multiply(0.08);
-                visuals.selection.stroke = egui::Stroke::new(1.0, visuals.strong_text_color());
+                visuals.selection.stroke = egui::Stroke::new(1.0_f32, visuals.strong_text_color());
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     egui::Frame::NONE
