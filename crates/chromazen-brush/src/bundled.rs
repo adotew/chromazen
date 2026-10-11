@@ -60,8 +60,8 @@ pub fn bundled_preset(id: &str) -> Option<BrushPreset> {
             },
             ..BrushPreset::default()
         },
-        ROUNDED_ID => stamp_preset(ROUNDED_ID, "Rounded", 60.0, 0.001),
-        RECTANGLE_ID => stamp_preset(RECTANGLE_ID, "Rectangle", 80.0, 0.001),
+        ROUNDED_ID => stamp_preset(ROUNDED_ID, "Rounded", 60.0, 0.02),
+        RECTANGLE_ID => stamp_preset(RECTANGLE_ID, "Rectangle", 80.0, 0.02),
         PAINT_ID => BrushPreset {
             pressure: PressureConfig {
                 min_size: 0.5,
