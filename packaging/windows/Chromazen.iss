@@ -30,7 +30,7 @@ ArchitecturesInstallIn64BitMode=x64
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "..\..\target\release\Chromazen.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\target\dist\Chromazen.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Chromazen"; Filename: "{app}\Chromazen.exe"

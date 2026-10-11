@@ -31,8 +31,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - run: cargo build --release
-      - run: Compress-Archive -Path target/release/Chromazen.exe -DestinationPath Chromazen-windows-x64.zip
+      - run: cargo build --profile dist
+      - run: >-
+          Compress-Archive -Path target/dist/Chromazen.exe
+          -DestinationPath Chromazen-windows-x64.zip
       - name: Build installer
         shell: pwsh
         run: |

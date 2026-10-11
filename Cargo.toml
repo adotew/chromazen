@@ -13,13 +13,20 @@ atomic-write-file = "0.3.0"
 chromazen-brush = { path = "crates/chromazen-brush" }
 chromazen-canvas = { path = "crates/chromazen-canvas" }
 directories = "6.0.0"
-egui = "0.34.1"
+egui = { version = "0.34.1", default-features = false }
 egui_extras = { version = "0.34.1", default-features = false, features = [
   "svg",
 ] }
 egui-wgpu = { version = "0.34.1", features = ["winit"] }
-egui-winit = "0.34.1"
-env_logger = "0.11"
+egui-winit = { version = "0.34.1", default-features = false, features = [
+  "clipboard",
+  "wayland",
+  "x11",
+] }
+env_logger = { version = "0.11", default-features = false, features = [
+  "auto-color",
+  "humantime",
+] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 log = "0.4"
 open = "5.3.6"
@@ -65,3 +72,9 @@ wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = true

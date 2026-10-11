@@ -22,11 +22,11 @@ echo "Building $APP $VERSION (universal)"
 
 # Universal binary: arm64 (default) + x86_64, merged with lipo.
 rustup target add x86_64-apple-darwin
-cargo build --release --target aarch64-apple-darwin
-cargo build --release --target x86_64-apple-darwin
+cargo build --profile dist --target aarch64-apple-darwin
+cargo build --profile dist --target x86_64-apple-darwin
 lipo -create -output "$APP" \
-  "target/aarch64-apple-darwin/release/$APP" \
-  "target/x86_64-apple-darwin/release/$APP"
+  "target/aarch64-apple-darwin/dist/$APP" \
+  "target/x86_64-apple-darwin/dist/$APP"
 
 mkdir -p "dist/$APP.app/Contents/MacOS" "dist/$APP.app/Contents/Resources"
 cp "$APP" "dist/$APP.app/Contents/MacOS/$APP"

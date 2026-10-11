@@ -24,7 +24,7 @@ VERSION=$(cargo metadata --no-deps --format-version 1 | python3 -c \
   'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')
 echo "Building $APP $VERSION for Linux $ARCH"
 
-cargo build --locked --release
+cargo build --locked --profile dist
 
 rm -rf "$APPDIR" "$ARCHIVE_DIR"
 rm -f "$APPIMAGE" "$ARCHIVE"
@@ -35,7 +35,7 @@ mkdir -p \
   "$APPDIR/usr/share/metainfo" \
   "$ARCHIVE_DIR"
 
-install -m 0755 "target/release/$APP" "$APPDIR/usr/bin/$APP"
+install -m 0755 "target/dist/$APP" "$APPDIR/usr/bin/$APP"
 install -m 0644 "packaging/linux/$APP_ID.desktop" \
   "$APPDIR/usr/share/applications/$APP_ID.desktop"
 install -m 0644 "packaging/linux/$APP_ID.png" \
@@ -59,7 +59,7 @@ chmod +x "$APPIMAGETOOL"
 ARCH="$ARCH" "$APPIMAGETOOL" --appimage-extract-and-run "$APPDIR" "$APPIMAGE"
 chmod +x "$APPIMAGE"
 
-install -m 0755 "target/release/$APP" "$ARCHIVE_DIR/$APP"
+install -m 0755 "target/dist/$APP" "$ARCHIVE_DIR/$APP"
 install -m 0644 README.md "$ARCHIVE_DIR/README.md"
 install -m 0644 "packaging/linux/$APP_ID.desktop" "$ARCHIVE_DIR/$APP_ID.desktop"
 install -m 0644 "packaging/linux/$APP_ID.png" "$ARCHIVE_DIR/$APP_ID.png"

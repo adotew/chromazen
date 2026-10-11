@@ -1315,11 +1315,35 @@ fn install_fonts(context: &egui::Context) {
             "../../assets/fonts/ElmsSans-Light.ttf"
         ))),
     );
-    fonts
-        .families
-        .get_mut(&egui::FontFamily::Proportional)
-        .expect("default proportional font family")
-        .insert(0, "inter".to_owned());
+    fonts.font_data.insert(
+        "hack".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../assets/fonts/Hack-Regular.ttf"
+        ))),
+    );
+    // Same downscale egui applies to its bundled copy of this font.
+    fonts.font_data.insert(
+        "noto_emoji".to_owned(),
+        std::sync::Arc::new(
+            egui::FontData::from_static(include_bytes!("../../assets/fonts/NotoEmoji-Regular.ttf"))
+                .tweak(egui::FontTweak {
+                    scale: 0.81,
+                    ..Default::default()
+                }),
+        ),
+    );
+    fonts.families.insert(
+        egui::FontFamily::Proportional,
+        vec!["inter".to_owned(), "noto_emoji".to_owned()],
+    );
+    fonts.families.insert(
+        egui::FontFamily::Monospace,
+        vec![
+            "hack".to_owned(),
+            "inter".to_owned(),
+            "noto_emoji".to_owned(),
+        ],
+    );
     fonts.families.insert(
         egui::FontFamily::Name("elms_sans".into()),
         vec!["elms_sans".to_owned(), "inter".to_owned()],
