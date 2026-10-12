@@ -10,17 +10,21 @@ const QUICK_MENU_REACH: f32 = 160.0;
 const QUICK_MENU_HIGHLIGHT_RADIUS: f32 = 22.0;
 const QUICK_MENU_ICON_SIZE: f32 = 22.0;
 const QUICK_MENU_GROUP_MARKER_OFFSET: f32 = 17.0;
-const QUICK_MENU_BAND_WIDTH: f32 = 48.0;
+/// Space between a highlighted item and the edge of the surface behind it, matching the ring.
+const QUICK_MENU_EDGE_PADDING: f32 =
+    QUICK_MENU_RADIUS - QUICK_MENU_SLOT_RADIUS - QUICK_MENU_HIGHLIGHT_RADIUS;
+/// Group actions keep the same gap to the ring's highlights as to the band's outer edge.
+const QUICK_MENU_GROUP_RADIUS: f32 = QUICK_MENU_RADIUS + QUICK_MENU_HIGHLIGHT_RADIUS;
+const QUICK_MENU_BAND_WIDTH: f32 = 2.0 * QUICK_MENU_HIGHLIGHT_RADIUS + QUICK_MENU_EDGE_PADDING;
 /// Covers the disc's border where the band joins it.
 const QUICK_MENU_BAND_OVERLAP: f32 = 1.0;
-const QUICK_MENU_BAND_CORNER_RADIUS: f32 = 10.0;
+const QUICK_MENU_BAND_CORNER_RADIUS: f32 = 12.0;
 const QUICK_MENU_BAND_SEGMENT: f32 = 3.0 * PI / 180.0;
 const QUICK_MENU_BAND_CORNER_STEPS: usize = 6;
 const QUICK_MENU_GROUP_REACH: f32 = 210.0;
-const QUICK_MENU_GROUP_SPACING: f32 = 21.0 * PI / 180.0;
+/// Matches the distance between neighboring ring slots.
+const QUICK_MENU_GROUP_SPACING: f32 = 24.0 * PI / 180.0;
 const QUICK_MENU_GROUP_CAPACITY: usize = 5;
-const QUICK_MENU_GROUP_HIGHLIGHT_RADIUS: f32 = 18.0;
-const QUICK_MENU_GROUP_ICON_SIZE: f32 = 18.0;
 const QUICK_MENU_SCREEN_MARGIN: f32 = 8.0;
 const QUICK_MENU_OPEN_SECONDS: f32 = 0.12;
 const QUICK_MENU_CLOSE_SECONDS: f32 = 0.09;
@@ -550,14 +554,14 @@ fn paint_quick_menu(ui: &egui::Ui, menu: &QuickMenu, context: QuickMenuContext, 
         // The band grows out of the disc's rim beside the group's slot while its ends spread apart.
         let ring_radius = QUICK_MENU_RADIUS * progress;
         let band_width = QUICK_MENU_BAND_WIDTH * scale;
-        let radius = ring_radius + band_width / 2.0;
+        let radius = ring_radius + (QUICK_MENU_GROUP_RADIUS - QUICK_MENU_RADIUS) * scale;
         let slot_angle = quick_menu_slot_angle(group_slot);
         let angle_at = |index: usize| {
             slot_angle
                 + (quick_menu_group_action_angle(group_slot, index, actions.len()) - slot_angle)
                     * group_progress
         };
-        let end_padding = QUICK_MENU_GROUP_SPACING / 2.0 * group_progress;
+        let end_padding = quick_menu_group_end_padding() * group_progress;
         // The frosted pass restyles the band's fill but not its separate outline.
         let band_border = if frosted {
             frosted_surface_edge()
@@ -585,7 +589,7 @@ fn paint_quick_menu(ui: &egui::Ui, menu: &QuickMenu, context: QuickMenuContext, 
             if hover > 0.0 {
                 ui.painter().circle_filled(
                     action_center,
-                    QUICK_MENU_GROUP_HIGHLIGHT_RADIUS * scale * hover,
+                    QUICK_MENU_HIGHLIGHT_RADIUS * scale * hover,
                     accent.gamma_multiply(group_alpha),
                 );
             }
@@ -599,7 +603,7 @@ fn paint_quick_menu(ui: &egui::Ui, menu: &QuickMenu, context: QuickMenuContext, 
                     ui,
                     egui::Rect::from_center_size(
                         action_center,
-                        egui::Vec2::splat(QUICK_MENU_GROUP_ICON_SIZE * scale),
+                        egui::Vec2::splat(QUICK_MENU_ICON_SIZE * scale),
                     ),
                 );
             if label.is_none_or(|(_, strongest)| hover > strongest) {
@@ -800,6 +804,12 @@ fn quick_menu_group_action_angle(slot: usize, index: usize, count: usize) -> f32
         + (index as f32 - (count - 1) as f32 / 2.0) * QUICK_MENU_GROUP_SPACING
 }
 
+/// Angle the band extends past its first and last actions, so their highlights keep the edge
+/// padding from the band's straight ends.
+fn quick_menu_group_end_padding() -> f32 {
+    ((QUICK_MENU_HIGHLIGHT_RADIUS + QUICK_MENU_EDGE_PADDING) / QUICK_MENU_GROUP_RADIUS).asin()
+}
+
 /// Unit vector for a clockwise angle from the top, in egui's y-down coordinates.
 fn quick_menu_direction(angle: f32) -> egui::Vec2 {
     egui::vec2(angle.sin(), -angle.cos())
@@ -838,7 +848,7 @@ fn quick_menu_target_at(offset: egui::Vec2, open_group: Option<usize>) -> Option
         if count > 0
             && distance > QUICK_MENU_RADIUS
             && distance <= QUICK_MENU_GROUP_REACH
-            && delta.abs() <= half_span + QUICK_MENU_GROUP_SPACING / 2.0
+            && delta.abs() <= half_span + quick_menu_group_end_padding()
         {
             let index = ((delta + half_span) / QUICK_MENU_GROUP_SPACING)
                 .round()
@@ -894,8 +904,6 @@ mod tests {
 
     const LAYER_SLOT: usize = 3;
     const CANVAS_SLOT: usize = 4;
-    /// Where a fully open group's actions sit, midway across the band.
-    const QUICK_MENU_GROUP_RADIUS: f32 = QUICK_MENU_RADIUS + QUICK_MENU_BAND_WIDTH / 2.0;
 
     fn offset_at(degrees: f32, distance: f32) -> egui::Vec2 {
         quick_menu_direction(degrees.to_radians()) * distance
@@ -1068,27 +1076,42 @@ mod tests {
             QUICK_MENU_BAND_CORNER_RADIUS,
             [
                 quick_menu_group_action_angle(LAYER_SLOT, 0, actions)
-                    - QUICK_MENU_GROUP_SPACING / 2.0,
+                    - quick_menu_group_end_padding(),
                 quick_menu_group_action_angle(LAYER_SLOT, actions - 1, actions)
-                    + QUICK_MENU_GROUP_SPACING / 2.0,
+                    + quick_menu_group_end_padding(),
             ],
         )
     }
 
     #[test]
-    fn group_band_contains_every_action_highlight() {
+    fn group_band_pads_action_highlights_like_the_ring() {
+        let ring_padding = QUICK_MENU_RADIUS - QUICK_MENU_SLOT_RADIUS - QUICK_MENU_HIGHLIGHT_RADIUS;
         let band = layer_band();
         assert!(quick_menu_band_mesh(band, egui::Color32::WHITE, 1.0).is_valid());
         let edge = band.edge();
-        for index in 0..QuickGroup::Layer.actions().len() {
+        let actions = QuickGroup::Layer.actions().len();
+        for index in 0..actions {
             let action = egui::Pos2::ZERO + group_action_offset(LAYER_SLOT, index);
             for (point, _) in &edge {
-                assert!(point.distance(action) > QUICK_MENU_GROUP_HIGHLIGHT_RADIUS + 3.0);
+                assert!(
+                    point.distance(action) >= QUICK_MENU_HIGHLIGHT_RADIUS + ring_padding - 0.01
+                );
             }
-            let distance = action.to_vec2().length();
-            assert!(distance - QUICK_MENU_GROUP_HIGHLIGHT_RADIUS > band.ring_radius);
-            assert!(distance + QUICK_MENU_GROUP_HIGHLIGHT_RADIUS < band.outer_radius);
+            let outer_padding =
+                band.outer_radius - QUICK_MENU_GROUP_RADIUS - QUICK_MENU_HIGHLIGHT_RADIUS;
+            assert!((outer_padding - ring_padding).abs() < 0.01);
         }
+        let ring_highlight_edge = QUICK_MENU_SLOT_RADIUS + QUICK_MENU_HIGHLIGHT_RADIUS;
+        let band_highlight_edge = QUICK_MENU_GROUP_RADIUS - QUICK_MENU_HIGHLIGHT_RADIUS;
+        assert!((band_highlight_edge - ring_highlight_edge - ring_padding).abs() < 0.01);
+
+        let neighbors =
+            (group_action_offset(LAYER_SLOT, 1) - group_action_offset(LAYER_SLOT, 0)).length();
+        let ring_neighbors = (quick_menu_direction(quick_menu_slot_angle(1))
+            - quick_menu_direction(quick_menu_slot_angle(0)))
+        .length()
+            * QUICK_MENU_SLOT_RADIUS;
+        assert!((neighbors - ring_neighbors).abs() < 1.0);
     }
 
     #[test]
