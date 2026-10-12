@@ -27,7 +27,7 @@ use winit::window::Window;
 
 use chromazen_canvas::{
     BlendMode, Canvas, CanvasSizeConstraints, DEFAULT_CANVAS_SIZE, DropEdge, LayerContentBounds,
-    LayerId, LayerResourceId, LayerSnapshot, LayerTransform, PaintViewSnapshot,
+    LayerId, LayerInfo, LayerResourceId, LayerSnapshot, LayerTransform, PaintViewSnapshot,
     merge_down_target_index,
 };
 
