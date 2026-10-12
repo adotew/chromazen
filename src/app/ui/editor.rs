@@ -337,7 +337,7 @@ impl GuiLayer {
             if let Some(indicator) = eyedropper_indicator {
                 show_eyedropper_indicator(ui, indicator);
             }
-            self.show_quick_menu(ui.ctx(), menu, tool);
+            self.show_quick_menu(ui.ctx(), menu, tool, layers);
             if let Some(action) = pending_navigation {
                 show_save_blocker(ui.ctx(), action, &save_status, &mut self.commands);
             }
