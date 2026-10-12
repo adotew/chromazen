@@ -1489,7 +1489,7 @@ fn frost_shape(
 
             let mut tint = rect.clone();
             tint.stroke = if rect.fill == surface_fill {
-                egui::Stroke::new(0.5_f32, egui::Color32::from_white_alpha(36))
+                frosted_surface_edge()
             } else {
                 egui::Stroke::NONE
             };
@@ -1498,8 +1498,40 @@ fn frost_shape(
             }
             *shape = egui::Shape::Vec(vec![egui::Shape::Rect(backdrop), egui::Shape::Rect(tint)]);
         }
+        // Untextured surface meshes, such as the quick menu's group band, whose only other
+        // vertices are a transparent anti-aliasing fringe.
+        egui::Shape::Mesh(mesh)
+            if mesh.texture_id == egui::TextureId::default()
+                && mesh
+                    .vertices
+                    .iter()
+                    .any(|vertex| vertex.color == surface_fill)
+                && mesh.vertices.iter().all(|vertex| {
+                    vertex.color == surface_fill || vertex.color == egui::Color32::TRANSPARENT
+                }) =>
+        {
+            let screen_size = screen_rect.size().max(egui::Vec2::splat(1.0));
+            let mut backdrop = egui::Mesh::clone(mesh);
+            backdrop.texture_id = texture_id;
+            for vertex in &mut backdrop.vertices {
+                vertex.uv = egui::pos2(
+                    (vertex.pos.x - screen_rect.min.x) / screen_size.x,
+                    (vertex.pos.y - screen_rect.min.y) / screen_size.y,
+                );
+                if vertex.color == surface_fill {
+                    vertex.color = egui::Color32::WHITE;
+                }
+            }
+            surface_rects.push(mesh.calc_bounds());
+            let tint = egui::Shape::Mesh(mesh.clone());
+            *shape = egui::Shape::Vec(vec![egui::Shape::mesh(backdrop), tint]);
+        }
         _ => {}
     }
+}
+
+fn frosted_surface_edge() -> egui::Stroke {
+    egui::Stroke::new(0.5_f32, egui::Color32::from_white_alpha(36))
 }
 
 fn apply_accent_color_to_style(style: &mut egui::Style, accent_color: egui::Color32) {
@@ -1862,11 +1894,69 @@ mod tests {
                 panic!("surface tint");
             };
             assert_eq!(tint.fill, fill);
-            assert_eq!(
-                tint.stroke,
-                egui::Stroke::new(0.5_f32, egui::Color32::from_white_alpha(36))
-            );
+            assert_eq!(tint.stroke, frosted_surface_edge());
         }
+    }
+
+    #[test]
+    fn frosted_surface_meshes_keep_their_shape_and_fringe() {
+        let fill = surface_fill(true, SurfaceStyle::Frosted);
+        let mut mesh = egui::Mesh::default();
+        mesh.colored_vertex(egui::pos2(10.0, 20.0), fill);
+        mesh.colored_vertex(egui::pos2(50.0, 20.0), fill);
+        mesh.colored_vertex(egui::pos2(30.0, 60.0), egui::Color32::TRANSPARENT);
+        mesh.add_triangle(0, 1, 2);
+        let mut shape = egui::Shape::mesh(mesh.clone());
+        let texture_id = egui::TextureId::User(42);
+        let mut surface_rects = Vec::new();
+
+        frost_shape(
+            &mut shape,
+            texture_id,
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0)),
+            fill,
+            &[],
+            &mut surface_rects,
+        );
+
+        assert_eq!(surface_rects, [mesh.calc_bounds()]);
+        let egui::Shape::Vec(layers) = shape else {
+            panic!("frosted mesh layers");
+        };
+        let egui::Shape::Mesh(backdrop) = &layers[0] else {
+            panic!("frosted mesh backdrop");
+        };
+        assert_eq!(backdrop.texture_id, texture_id);
+        assert_eq!(backdrop.indices, mesh.indices);
+        assert_eq!(backdrop.vertices[1].uv, egui::pos2(0.5, 0.2));
+        assert_eq!(backdrop.vertices[0].color, egui::Color32::WHITE);
+        assert_eq!(backdrop.vertices[2].color, egui::Color32::TRANSPARENT);
+        assert_eq!(layers[1], egui::Shape::mesh(mesh));
+    }
+
+    #[test]
+    fn meshes_with_other_colors_are_not_frosted() {
+        let fill = surface_fill(true, SurfaceStyle::Frosted);
+        let mut mesh = egui::Mesh::default();
+        mesh.colored_vertex(egui::pos2(10.0, 20.0), fill);
+        mesh.colored_vertex(egui::pos2(50.0, 20.0), egui::Color32::RED);
+        mesh.colored_vertex(egui::pos2(30.0, 60.0), fill);
+        mesh.add_triangle(0, 1, 2);
+        let original = egui::Shape::mesh(mesh);
+        let mut shape = original.clone();
+        let mut surface_rects = Vec::new();
+
+        frost_shape(
+            &mut shape,
+            egui::TextureId::User(42),
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0)),
+            fill,
+            &[],
+            &mut surface_rects,
+        );
+
+        assert!(surface_rects.is_empty());
+        assert_eq!(shape, original);
     }
 
     #[test]

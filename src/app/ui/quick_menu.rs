@@ -14,8 +14,11 @@ const QUICK_MENU_GROUP_RADIUS: f32 = 140.0;
 const QUICK_MENU_GROUP_REACH: f32 = 210.0;
 const QUICK_MENU_GROUP_SPACING: f32 = 18.0 * PI / 180.0;
 const QUICK_MENU_GROUP_CAPACITY: usize = 5;
-const QUICK_MENU_CHIP_RADIUS: f32 = 20.0;
-const QUICK_MENU_CHIP_ICON_SIZE: f32 = 18.0;
+const QUICK_MENU_BAND_HALF_WIDTH: f32 = 24.0;
+const QUICK_MENU_BAND_SEGMENT: f32 = 3.0 * PI / 180.0;
+const QUICK_MENU_BAND_CAP_STEPS: usize = 12;
+const QUICK_MENU_GROUP_HIGHLIGHT_RADIUS: f32 = 20.0;
+const QUICK_MENU_GROUP_ICON_SIZE: f32 = 18.0;
 const QUICK_MENU_SCREEN_MARGIN: f32 = 8.0;
 const QUICK_MENU_OPEN_SECONDS: f32 = 0.12;
 const QUICK_MENU_CLOSE_SECONDS: f32 = 0.09;
@@ -441,6 +444,7 @@ impl GuiLayer {
 
         let screen = ctx.content_rect();
         let open = menu.open;
+        let frosted = self.surface_style == SurfaceStyle::Frosted;
         let layer_id = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("quick menu"));
         // Clicked toolbars rise to the top of the foreground; keep the open menu above them.
         ctx.move_to_top(layer_id);
@@ -458,12 +462,12 @@ impl GuiLayer {
                     egui::Sense::hover()
                 };
                 ui.allocate_exact_size(screen.size(), sense);
-                paint_quick_menu(ui, menu, context);
+                paint_quick_menu(ui, menu, context, frosted);
             });
     }
 }
 
-fn paint_quick_menu(ui: &egui::Ui, menu: &QuickMenu, context: QuickMenuContext) {
+fn paint_quick_menu(ui: &egui::Ui, menu: &QuickMenu, context: QuickMenuContext, frosted: bool) {
     let visuals = ui.visuals();
     let accent = visuals.selection.bg_fill;
     let on_accent = visuals.selection.stroke.color;
@@ -540,41 +544,54 @@ fn paint_quick_menu(ui: &egui::Ui, menu: &QuickMenu, context: QuickMenuContext) 
         let actions = menu.group_actions();
         let group_progress = egui::emath::easing::cubic_out(menu.group_progress);
         let scale = group_progress * progress;
-        let chip_alpha = content_alpha * group_progress * group_progress;
-        let origin = menu.center
-            + quick_menu_direction(quick_menu_slot_angle(group_slot))
-                * QUICK_MENU_SLOT_RADIUS
-                * progress;
+        let group_alpha = content_alpha * group_progress * group_progress;
+        // The band unfurls from the group's slot: it moves outward while its ends spread apart.
+        let radius = egui::lerp(
+            QUICK_MENU_SLOT_RADIUS..=QUICK_MENU_GROUP_RADIUS,
+            group_progress,
+        ) * progress;
+        let slot_angle = quick_menu_slot_angle(group_slot);
+        let angle_at = |index: usize| {
+            slot_angle
+                + (quick_menu_group_action_angle(group_slot, index, actions.len()) - slot_angle)
+                    * group_progress
+        };
+        // The frosted pass restyles the band's fill but not its separate outline.
+        let band_border = if frosted {
+            frosted_surface_edge()
+        } else {
+            border
+        };
+        paint_quick_menu_band(
+            ui,
+            menu.center,
+            radius,
+            QUICK_MENU_BAND_HALF_WIDTH * scale,
+            [angle_at(0), angle_at(actions.len() - 1)],
+            visuals.window_fill(),
+            band_border,
+        );
         for (index, &action) in actions.iter().enumerate() {
-            let destination = menu.center
-                + quick_menu_direction(quick_menu_group_action_angle(
-                    group_slot,
-                    index,
-                    actions.len(),
-                )) * QUICK_MENU_GROUP_RADIUS
-                    * progress;
-            let chip_center = origin.lerp(destination, group_progress);
+            let action_center = menu.center + quick_menu_direction(angle_at(index)) * radius;
             let hover = egui::emath::easing::cubic_out(menu.group_hover[index]);
-            let chip_radius = QUICK_MENU_CHIP_RADIUS * scale;
-            paint_quick_menu_surface(ui, chip_center, chip_radius, visuals.window_fill(), border);
             if hover > 0.0 {
                 ui.painter().circle_filled(
-                    chip_center,
-                    chip_radius * hover,
-                    accent.gamma_multiply(chip_alpha),
+                    action_center,
+                    QUICK_MENU_GROUP_HIGHLIGHT_RADIUS * scale * hover,
+                    accent.gamma_multiply(group_alpha),
                 );
             }
             let tint = resting_tint(Some(action))
                 .lerp_to_gamma(on_accent, hover)
-                .gamma_multiply(chip_alpha);
+                .gamma_multiply(group_alpha);
             egui::Image::new(action.icon())
                 .tint(tint)
                 .alt_text(action.label())
                 .paint_at(
                     ui,
                     egui::Rect::from_center_size(
-                        chip_center,
-                        egui::Vec2::splat(QUICK_MENU_CHIP_ICON_SIZE * scale),
+                        action_center,
+                        egui::Vec2::splat(QUICK_MENU_GROUP_ICON_SIZE * scale),
                     ),
                 );
             if label.is_none_or(|(_, strongest)| hover > strongest) {
@@ -610,6 +627,127 @@ fn paint_quick_menu_surface(
         stroke,
         egui::StrokeKind::Inside,
     ));
+}
+
+/// Paints a band of constant width along an arc, with round ends. It is a surface-colored mesh,
+/// which the frosted pass blurs like the disc, plus a separate outline.
+fn paint_quick_menu_band(
+    ui: &egui::Ui,
+    center: egui::Pos2,
+    radius: f32,
+    half_width: f32,
+    angles: [f32; 2],
+    fill: egui::Color32,
+    stroke: egui::Stroke,
+) {
+    let feather = 1.0 / ui.ctx().pixels_per_point();
+    if half_width <= feather {
+        return;
+    }
+    ui.painter().add(quick_menu_band_mesh(
+        center, radius, half_width, angles, fill, feather,
+    ));
+    if stroke.width > 0.0 {
+        let outline =
+            quick_menu_band_outline(center, radius, half_width - stroke.width / 2.0, angles);
+        ui.painter()
+            .add(egui::epaint::PathShape::closed_line(outline, stroke));
+    }
+}
+
+/// Builds the band with a one-pixel transparent fringe for anti-aliasing, since egui only
+/// anti-aliases convex fills.
+fn quick_menu_band_mesh(
+    center: egui::Pos2,
+    radius: f32,
+    half_width: f32,
+    [start, end]: [f32; 2],
+    fill: egui::Color32,
+    feather: f32,
+) -> egui::Mesh {
+    let transparent = egui::Color32::TRANSPARENT;
+    let mut mesh = egui::Mesh::default();
+    let steps = quick_menu_band_steps(start, end);
+    for step in 0..=steps {
+        let direction = quick_menu_direction(egui::lerp(start..=end, step as f32 / steps as f32));
+        for (offset, color) in [
+            (-half_width - feather / 2.0, transparent),
+            (-half_width + feather / 2.0, fill),
+            (half_width - feather / 2.0, fill),
+            (half_width + feather / 2.0, transparent),
+        ] {
+            mesh.colored_vertex(center + direction * (radius + offset), color);
+        }
+        if step > 0 {
+            let previous = 4 * (step as u32 - 1);
+            let current = previous + 4;
+            for lane in 0..3 {
+                mesh.add_triangle(previous + lane, previous + lane + 1, current + lane);
+                mesh.add_triangle(previous + lane + 1, current + lane + 1, current + lane);
+            }
+        }
+    }
+    for (angle, outward) in [(start, -1.0), (end, 1.0)] {
+        let cap_center = center + quick_menu_direction(angle) * radius;
+        let hub = mesh.vertices.len() as u32;
+        mesh.colored_vertex(cap_center, fill);
+        for step in 0..=QUICK_MENU_BAND_CAP_STEPS {
+            let normal = quick_menu_band_cap_normal(angle, outward, step);
+            mesh.colored_vertex(cap_center + normal * (half_width - feather / 2.0), fill);
+            mesh.colored_vertex(
+                cap_center + normal * (half_width + feather / 2.0),
+                transparent,
+            );
+            if step > 0 {
+                let previous = hub + 1 + 2 * (step as u32 - 1);
+                let current = previous + 2;
+                mesh.add_triangle(hub, previous, current);
+                mesh.add_triangle(previous, previous + 1, current);
+                mesh.add_triangle(previous + 1, current + 1, current);
+            }
+        }
+    }
+    mesh
+}
+
+/// Traces the band's edge clockwise: the outer arc, the end cap, the inner arc, then the start cap.
+fn quick_menu_band_outline(
+    center: egui::Pos2,
+    radius: f32,
+    half_width: f32,
+    [start, end]: [f32; 2],
+) -> Vec<egui::Pos2> {
+    let steps = quick_menu_band_steps(start, end);
+    let arc = |distance: f32, step: usize| {
+        center
+            + quick_menu_direction(egui::lerp(start..=end, step as f32 / steps as f32)) * distance
+    };
+    let cap = |angle: f32, outward: f32, step: usize| {
+        center
+            + quick_menu_direction(angle) * radius
+            + quick_menu_band_cap_normal(angle, outward, step) * half_width
+    };
+    let inner_caps = 1..QUICK_MENU_BAND_CAP_STEPS;
+    (0..=steps)
+        .map(|step| arc(radius + half_width, step))
+        .chain(inner_caps.clone().map(|step| cap(end, 1.0, step)))
+        .chain((0..=steps).rev().map(|step| arc(radius - half_width, step)))
+        .chain(inner_caps.rev().map(|step| cap(start, -1.0, step)))
+        .collect()
+}
+
+fn quick_menu_band_steps(start: f32, end: f32) -> usize {
+    ((end - start).abs() / QUICK_MENU_BAND_SEGMENT)
+        .ceil()
+        .max(1.0) as usize
+}
+
+/// Unit vector from a band end's center to its cap edge. Step zero points away from the ring and
+/// the last step points back toward it, sweeping through the direction the band extends.
+fn quick_menu_band_cap_normal(angle: f32, outward: f32, step: usize) -> egui::Vec2 {
+    let sweep = PI * step as f32 / QUICK_MENU_BAND_CAP_STEPS as f32;
+    let tangent = egui::vec2(angle.cos(), angle.sin()) * outward;
+    quick_menu_direction(angle) * sweep.cos() + tangent * sweep.sin()
 }
 
 /// Clockwise angle from the top, in radians.
@@ -688,7 +826,7 @@ fn group_after_hover(group: Option<usize>, target: Option<QuickTarget>) -> Optio
 
 /// Keeps the ring and any group arc inside the window, centering it when the window is too small.
 fn quick_menu_center(pointer: egui::Pos2, screen: egui::Rect) -> egui::Pos2 {
-    let inset = QUICK_MENU_GROUP_RADIUS + QUICK_MENU_CHIP_RADIUS + QUICK_MENU_SCREEN_MARGIN;
+    let inset = QUICK_MENU_GROUP_RADIUS + QUICK_MENU_BAND_HALF_WIDTH + QUICK_MENU_SCREEN_MARGIN;
     let clamp = |value: f32, min: f32, max: f32| {
         if min > max {
             (min + max) / 2.0
@@ -881,9 +1019,56 @@ mod tests {
     }
 
     #[test]
+    fn group_band_covers_every_action_highlight() {
+        let actions = QuickGroup::Layer.actions().len();
+        let angles = [
+            quick_menu_group_action_angle(LAYER_SLOT, 0, actions),
+            quick_menu_group_action_angle(LAYER_SLOT, actions - 1, actions),
+        ];
+        let mesh = quick_menu_band_mesh(
+            egui::Pos2::ZERO,
+            QUICK_MENU_GROUP_RADIUS,
+            QUICK_MENU_BAND_HALF_WIDTH,
+            angles,
+            egui::Color32::WHITE,
+            1.0,
+        );
+        assert!(mesh.is_valid());
+        for index in 0..actions {
+            let highlight = egui::Rect::from_center_size(
+                egui::Pos2::ZERO + group_action_offset(LAYER_SLOT, index),
+                egui::Vec2::splat(QUICK_MENU_GROUP_HIGHLIGHT_RADIUS * 2.0),
+            );
+            assert!(mesh.calc_bounds().contains_rect(highlight));
+        }
+
+        let outline = quick_menu_band_outline(
+            egui::Pos2::ZERO,
+            QUICK_MENU_GROUP_RADIUS,
+            QUICK_MENU_BAND_HALF_WIDTH,
+            angles,
+        );
+        for point in outline {
+            let from_arc = (point.to_vec2().length() - QUICK_MENU_GROUP_RADIUS).abs();
+            let from_end = angles
+                .map(|angle| {
+                    point.distance(
+                        egui::Pos2::ZERO + quick_menu_direction(angle) * QUICK_MENU_GROUP_RADIUS,
+                    )
+                })
+                .into_iter()
+                .fold(f32::INFINITY, f32::min);
+            assert!(
+                (from_arc - QUICK_MENU_BAND_HALF_WIDTH).abs() < 0.01
+                    || (from_end - QUICK_MENU_BAND_HALF_WIDTH).abs() < 0.01
+            );
+        }
+    }
+
+    #[test]
     fn quick_menu_stays_inside_the_window() {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
-        let inset = QUICK_MENU_GROUP_RADIUS + QUICK_MENU_CHIP_RADIUS + QUICK_MENU_SCREEN_MARGIN;
+        let inset = QUICK_MENU_GROUP_RADIUS + QUICK_MENU_BAND_HALF_WIDTH + QUICK_MENU_SCREEN_MARGIN;
 
         assert_eq!(
             quick_menu_center(egui::pos2(400.0, 300.0), screen),
