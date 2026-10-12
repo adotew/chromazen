@@ -10,6 +10,7 @@ mod interaction_geometry;
 mod layer_transform;
 mod layers_panel;
 mod menu;
+mod quick_menu;
 mod reference_panel;
 mod selection_outline;
 mod toolbar;
@@ -209,6 +210,7 @@ pub struct GuiLayer {
     new_artwork_dialog: Option<NewArtworkDialog>,
     canvas_crop: Option<CanvasCrop>,
     layer_transform_drag: Option<LayerTransformDrag>,
+    quick_menu: Option<quick_menu::QuickMenu>,
     gallery: gallery::GalleryUi,
 }
 
@@ -458,6 +460,7 @@ impl GuiLayer {
             new_artwork_dialog: None,
             canvas_crop: None,
             layer_transform_drag: None,
+            quick_menu: None,
             gallery: gallery::GalleryUi::default(),
         }
     }
@@ -565,6 +568,7 @@ impl GuiLayer {
         self.brush_slider_active = false;
         self.release_brush_slider_focus();
         self.brush_adjustment_preview = None;
+        self.quick_menu = None;
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
         context.run_ui(raw_input, |ui| {

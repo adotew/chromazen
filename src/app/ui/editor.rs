@@ -262,7 +262,9 @@ impl GuiLayer {
                     self.commands
                         .push(AppCommand::Editor(EditorCommand::ApplyLayerTransform));
                 }
-                if ui.ctx().input(|input| input.key_pressed(egui::Key::Escape)) {
+                if ui.ctx().input(|input| input.key_pressed(egui::Key::Escape))
+                    && !self.close_quick_menu()
+                {
                     if tool == EditorTool::Transform
                         && (layer_transform.is_some() || selection.is_none())
                     {
@@ -335,6 +337,7 @@ impl GuiLayer {
             if let Some(indicator) = eyedropper_indicator {
                 show_eyedropper_indicator(ui, indicator);
             }
+            self.show_quick_menu(ui.ctx(), menu, tool);
             if let Some(action) = pending_navigation {
                 show_save_blocker(ui.ctx(), action, &save_status, &mut self.commands);
             }

@@ -19,6 +19,8 @@ const ROTATION_SNAP_INTERVAL: f32 = std::f32::consts::FRAC_PI_2;
 const ROTATION_SNAP_ENTER: f32 = 5.0_f32.to_radians();
 const ROTATION_SNAP_EXIT: f32 = 8.0_f32.to_radians();
 const LASSO_MIN_POINT_SPACING: f32 = 2.0;
+/// Logical pixels a right-click may travel and still open the quick menu instead of panning.
+const QUICK_MENU_TAP_SLOP: f32 = 4.0;
 
 /// Converts tablet input to the same physical-coordinate events used by mouse input.
 pub(crate) fn window_events_for_pen(event: PenEvent, scale_factor: f64) -> Vec<WindowEvent> {
@@ -72,6 +74,16 @@ struct EyedropperDrag {
     last_sample: Option<(Instant, [f32; 2])>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum QuickMenuRequest {
+    /// Window position in physical pixels.
+    Open {
+        position: [f32; 2],
+        held_by_key: bool,
+    },
+    ReleaseKey,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum KeyboardShortcut {
     ToggleSidebar,
@@ -122,6 +134,8 @@ pub struct PaintInputController {
     resize_drag: Option<BrushResizeDrag>,
     eyedropper_drag: Option<EyedropperDrag>,
     lasso: Option<Vec<[f32; 2]>>,
+    secondary_press_origin: Option<[f32; 2]>,
+    quick_menu_request: Option<QuickMenuRequest>,
     last_point: Option<StrokePoint>,
     last_raw_point: Option<StrokePoint>,
     last_pan_pos: [f32; 2],
@@ -192,6 +206,10 @@ impl PaintInputController {
 
     pub(crate) fn lasso_points(&self) -> Option<&[[f32; 2]]> {
         self.lasso.as_deref()
+    }
+
+    pub(crate) fn take_quick_menu_request(&mut self) -> Option<QuickMenuRequest> {
+        self.quick_menu_request.take()
     }
 
     pub fn has_active_document_drag(&self) -> bool {
@@ -318,6 +336,7 @@ impl PaintInputController {
                     return changed;
                 }
                 if self.is_panning {
+                    self.track_secondary_press(next);
                     let delta = [
                         next[0] - self.last_pan_pos[0],
                         next[1] - self.last_pan_pos[1],
@@ -455,12 +474,18 @@ impl PaintInputController {
                     self.smoother.begin(point);
                     tool != PaintTool::Smudge && paint.queue_stamp(point)
                 }
-                (ElementState::Pressed, MouseButton::Middle | MouseButton::Right) => {
+                (ElementState::Pressed, button @ (MouseButton::Middle | MouseButton::Right)) => {
+                    self.begin_secondary_press(*button);
                     self.is_panning = true;
                     self.last_pan_pos = self.cursor_pos;
                     true
                 }
-                (ElementState::Released, _) => self.end_stroke(paint, *brush),
+                (ElementState::Released, button) => {
+                    if *button == MouseButton::Right {
+                        self.finish_secondary_press();
+                    }
+                    self.end_stroke(paint, *brush)
+                }
                 _ => false,
             },
             WindowEvent::MouseWheel { delta, .. } => {
@@ -490,6 +515,16 @@ impl PaintInputController {
                 true
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                if event.physical_key == PhysicalKey::Code(KeyCode::KeyQ) {
+                    self.quick_menu_request = quick_menu_key_request(
+                        event.state,
+                        event.repeat,
+                        self.modifiers,
+                        self.has_active_document_drag(),
+                        self.cursor_pos,
+                    );
+                    return self.quick_menu_request.is_some();
+                }
                 if event.physical_key == PhysicalKey::Code(KeyCode::KeyR) {
                     let pressed = event.state == ElementState::Pressed;
                     let active = pressed && self.modifiers.is_empty();
@@ -522,6 +557,7 @@ impl PaintInputController {
                 false
             }
             WindowEvent::CursorLeft { .. } | WindowEvent::Focused(false) => {
+                self.secondary_press_origin = None;
                 self.resize_origin = None;
                 self.resize_drag = None;
                 self.is_rotation_key_down = false;
@@ -539,6 +575,7 @@ impl PaintInputController {
         paint: &mut Canvas,
         brush: BrushSettings,
     ) -> bool {
+        self.secondary_press_origin = None;
         self.resize_origin = None;
         self.resize_drag = None;
         self.is_rotation_key_down = false;
@@ -547,6 +584,35 @@ impl PaintInputController {
         let selected = self.finish_lasso(paint);
         let ended = self.end_stroke(paint, brush);
         paint.commit_layer_transform() || ended || selected
+    }
+
+    fn begin_secondary_press(&mut self, button: MouseButton) {
+        self.secondary_press_origin =
+            (button == MouseButton::Right && !self.is_drawing && !self.is_panning)
+                .then_some(self.cursor_pos);
+    }
+
+    fn track_secondary_press(&mut self, position: [f32; 2]) {
+        let scale_factor = self.scale_factor.unwrap_or(1.0);
+        if self
+            .secondary_press_origin
+            .is_some_and(|origin| !is_tap(origin, position, scale_factor))
+        {
+            self.secondary_press_origin = None;
+        }
+    }
+
+    /// A right-click that stays put opens the quick menu; any larger movement was a pan.
+    fn finish_secondary_press(&mut self) {
+        let scale_factor = self.scale_factor.unwrap_or(1.0);
+        if let Some(origin) = self.secondary_press_origin.take()
+            && is_tap(origin, self.cursor_pos, scale_factor)
+        {
+            self.quick_menu_request = Some(QuickMenuRequest::Open {
+                position: origin,
+                held_by_key: false,
+            });
+        }
     }
 
     fn finish_lasso(&mut self, paint: &mut Canvas) -> bool {
@@ -717,6 +783,30 @@ fn keyboard_shortcut_for_key(
         }
         (KeyCode::KeyF, ModifiersState::SHIFT) => Some(KeyboardShortcut::FlipCanvasVertical),
         _ => None,
+    }
+}
+
+/// Both positions are physical pixels; the slop is scaled so taps feel the same on every display.
+fn is_tap(origin: [f32; 2], position: [f32; 2], scale_factor: f32) -> bool {
+    (position[0] - origin[0]).hypot(position[1] - origin[1]) <= QUICK_MENU_TAP_SLOP * scale_factor
+}
+
+fn quick_menu_key_request(
+    state: ElementState,
+    repeat: bool,
+    modifiers: ModifiersState,
+    document_busy: bool,
+    cursor_pos: [f32; 2],
+) -> Option<QuickMenuRequest> {
+    match state {
+        ElementState::Pressed if !repeat && modifiers.is_empty() && !document_busy => {
+            Some(QuickMenuRequest::Open {
+                position: cursor_pos,
+                held_by_key: true,
+            })
+        }
+        ElementState::Pressed => None,
+        ElementState::Released => Some(QuickMenuRequest::ReleaseKey),
     }
 }
 
@@ -1099,6 +1189,103 @@ mod tests {
         assert_eq!(input.eyedropper_indicator_pos(), Some([40.0, 50.0]));
         assert!(input.is_eyedropper_active());
         assert!(!input.has_active_document_drag());
+    }
+
+    #[test]
+    fn right_click_in_place_requests_the_quick_menu() {
+        let mut input = PaintInputController {
+            cursor_pos: [100.0, 80.0],
+            scale_factor: Some(2.0),
+            ..PaintInputController::default()
+        };
+        input.begin_secondary_press(MouseButton::Right);
+        input.cursor_pos = [106.0, 80.0];
+        input.track_secondary_press(input.cursor_pos);
+        input.finish_secondary_press();
+
+        assert_eq!(
+            input.take_quick_menu_request(),
+            Some(QuickMenuRequest::Open {
+                position: [100.0, 80.0],
+                held_by_key: false,
+            })
+        );
+        assert_eq!(input.take_quick_menu_request(), None);
+    }
+
+    #[test]
+    fn right_drag_pans_without_requesting_the_quick_menu() {
+        let mut input = PaintInputController {
+            cursor_pos: [100.0, 80.0],
+            ..PaintInputController::default()
+        };
+        input.begin_secondary_press(MouseButton::Right);
+        input.track_secondary_press([140.0, 80.0]);
+        input.cursor_pos = [100.0, 80.0];
+        input.finish_secondary_press();
+
+        assert_eq!(input.take_quick_menu_request(), None);
+    }
+
+    #[test]
+    fn middle_click_and_busy_right_clicks_do_not_request_the_quick_menu() {
+        let mut input = PaintInputController::default();
+        input.begin_secondary_press(MouseButton::Middle);
+        input.finish_secondary_press();
+        assert_eq!(input.take_quick_menu_request(), None);
+
+        let mut drawing = PaintInputController {
+            is_drawing: true,
+            ..PaintInputController::default()
+        };
+        drawing.begin_secondary_press(MouseButton::Right);
+        drawing.finish_secondary_press();
+        assert_eq!(drawing.take_quick_menu_request(), None);
+    }
+
+    #[test]
+    fn tap_slop_scales_with_the_display() {
+        assert!(is_tap([0.0, 0.0], [4.0, 0.0], 1.0));
+        assert!(!is_tap([0.0, 0.0], [5.0, 0.0], 1.0));
+        assert!(is_tap([0.0, 0.0], [0.0, 8.0], 2.0));
+        assert!(!is_tap([0.0, 0.0], [0.0, 9.0], 2.0));
+    }
+
+    #[test]
+    fn quick_menu_key_opens_on_press_and_reports_release() {
+        let open = Some(QuickMenuRequest::Open {
+            position: [3.0, 4.0],
+            held_by_key: true,
+        });
+        let request = |state, repeat, modifiers, busy| {
+            quick_menu_key_request(state, repeat, modifiers, busy, [3.0, 4.0])
+        };
+
+        assert_eq!(
+            request(ElementState::Pressed, false, ModifiersState::empty(), false),
+            open
+        );
+        assert_eq!(
+            request(ElementState::Pressed, true, ModifiersState::empty(), false),
+            None
+        );
+        assert_eq!(
+            request(ElementState::Pressed, false, ModifiersState::SUPER, false),
+            None
+        );
+        assert_eq!(
+            request(ElementState::Pressed, false, ModifiersState::empty(), true),
+            None
+        );
+        assert_eq!(
+            request(
+                ElementState::Released,
+                false,
+                ModifiersState::empty(),
+                false
+            ),
+            Some(QuickMenuRequest::ReleaseKey)
+        );
     }
 
     #[test]
