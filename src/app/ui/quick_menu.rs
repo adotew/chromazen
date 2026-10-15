@@ -243,9 +243,8 @@ impl QuickGroup {
 
     fn icon(self) -> egui::ImageSource<'static> {
         match self {
-            Self::Tool | Self::Brush => {
-                egui::include_image!("../../../assets/icons/paintbrush.svg")
-            }
+            Self::Tool => egui::include_image!("../../../assets/icons/pencil-ruler.svg"),
+            Self::Brush => egui::include_image!("../../../assets/icons/paintbrush.svg"),
             Self::Layer => egui::include_image!("../../../assets/icons/layers.svg"),
             Self::Canvas => egui::include_image!("../../../assets/icons/frame.svg"),
         }
