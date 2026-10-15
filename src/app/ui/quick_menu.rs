@@ -912,9 +912,10 @@ fn quick_menu_slot_at(offset: egui::Vec2) -> Option<usize> {
     )
 }
 
-/// Outside the disc, the open group's arc takes precedence over the ring. Inside the disc, the
-/// group keeps the whole angle range its arc covers, so a diagonal path toward an edge action
-/// does not cut through a neighboring slot and switch groups.
+/// Outside the disc, the open group's arc takes precedence over the ring. Between the icons and
+/// the rim, the group keeps the whole angle range its arc covers, so a diagonal path toward an
+/// edge action does not cut through a neighboring slot and switch groups. Closer in, where moves
+/// between neighboring icons pass, it keeps only half the extra range so switching stays quick.
 fn quick_menu_target_at(
     offset: egui::Vec2,
     open_group: Option<usize>,
@@ -936,9 +937,13 @@ fn quick_menu_target_at(
                 .clamp(0.0, (count - 1) as f32) as usize;
             return Some(QuickTarget::GroupAction(index));
         }
-        if (QUICK_MENU_DEAD_ZONE..=QUICK_MENU_RADIUS).contains(&distance)
-            && delta.abs() <= half_span
-        {
+        let wedge = TAU / QUICK_SLOTS.len() as f32 / 2.0;
+        let hold = if distance > QUICK_MENU_SLOT_RADIUS {
+            half_span
+        } else {
+            (wedge + half_span) / 2.0
+        };
+        if (QUICK_MENU_DEAD_ZONE..=QUICK_MENU_RADIUS).contains(&distance) && delta.abs() <= hold {
             return Some(QuickTarget::Slot(slot));
         }
     }
@@ -1133,6 +1138,24 @@ mod tests {
             quick_menu_target_at(end, group, BRUSHES),
             Some(QuickTarget::GroupAction(last))
         );
+    }
+
+    #[test]
+    fn moving_between_neighboring_icons_switches_groups_before_reaching_the_next_icon() {
+        let layer =
+            quick_menu_direction(quick_menu_slot_angle(LAYER_SLOT)) * QUICK_MENU_SLOT_RADIUS;
+        let canvas =
+            quick_menu_direction(quick_menu_slot_angle(CANVAS_SLOT)) * QUICK_MENU_SLOT_RADIUS;
+        let mut group = Some(LAYER_SLOT);
+        for step in 0..=20 {
+            let offset = layer + (canvas - layer) * (step as f32 / 20.0);
+            group = group_after_hover(group, quick_menu_target_at(offset, group, BRUSHES));
+            if step <= 10 {
+                assert_eq!(group, Some(LAYER_SLOT));
+            } else if step >= 15 {
+                assert_eq!(group, Some(CANVAS_SLOT));
+            }
+        }
     }
 
     #[test]
