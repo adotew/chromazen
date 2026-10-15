@@ -1,6 +1,7 @@
 use std::f32::consts::{PI, TAU};
 
 use super::*;
+use brush_panel::paint_stamp;
 use layers_panel::{can_delete_layer, can_merge_layer_down};
 
 const QUICK_MENU_RADIUS: f32 = 100.0;
@@ -9,6 +10,8 @@ const QUICK_MENU_DEAD_ZONE: f32 = 28.0;
 const QUICK_MENU_REACH: f32 = 160.0;
 const QUICK_MENU_HIGHLIGHT_RADIUS: f32 = 22.0;
 const QUICK_MENU_ICON_SIZE: f32 = 22.0;
+/// Stamps have soft, transparent edges, so they need more room than icons to read at a glance.
+const QUICK_MENU_STAMP_SIZE: f32 = 36.0;
 const QUICK_MENU_GROUP_MARKER_OFFSET: f32 = 17.0;
 /// Space between a highlighted item and the edge of the surface behind it, matching the ring.
 const QUICK_MENU_EDGE_PADDING: f32 =
@@ -48,11 +51,14 @@ enum QuickAction {
     FlipHorizontal,
     FlipVertical,
     ResetRotation,
+    /// Index into the quick menu's brush list.
+    Preset(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum QuickGroup {
     Tool,
+    Brush,
     Layer,
     Canvas,
 }
@@ -64,8 +70,9 @@ enum QuickSlot {
 }
 
 /// Slots run clockwise from the top.
-const QUICK_SLOTS: [QuickSlot; 6] = [
+const QUICK_SLOTS: [QuickSlot; 7] = [
     QuickSlot::Group(QuickGroup::Tool),
+    QuickSlot::Group(QuickGroup::Brush),
     QuickSlot::Action(QuickAction::Redo),
     QuickSlot::Group(QuickGroup::Layer),
     QuickSlot::Group(QuickGroup::Canvas),
@@ -80,11 +87,21 @@ enum QuickTarget {
     GroupAction(usize),
 }
 
+/// A brush preset of the active paint tool, listed on the brush arc.
+#[derive(Clone, Debug)]
+struct QuickBrush {
+    tool: PaintTool,
+    id: String,
+    name: String,
+    texture: Option<egui::TextureId>,
+}
+
 /// Editor state that decides which actions are available.
 #[derive(Clone, Copy, Debug)]
 struct QuickMenuContext {
     menu: ApplicationMenuState,
     tool: EditorTool,
+    selected_brush: Option<usize>,
     selected_layer: LayerId,
     can_merge_down: bool,
     can_delete_layer: bool,
@@ -99,6 +116,7 @@ impl QuickMenuContext {
         Self {
             menu,
             tool,
+            selected_brush: None,
             selected_layer: layers.selection,
             can_merge_down: selected_index
                 .is_some_and(|index| can_merge_layer_down(&layers.layers, index)),
@@ -127,6 +145,7 @@ impl QuickAction {
             Self::FlipHorizontal => "Flip horizontal",
             Self::FlipVertical => "Flip vertical",
             Self::ResetRotation => "Reset rotation",
+            Self::Preset(_) => "Brush",
         }
     }
 
@@ -154,6 +173,7 @@ impl QuickAction {
                 egui::include_image!("../../../assets/icons/square-centerline-dashed-vertical.svg")
             }
             Self::ResetRotation => egui::include_image!("../../../assets/icons/compass.svg"),
+            Self::Preset(_) => egui::include_image!("../../../assets/icons/paintbrush.svg"),
         }
     }
 
@@ -167,8 +187,15 @@ impl QuickAction {
         }
     }
 
-    fn command(self, selected_layer: LayerId) -> EditorCommand {
-        match self {
+    fn command(self, selected_layer: LayerId, brushes: &[QuickBrush]) -> AppCommand {
+        let command = match self {
+            Self::Preset(index) => {
+                let brush = &brushes[index];
+                return AppCommand::Settings(SettingsCommand::SwitchBrush {
+                    tool: brush.tool,
+                    id: brush.id.clone(),
+                });
+            }
             Self::Brush => EditorCommand::SelectTool(PaintTool::Brush.into()),
             Self::Eraser => EditorCommand::SelectTool(PaintTool::Eraser.into()),
             Self::Smudge => EditorCommand::SelectTool(PaintTool::Smudge.into()),
@@ -185,7 +212,8 @@ impl QuickAction {
             Self::FlipHorizontal => EditorCommand::ToggleCanvasFlipHorizontal,
             Self::FlipVertical => EditorCommand::ToggleCanvasFlipVertical,
             Self::ResetRotation => EditorCommand::ResetCanvasRotation,
-        }
+        };
+        AppCommand::Editor(command)
     }
 
     fn is_enabled(self, context: QuickMenuContext) -> bool {
@@ -208,6 +236,7 @@ impl QuickGroup {
     fn label(self) -> &'static str {
         match self {
             Self::Tool => "Tool",
+            Self::Brush => "Brush",
             Self::Layer => "Layer",
             Self::Canvas => "Canvas",
         }
@@ -215,17 +244,20 @@ impl QuickGroup {
 
     fn icon(self) -> egui::ImageSource<'static> {
         match self {
-            Self::Tool => egui::include_image!("../../../assets/icons/paintbrush.svg"),
+            Self::Tool | Self::Brush => {
+                egui::include_image!("../../../assets/icons/paintbrush.svg")
+            }
             Self::Layer => egui::include_image!("../../../assets/icons/layers.svg"),
             Self::Canvas => egui::include_image!("../../../assets/icons/frame.svg"),
         }
     }
 
     /// Actions run clockwise along the arc.
-    fn actions(self) -> &'static [QuickAction] {
+    fn actions(self, brushes: usize) -> Vec<QuickAction> {
         match self {
-            Self::Tool => &[QuickAction::Brush, QuickAction::Eraser, QuickAction::Smudge],
-            Self::Layer => &[
+            Self::Tool => vec![QuickAction::Brush, QuickAction::Eraser, QuickAction::Smudge],
+            Self::Brush => (0..brushes).map(QuickAction::Preset).collect(),
+            Self::Layer => vec![
                 QuickAction::NewLayer,
                 QuickAction::DuplicateLayer,
                 QuickAction::MergeDown,
@@ -233,7 +265,7 @@ impl QuickGroup {
                 QuickAction::DeleteLayer,
             ],
             // The arc opens below the ring, where clockwise runs right to left.
-            Self::Canvas => &[
+            Self::Canvas => vec![
                 QuickAction::RotateRight,
                 QuickAction::FlipHorizontal,
                 QuickAction::ResetRotation,
@@ -289,19 +321,18 @@ impl QuickMenu {
         self.group.filter(|_| self.group_open)
     }
 
-    fn group_actions(&self) -> &'static [QuickAction] {
+    fn group_actions(&self, brushes: usize) -> Vec<QuickAction> {
         self.group
-            .and_then(|slot| QUICK_SLOTS[slot].group())
-            .map_or(&[], QuickGroup::actions)
+            .map_or_else(Vec::new, |slot| group_actions(slot, brushes))
     }
 
-    fn action(&self, target: QuickTarget) -> Option<QuickAction> {
+    fn action(&self, target: QuickTarget, brushes: usize) -> Option<QuickAction> {
         match target {
             QuickTarget::Slot(slot) => match QUICK_SLOTS[slot] {
                 QuickSlot::Action(action) => Some(action),
                 QuickSlot::Group(_) => None,
             },
-            QuickTarget::GroupAction(index) => self.group_actions().get(index).copied(),
+            QuickTarget::GroupAction(index) => self.group_actions(brushes).get(index).copied(),
         }
     }
 
@@ -374,10 +405,17 @@ impl GuiLayer {
         tool: EditorTool,
         layers: &LayerSnapshot,
     ) {
+        if self.quick_menu.is_none() {
+            return;
+        }
+        let (brushes, selected_brush) = self.quick_brushes(tool.paint_tool());
         let Some(menu) = self.quick_menu.as_mut() else {
             return;
         };
-        let context = QuickMenuContext::new(menu_state, tool, layers);
+        let context = QuickMenuContext {
+            selected_brush,
+            ..QuickMenuContext::new(menu_state, tool, layers)
+        };
         let (pointer, primary_pressed, secondary_pressed, dt) = ctx.input(|input| {
             (
                 input.pointer.hover_pos(),
@@ -387,14 +425,15 @@ impl GuiLayer {
             )
         });
         let target = if menu.open {
-            let target = pointer
-                .and_then(|pointer| quick_menu_target_at(pointer - menu.center, menu.open_group()));
+            let target = pointer.and_then(|pointer| {
+                quick_menu_target_at(pointer - menu.center, menu.open_group(), brushes.len())
+            });
             menu.show_group(group_after_hover(menu.open_group(), target));
             target
         } else {
             menu.chosen
         };
-        let action = target.and_then(|target| menu.action(target));
+        let action = target.and_then(|target| menu.action(target, brushes.len()));
         let enabled_action = action.filter(|action| action.is_enabled(context));
         // Group slots stay hoverable; disabled actions do not highlight.
         let hovered = target.filter(|_| action.is_none() || enabled_action.is_some());
@@ -408,7 +447,7 @@ impl GuiLayer {
                 menu.open = false;
                 menu.chosen = hovered;
                 self.commands
-                    .push(AppCommand::Editor(action.command(context.selected_layer)));
+                    .push(action.command(context.selected_layer, &brushes));
             } else if secondary_pressed || (primary_pressed && hovered.is_none()) {
                 menu.open = false;
             }
@@ -469,12 +508,43 @@ impl GuiLayer {
                     egui::Sense::hover()
                 };
                 ui.allocate_exact_size(screen.size(), sense);
-                paint_quick_menu(ui, menu, context, frosted);
+                paint_quick_menu(ui, menu, context, &brushes, frosted);
             });
+    }
+
+    /// The active paint tool's brushes, and the index of its selected brush.
+    fn quick_brushes(&mut self, tool: Option<PaintTool>) -> (Vec<QuickBrush>, Option<usize>) {
+        let Some(tool) = tool else {
+            return (Vec::new(), None);
+        };
+        self.cache_next_missing_brush_preview();
+        // shortcut: only the first brushes that fit the arc are listed; page the arc once
+        // imported brush sets commonly outgrow it.
+        let brushes: Vec<_> = self
+            .brushes
+            .iter()
+            .take(QUICK_MENU_GROUP_CAPACITY)
+            .map(|brush| QuickBrush {
+                tool,
+                id: brush.id.clone(),
+                name: brush.name.clone(),
+                texture: self.brush_preview_texture(&brush.id),
+            })
+            .collect();
+        let selected = brushes
+            .iter()
+            .position(|brush| brush.id == self.tool_brushes[tool_index(tool)]);
+        (brushes, selected)
     }
 }
 
-fn paint_quick_menu(ui: &egui::Ui, menu: &QuickMenu, context: QuickMenuContext, frosted: bool) {
+fn paint_quick_menu(
+    ui: &egui::Ui,
+    menu: &QuickMenu,
+    context: QuickMenuContext,
+    brushes: &[QuickBrush],
+    frosted: bool,
+) {
     let visuals = ui.visuals();
     let accent = visuals.selection.bg_fill;
     let on_accent = visuals.selection.stroke.color;
@@ -486,6 +556,7 @@ fn paint_quick_menu(ui: &egui::Ui, menu: &QuickMenu, context: QuickMenuContext, 
         Some(action) if !action.is_enabled(context) => {
             visuals.weak_text_color().gamma_multiply(0.5)
         }
+        Some(QuickAction::Preset(index)) if context.selected_brush == Some(index) => accent,
         Some(action) if action.tool() == Some(context.tool) => accent,
         _ => text_color,
     };
@@ -516,7 +587,7 @@ fn paint_quick_menu(ui: &egui::Ui, menu: &QuickMenu, context: QuickMenuContext, 
                 accent.gamma_multiply(content_alpha),
             );
         }
-        let tint = resting_tint(menu.action(QuickTarget::Slot(slot)))
+        let tint = resting_tint(menu.action(QuickTarget::Slot(slot), brushes.len()))
             .lerp_to_gamma(on_accent, hover)
             .gamma_multiply(content_alpha);
         if quick_slot.group().is_some() {
@@ -529,16 +600,21 @@ fn paint_quick_menu(ui: &egui::Ui, menu: &QuickMenu, context: QuickMenuContext, 
                 text_color.gamma_multiply(content_alpha),
             );
         }
-        egui::Image::new(quick_slot.icon())
-            .tint(tint)
-            .alt_text(quick_slot.label())
-            .paint_at(
-                ui,
-                egui::Rect::from_center_size(
-                    slot_center,
-                    egui::Vec2::splat(QUICK_MENU_ICON_SIZE * progress),
-                ),
-            );
+        let icon_rect = egui::Rect::from_center_size(
+            slot_center,
+            egui::Vec2::splat(QUICK_MENU_ICON_SIZE * progress),
+        );
+        match (quick_slot, context.selected_brush) {
+            (QuickSlot::Group(QuickGroup::Brush), Some(index)) => {
+                let stamp_rect =
+                    icon_rect.scale_from_center(QUICK_MENU_STAMP_SIZE / QUICK_MENU_ICON_SIZE);
+                paint_stamp(ui, stamp_rect, brushes[index].texture, tint);
+            }
+            _ => egui::Image::new(quick_slot.icon())
+                .tint(tint)
+                .alt_text(quick_slot.label())
+                .paint_at(ui, icon_rect),
+        }
     }
 
     let mut label = QUICK_SLOTS
@@ -547,8 +623,11 @@ fn paint_quick_menu(ui: &egui::Ui, menu: &QuickMenu, context: QuickMenuContext, 
         .map(|(slot, hover)| (slot.label(), hover))
         .max_by(|a, b| a.1.total_cmp(&b.1));
 
-    if let Some(group_slot) = menu.group {
-        let actions = menu.group_actions();
+    if let Some(group_slot) = menu
+        .group
+        .filter(|&slot| !group_actions(slot, brushes.len()).is_empty())
+    {
+        let actions = menu.group_actions(brushes.len());
         let group_progress = egui::emath::easing::cubic_out(menu.group_progress);
         let scale = group_progress * progress;
         let group_alpha = content_alpha * group_progress * group_progress;
@@ -597,18 +676,28 @@ fn paint_quick_menu(ui: &egui::Ui, menu: &QuickMenu, context: QuickMenuContext, 
             let tint = resting_tint(Some(action))
                 .lerp_to_gamma(on_accent, hover)
                 .gamma_multiply(group_alpha);
-            egui::Image::new(action.icon())
-                .tint(tint)
-                .alt_text(action.label())
-                .paint_at(
-                    ui,
-                    egui::Rect::from_center_size(
-                        action_center,
-                        egui::Vec2::splat(QUICK_MENU_ICON_SIZE * scale),
-                    ),
-                );
+            let icon_rect = egui::Rect::from_center_size(
+                action_center,
+                egui::Vec2::splat(QUICK_MENU_ICON_SIZE * scale),
+            );
+            let action_label = match action {
+                QuickAction::Preset(index) => {
+                    let brush = &brushes[index];
+                    let stamp_rect =
+                        icon_rect.scale_from_center(QUICK_MENU_STAMP_SIZE / QUICK_MENU_ICON_SIZE);
+                    paint_stamp(ui, stamp_rect, brush.texture, tint);
+                    brush.name.as_str()
+                }
+                action => {
+                    egui::Image::new(action.icon())
+                        .tint(tint)
+                        .alt_text(action.label())
+                        .paint_at(ui, icon_rect);
+                    action.label()
+                }
+            };
             if label.is_none_or(|(_, strongest)| hover > strongest) {
-                label = Some((action.label(), hover));
+                label = Some((action_label, hover));
             }
         }
     }
@@ -837,11 +926,13 @@ fn quick_menu_slot_at(offset: egui::Vec2) -> Option<usize> {
 /// Outside the disc, the open group's arc takes precedence over the ring. Inside the disc, the
 /// group keeps the whole angle range its arc covers, so a diagonal path toward an edge action
 /// does not cut through a neighboring slot and switch groups.
-fn quick_menu_target_at(offset: egui::Vec2, open_group: Option<usize>) -> Option<QuickTarget> {
+fn quick_menu_target_at(
+    offset: egui::Vec2,
+    open_group: Option<usize>,
+    brushes: usize,
+) -> Option<QuickTarget> {
     if let Some(slot) = open_group {
-        let count = QUICK_SLOTS[slot]
-            .group()
-            .map_or(0, |group| group.actions().len());
+        let count = group_actions(slot, brushes).len();
         let distance = offset.length();
         let half_span = count.saturating_sub(1) as f32 / 2.0 * QUICK_MENU_GROUP_SPACING;
         let delta =
@@ -863,6 +954,12 @@ fn quick_menu_target_at(offset: egui::Vec2, open_group: Option<usize>) -> Option
         }
     }
     quick_menu_slot_at(offset).map(QuickTarget::Slot)
+}
+
+fn group_actions(slot: usize, brushes: usize) -> Vec<QuickAction> {
+    QUICK_SLOTS[slot]
+        .group()
+        .map_or_else(Vec::new, |group| group.actions(brushes))
 }
 
 /// Hovering a ring slot opens its group or closes the open one. Elsewhere the open group stays,
@@ -904,15 +1001,17 @@ mod tests {
     use super::*;
 
     const TOOL_SLOT: usize = 0;
-    const LAYER_SLOT: usize = 2;
-    const CANVAS_SLOT: usize = 3;
+    const BRUSH_SLOT: usize = 1;
+    const LAYER_SLOT: usize = 3;
+    const CANVAS_SLOT: usize = 4;
+    const BRUSHES: usize = QUICK_MENU_GROUP_CAPACITY;
 
     fn offset_at(degrees: f32, distance: f32) -> egui::Vec2 {
         quick_menu_direction(degrees.to_radians()) * distance
     }
 
     fn group_action_offset(slot: usize, index: usize) -> egui::Vec2 {
-        let count = QUICK_SLOTS[slot].group().unwrap().actions().len();
+        let count = QUICK_SLOTS[slot].group().unwrap().actions(BRUSHES).len();
         quick_menu_direction(quick_menu_group_action_angle(slot, index, count))
             * QUICK_MENU_GROUP_RADIUS
     }
@@ -948,15 +1047,14 @@ mod tests {
             assert_eq!(quick_menu_slot_at(offset), Some(slot));
         }
         assert_eq!(quick_menu_slot_at(egui::vec2(0.0, -60.0)), Some(0));
-        assert_eq!(quick_menu_slot_at(egui::vec2(0.0, 60.0)), Some(3));
     }
 
     #[test]
     fn quick_menu_slot_boundaries_wrap_around_the_top() {
-        assert_eq!(quick_menu_slot_at(offset_at(29.0, 60.0)), Some(0));
-        assert_eq!(quick_menu_slot_at(offset_at(31.0, 60.0)), Some(1));
-        assert_eq!(quick_menu_slot_at(offset_at(329.0, 60.0)), Some(5));
-        assert_eq!(quick_menu_slot_at(offset_at(331.0, 60.0)), Some(0));
+        assert_eq!(quick_menu_slot_at(offset_at(25.0, 60.0)), Some(0));
+        assert_eq!(quick_menu_slot_at(offset_at(26.0, 60.0)), Some(1));
+        assert_eq!(quick_menu_slot_at(offset_at(334.0, 60.0)), Some(6));
+        assert_eq!(quick_menu_slot_at(offset_at(335.0, 60.0)), Some(0));
         assert_eq!(quick_menu_slot_at(offset_at(-10.0, 60.0)), Some(0));
     }
 
@@ -981,18 +1079,18 @@ mod tests {
     fn groups_fit_their_arc() {
         for slot in QUICK_SLOTS {
             if let Some(group) = slot.group() {
-                assert!((1..=QUICK_MENU_GROUP_CAPACITY).contains(&group.actions().len()));
+                assert!((1..=QUICK_MENU_GROUP_CAPACITY).contains(&group.actions(BRUSHES).len()));
             }
         }
     }
 
     #[test]
     fn group_actions_run_clockwise_along_the_arc() {
-        for slot in [TOOL_SLOT, LAYER_SLOT, CANVAS_SLOT] {
-            let count = QUICK_SLOTS[slot].group().unwrap().actions().len();
+        for slot in [TOOL_SLOT, BRUSH_SLOT, LAYER_SLOT, CANVAS_SLOT] {
+            let count = QUICK_SLOTS[slot].group().unwrap().actions(BRUSHES).len();
             for index in 0..count {
                 assert_eq!(
-                    quick_menu_target_at(group_action_offset(slot, index), Some(slot)),
+                    quick_menu_target_at(group_action_offset(slot, index), Some(slot), BRUSHES),
                     Some(QuickTarget::GroupAction(index))
                 );
             }
@@ -1006,22 +1104,23 @@ mod tests {
     #[test]
     fn pointer_outside_the_open_arc_returns_to_ring_slots() {
         assert_eq!(
-            quick_menu_target_at(offset_at(45.0, 130.0), Some(LAYER_SLOT)),
+            quick_menu_target_at(offset_at(45.0, 130.0), Some(LAYER_SLOT), BRUSHES),
             Some(QuickTarget::Slot(1))
         );
         assert_eq!(
             quick_menu_target_at(
                 offset_at(135.0, QUICK_MENU_GROUP_REACH + 1.0),
-                Some(LAYER_SLOT)
+                Some(LAYER_SLOT),
+                BRUSHES
             ),
             None
         );
         assert_eq!(
-            quick_menu_target_at(offset_at(120.0, QUICK_MENU_GROUP_RADIUS), None),
+            quick_menu_target_at(offset_at(154.0, QUICK_MENU_GROUP_RADIUS), None, BRUSHES),
             Some(QuickTarget::Slot(LAYER_SLOT))
         );
         assert_eq!(
-            quick_menu_target_at(egui::Vec2::ZERO, Some(LAYER_SLOT)),
+            quick_menu_target_at(egui::Vec2::ZERO, Some(LAYER_SLOT), BRUSHES),
             None
         );
     }
@@ -1030,19 +1129,19 @@ mod tests {
     fn diagonal_path_to_an_edge_action_keeps_the_group_open() {
         let start =
             quick_menu_direction(quick_menu_slot_angle(LAYER_SLOT)) * QUICK_MENU_SLOT_RADIUS;
-        let last = QuickGroup::Layer.actions().len() - 1;
+        let last = QuickGroup::Layer.actions(BRUSHES).len() - 1;
         let end = group_action_offset(LAYER_SLOT, last);
         let mut group = Some(LAYER_SLOT);
         let mut crossed_neighbor = false;
         for step in 0..=20 {
             let offset = start + (end - start) * (step as f32 / 20.0);
             crossed_neighbor |= quick_menu_slot_at(offset) == Some(CANVAS_SLOT);
-            group = group_after_hover(group, quick_menu_target_at(offset, group));
+            group = group_after_hover(group, quick_menu_target_at(offset, group, BRUSHES));
             assert_eq!(group, Some(LAYER_SLOT));
         }
         assert!(crossed_neighbor);
         assert_eq!(
-            quick_menu_target_at(end, group),
+            quick_menu_target_at(end, group, BRUSHES),
             Some(QuickTarget::GroupAction(last))
         );
     }
@@ -1058,7 +1157,7 @@ mod tests {
             Some(CANVAS_SLOT)
         );
         assert_eq!(
-            group_after_hover(Some(LAYER_SLOT), Some(QuickTarget::Slot(1))),
+            group_after_hover(Some(LAYER_SLOT), Some(QuickTarget::Slot(2))),
             None
         );
         assert_eq!(group_after_hover(Some(LAYER_SLOT), None), Some(LAYER_SLOT));
@@ -1069,7 +1168,7 @@ mod tests {
     }
 
     fn layer_band() -> QuickMenuBand {
-        let actions = QuickGroup::Layer.actions().len();
+        let actions = QuickGroup::Layer.actions(BRUSHES).len();
         QuickMenuBand::new(
             egui::Pos2::ZERO,
             QUICK_MENU_RADIUS,
@@ -1090,7 +1189,7 @@ mod tests {
         let band = layer_band();
         assert!(quick_menu_band_mesh(band, egui::Color32::WHITE, 1.0).is_valid());
         let edge = band.edge();
-        let actions = QuickGroup::Layer.actions().len();
+        let actions = QuickGroup::Layer.actions(BRUSHES).len();
         for index in 0..actions {
             let action = egui::Pos2::ZERO + group_action_offset(LAYER_SLOT, index);
             for (point, _) in &edge {
@@ -1153,13 +1252,18 @@ mod tests {
     #[test]
     fn quick_actions_dispatch_existing_editor_commands() {
         let selected = LayerId(7);
+        let editor = |action: QuickAction| match action.command(selected, &[]) {
+            AppCommand::Editor(command) => command,
+            command => panic!("{action:?} dispatched {command:?}"),
+        };
         let ring = QUICK_SLOTS.map(|slot| match slot {
-            QuickSlot::Action(action) => Some(action.command(selected)),
+            QuickSlot::Action(action) => Some(editor(action)),
             QuickSlot::Group(_) => None,
         });
         assert_eq!(
             ring,
             [
+                None,
                 None,
                 Some(EditorCommand::Redo),
                 None,
@@ -1169,9 +1273,9 @@ mod tests {
             ]
         );
         let tool: Vec<_> = QuickGroup::Tool
-            .actions()
+            .actions(BRUSHES)
             .iter()
-            .map(|action| action.command(selected))
+            .map(|&action| editor(action))
             .collect();
         assert_eq!(
             tool,
@@ -1181,10 +1285,27 @@ mod tests {
                 EditorCommand::SelectTool(PaintTool::Smudge.into()),
             ]
         );
+        let brushes = [QuickBrush {
+            tool: PaintTool::Eraser,
+            id: "soft".to_owned(),
+            name: "Soft".to_owned(),
+            texture: None,
+        }];
+        assert_eq!(
+            QuickGroup::Brush.actions(brushes.len()),
+            [QuickAction::Preset(0)]
+        );
+        assert_eq!(
+            QuickAction::Preset(0).command(selected, &brushes),
+            AppCommand::Settings(SettingsCommand::SwitchBrush {
+                tool: PaintTool::Eraser,
+                id: "soft".to_owned(),
+            })
+        );
         let layer: Vec<_> = QuickGroup::Layer
-            .actions()
+            .actions(BRUSHES)
             .iter()
-            .map(|action| action.command(selected))
+            .map(|&action| editor(action))
             .collect();
         assert_eq!(
             layer,
@@ -1197,9 +1318,9 @@ mod tests {
             ]
         );
         let canvas: Vec<_> = QuickGroup::Canvas
-            .actions()
+            .actions(BRUSHES)
             .iter()
-            .map(|action| action.command(selected))
+            .map(|&action| editor(action))
             .collect();
         assert_eq!(
             canvas,

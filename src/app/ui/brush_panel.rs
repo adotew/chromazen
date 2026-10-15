@@ -73,7 +73,7 @@ fn show_brush_row(
         .on_hover_text(name)
 }
 
-fn paint_stamp(
+pub(super) fn paint_stamp(
     ui: &egui::Ui,
     rect: egui::Rect,
     texture_id: Option<egui::TextureId>,
