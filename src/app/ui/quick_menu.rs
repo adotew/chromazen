@@ -22,7 +22,6 @@ const QUICK_MENU_BAND_CORNER_RADIUS: f32 = 12.0;
 const QUICK_MENU_BAND_SEGMENT: f32 = 3.0 * PI / 180.0;
 const QUICK_MENU_BAND_CORNER_STEPS: usize = 6;
 const QUICK_MENU_GROUP_REACH: f32 = 210.0;
-/// Matches the distance between neighboring ring slots.
 const QUICK_MENU_GROUP_SPACING: f32 = 24.0 * PI / 180.0;
 const QUICK_MENU_GROUP_CAPACITY: usize = 5;
 const QUICK_MENU_SCREEN_MARGIN: f32 = 8.0;
@@ -53,6 +52,7 @@ enum QuickAction {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum QuickGroup {
+    Tool,
     Layer,
     Canvas,
 }
@@ -64,15 +64,13 @@ enum QuickSlot {
 }
 
 /// Slots run clockwise from the top.
-const QUICK_SLOTS: [QuickSlot; 8] = [
-    QuickSlot::Action(QuickAction::Brush),
-    QuickSlot::Action(QuickAction::Eraser),
+const QUICK_SLOTS: [QuickSlot; 6] = [
+    QuickSlot::Group(QuickGroup::Tool),
     QuickSlot::Action(QuickAction::Redo),
     QuickSlot::Group(QuickGroup::Layer),
     QuickSlot::Group(QuickGroup::Canvas),
     QuickSlot::Action(QuickAction::Select),
     QuickSlot::Action(QuickAction::Undo),
-    QuickSlot::Action(QuickAction::Smudge),
 ];
 
 /// A ring slot, or an action on the open group's arc.
@@ -209,6 +207,7 @@ impl QuickAction {
 impl QuickGroup {
     fn label(self) -> &'static str {
         match self {
+            Self::Tool => "Tool",
             Self::Layer => "Layer",
             Self::Canvas => "Canvas",
         }
@@ -216,6 +215,7 @@ impl QuickGroup {
 
     fn icon(self) -> egui::ImageSource<'static> {
         match self {
+            Self::Tool => egui::include_image!("../../../assets/icons/paintbrush.svg"),
             Self::Layer => egui::include_image!("../../../assets/icons/layers.svg"),
             Self::Canvas => egui::include_image!("../../../assets/icons/frame.svg"),
         }
@@ -224,6 +224,7 @@ impl QuickGroup {
     /// Actions run clockwise along the arc.
     fn actions(self) -> &'static [QuickAction] {
         match self {
+            Self::Tool => &[QuickAction::Brush, QuickAction::Eraser, QuickAction::Smudge],
             Self::Layer => &[
                 QuickAction::NewLayer,
                 QuickAction::DuplicateLayer,
@@ -902,8 +903,9 @@ fn step_toward(value: f32, target: f32, dt: f32, duration: f32) -> f32 {
 mod tests {
     use super::*;
 
-    const LAYER_SLOT: usize = 3;
-    const CANVAS_SLOT: usize = 4;
+    const TOOL_SLOT: usize = 0;
+    const LAYER_SLOT: usize = 2;
+    const CANVAS_SLOT: usize = 3;
 
     fn offset_at(degrees: f32, distance: f32) -> egui::Vec2 {
         quick_menu_direction(degrees.to_radians()) * distance
@@ -946,17 +948,15 @@ mod tests {
             assert_eq!(quick_menu_slot_at(offset), Some(slot));
         }
         assert_eq!(quick_menu_slot_at(egui::vec2(0.0, -60.0)), Some(0));
-        assert_eq!(quick_menu_slot_at(egui::vec2(60.0, 0.0)), Some(2));
-        assert_eq!(quick_menu_slot_at(egui::vec2(0.0, 60.0)), Some(4));
-        assert_eq!(quick_menu_slot_at(egui::vec2(-60.0, 0.0)), Some(6));
+        assert_eq!(quick_menu_slot_at(egui::vec2(0.0, 60.0)), Some(3));
     }
 
     #[test]
     fn quick_menu_slot_boundaries_wrap_around_the_top() {
-        assert_eq!(quick_menu_slot_at(offset_at(22.0, 60.0)), Some(0));
-        assert_eq!(quick_menu_slot_at(offset_at(23.0, 60.0)), Some(1));
-        assert_eq!(quick_menu_slot_at(offset_at(337.0, 60.0)), Some(7));
-        assert_eq!(quick_menu_slot_at(offset_at(338.0, 60.0)), Some(0));
+        assert_eq!(quick_menu_slot_at(offset_at(29.0, 60.0)), Some(0));
+        assert_eq!(quick_menu_slot_at(offset_at(31.0, 60.0)), Some(1));
+        assert_eq!(quick_menu_slot_at(offset_at(329.0, 60.0)), Some(5));
+        assert_eq!(quick_menu_slot_at(offset_at(331.0, 60.0)), Some(0));
         assert_eq!(quick_menu_slot_at(offset_at(-10.0, 60.0)), Some(0));
     }
 
@@ -972,8 +972,8 @@ mod tests {
             None
         );
         assert_eq!(
-            quick_menu_slot_at(offset_at(90.0, QUICK_MENU_REACH)),
-            Some(2)
+            quick_menu_slot_at(offset_at(60.0, QUICK_MENU_REACH)),
+            Some(1)
         );
     }
 
@@ -988,7 +988,7 @@ mod tests {
 
     #[test]
     fn group_actions_run_clockwise_along_the_arc() {
-        for slot in [LAYER_SLOT, CANVAS_SLOT] {
+        for slot in [TOOL_SLOT, LAYER_SLOT, CANVAS_SLOT] {
             let count = QUICK_SLOTS[slot].group().unwrap().actions().len();
             for index in 0..count {
                 assert_eq!(
@@ -998,7 +998,8 @@ mod tests {
             }
             let first = quick_menu_angle_of(group_action_offset(slot, 0));
             let last = quick_menu_angle_of(group_action_offset(slot, count - 1));
-            assert!(last > first);
+            // The tool arc straddles the top, where angles wrap.
+            assert!((last - first).rem_euclid(TAU) < PI);
         }
     }
 
@@ -1016,7 +1017,7 @@ mod tests {
             None
         );
         assert_eq!(
-            quick_menu_target_at(offset_at(135.0, QUICK_MENU_GROUP_RADIUS), None),
+            quick_menu_target_at(offset_at(120.0, QUICK_MENU_GROUP_RADIUS), None),
             Some(QuickTarget::Slot(LAYER_SLOT))
         );
         assert_eq!(
@@ -1057,7 +1058,7 @@ mod tests {
             Some(CANVAS_SLOT)
         );
         assert_eq!(
-            group_after_hover(Some(LAYER_SLOT), Some(QuickTarget::Slot(0))),
+            group_after_hover(Some(LAYER_SLOT), Some(QuickTarget::Slot(1))),
             None
         );
         assert_eq!(group_after_hover(Some(LAYER_SLOT), None), Some(LAYER_SLOT));
@@ -1104,14 +1105,6 @@ mod tests {
         let ring_highlight_edge = QUICK_MENU_SLOT_RADIUS + QUICK_MENU_HIGHLIGHT_RADIUS;
         let band_highlight_edge = QUICK_MENU_GROUP_RADIUS - QUICK_MENU_HIGHLIGHT_RADIUS;
         assert!((band_highlight_edge - ring_highlight_edge - ring_padding).abs() < 0.01);
-
-        let neighbors =
-            (group_action_offset(LAYER_SLOT, 1) - group_action_offset(LAYER_SLOT, 0)).length();
-        let ring_neighbors = (quick_menu_direction(quick_menu_slot_angle(1))
-            - quick_menu_direction(quick_menu_slot_angle(0)))
-        .length()
-            * QUICK_MENU_SLOT_RADIUS;
-        assert!((neighbors - ring_neighbors).abs() < 1.0);
     }
 
     #[test]
@@ -1167,14 +1160,25 @@ mod tests {
         assert_eq!(
             ring,
             [
-                Some(EditorCommand::SelectTool(PaintTool::Brush.into())),
-                Some(EditorCommand::SelectTool(PaintTool::Eraser.into())),
+                None,
                 Some(EditorCommand::Redo),
                 None,
                 None,
                 Some(EditorCommand::SelectTool(EditorTool::Select)),
                 Some(EditorCommand::Undo),
-                Some(EditorCommand::SelectTool(PaintTool::Smudge.into())),
+            ]
+        );
+        let tool: Vec<_> = QuickGroup::Tool
+            .actions()
+            .iter()
+            .map(|action| action.command(selected))
+            .collect();
+        assert_eq!(
+            tool,
+            [
+                EditorCommand::SelectTool(PaintTool::Brush.into()),
+                EditorCommand::SelectTool(PaintTool::Eraser.into()),
+                EditorCommand::SelectTool(PaintTool::Smudge.into()),
             ]
         );
         let layer: Vec<_> = QuickGroup::Layer
