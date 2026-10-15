@@ -406,7 +406,7 @@ impl GuiLayer {
                                     ("Show or hide sidebar", "Tab"),
                                     ("Resize brush", "Shift-drag"),
                                     ("Eyedropper", "Alt/Option"),
-                                    ("Quick menu", "Right-click or hold Q"),
+                                    ("Quick menu", "Hold Q"),
                                 ],
                             );
                             ui.add_space(14.0);
