@@ -12,7 +12,6 @@ const QUICK_MENU_HIGHLIGHT_RADIUS: f32 = 22.0;
 const QUICK_MENU_ICON_SIZE: f32 = 22.0;
 /// Stamps have soft, transparent edges, so they need more room than icons to read at a glance.
 const QUICK_MENU_STAMP_SIZE: f32 = 36.0;
-const QUICK_MENU_GROUP_MARKER_OFFSET: f32 = 17.0;
 /// Space between a highlighted item and the edge of the surface behind it, matching the ring.
 const QUICK_MENU_EDGE_PADDING: f32 =
     QUICK_MENU_RADIUS - QUICK_MENU_SLOT_RADIUS - QUICK_MENU_HIGHLIGHT_RADIUS;
@@ -590,16 +589,6 @@ fn paint_quick_menu(
         let tint = resting_tint(menu.action(QuickTarget::Slot(slot), brushes.len()))
             .lerp_to_gamma(on_accent, hover)
             .gamma_multiply(content_alpha);
-        if quick_slot.group().is_some() {
-            ui.painter().circle_filled(
-                menu.center
-                    + direction
-                        * (QUICK_MENU_SLOT_RADIUS + QUICK_MENU_GROUP_MARKER_OFFSET)
-                        * progress,
-                1.5 * progress,
-                text_color.gamma_multiply(content_alpha),
-            );
-        }
         let icon_rect = egui::Rect::from_center_size(
             slot_center,
             egui::Vec2::splat(QUICK_MENU_ICON_SIZE * progress),
