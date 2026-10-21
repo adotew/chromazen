@@ -211,12 +211,12 @@ fn color_slider_2d(
             egui::lerp(rect.bottom()..=rect.top(), *y_value),
         );
         let picked = color_at(*x_value, *y_value);
-        ui.painter().circle(
-            center,
-            ui.spacing().interact_size.y * 0.32,
-            picked,
-            egui::Stroke::new(visuals.fg_stroke.width, contrast_color(picked)),
-        );
+        let radius = ui.spacing().interact_size.y * 0.5;
+        let stroke = egui::Stroke::new(visuals.fg_stroke.width, contrast_color(picked));
+        // The parent clip ends at the square's edge; let the thumb overhang it.
+        let mut painter = ui.painter().clone();
+        painter.set_clip_rect(ui.clip_rect().union(rect.expand(radius + stroke.width)));
+        painter.circle(center, radius, picked, stroke);
     }
 
     response
