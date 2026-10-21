@@ -136,7 +136,35 @@ fn panel_slider(
 ) -> egui::Response {
     ui.add_sized([52.0, 20.0], egui::Label::new(label));
     let mut fraction = slider_fraction(*value, &range, size);
-    let response = ui.add(egui::Slider::new(&mut fraction, 0.0..=1.0).show_value(false));
+    let response = ui
+        .scope(|ui| {
+            ui.set_opacity(0.0);
+            ui.add(
+                egui::Slider::new(&mut fraction, 0.0..=1.0)
+                    .show_value(false)
+                    .handle_shape(egui::style::HandleShape::Circle),
+            )
+        })
+        .inner;
+    let rect = response.rect;
+    // Match egui's handle travel while retaining the full-height interaction area.
+    let travel = rect.x_range().shrink(rect.height() / 2.5);
+    let center = egui::pos2(egui::lerp(travel, fraction), rect.center().y);
+    let dark_mode = ui.visuals().dark_mode;
+    let track = egui::Color32::from_gray(if dark_mode { 72 } else { 190 });
+    let fill = egui::Color32::from_gray(if dark_mode { 170 } else { 105 });
+    let thumb = egui::Color32::from_gray(if dark_mode { 238 } else { 65 });
+    let mut painter = ui.painter().clone();
+    painter.set_opacity(if ui.is_enabled() { 1.0 } else { 0.5 });
+    painter.line_segment(
+        [rect.left_center(), rect.right_center()],
+        egui::Stroke::new(2.0, track),
+    );
+    painter.line_segment([rect.left_center(), center], egui::Stroke::new(2.0, fill));
+    painter.circle_filled(center, 5.0, thumb);
+    if response.has_focus() {
+        painter.circle_stroke(center, 7.0, ui.visuals().selection.stroke);
+    }
     if response.changed() {
         *value = slider_value(fraction, &range, size);
     }
