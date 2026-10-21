@@ -62,7 +62,8 @@ impl GuiLayer {
             if sidebar_progress > 0.0 {
                 let sidebar_frame = egui::Frame::side_top_panel(ui.style())
                     .fill(egui::Color32::TRANSPARENT)
-                    .stroke(egui::Stroke::NONE);
+                    .stroke(egui::Stroke::NONE)
+                    .inner_margin(0.0);
                 egui::Panel::right("tools")
                     .frame(sidebar_frame)
                     .show_separator_line(false)
