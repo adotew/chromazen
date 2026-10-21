@@ -98,16 +98,7 @@ impl GuiLayer {
             egui::vec2(7.0 * TOOL_SIZE + 2.0 * PADDING, TOOL_RAIL_THICKNESS),
             egui::Sense::hover(),
         );
-        paint_rounded_panel(
-            ui,
-            rect,
-            egui::CornerRadius {
-                nw: 0,
-                ne: 0,
-                sw: 16,
-                se: 16,
-            },
-        );
+        paint_rounded_panel(ui, rect, egui::CornerRadius::same(16));
         let body = rect.shrink2(egui::vec2(PADDING, 0.0));
 
         let mut selected_tool = None;

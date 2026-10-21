@@ -305,7 +305,7 @@ impl GuiLayer {
             }
 
             let selected_tool = egui::Area::new(egui::Id::new("toolbar"))
-                .anchor(egui::Align2::CENTER_TOP, egui::Vec2::ZERO)
+                .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -12.0))
                 .order(egui::Order::Foreground)
                 .show(ui.ctx(), |ui| {
                     self.show_toolbar(ui, tool, selection.is_some())
