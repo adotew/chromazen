@@ -81,26 +81,26 @@ impl GuiLayer {
                                 .id_salt("foreground")
                                 .layer_id(layer_id),
                         );
-                        let component_rect = egui::Frame::side_top_panel(panel_ui.style())
-                            .fill(egui::Color32::TRANSPARENT)
-                            .stroke(egui::Stroke::NONE)
-                            .widget_rect(panel_ui.max_rect());
-                        paint_rounded_panel(&panel_ui, component_rect, egui::CornerRadius::ZERO);
-                        let inner_width = SIDEBAR_WIDTH
-                            - egui::Frame::side_top_panel(panel_ui.style())
-                                .inner_margin
-                                .sum()
-                                .x;
-                        let content_rect = egui::Rect::from_min_size(
-                            panel_ui.min_rect().min,
-                            egui::vec2(inner_width, panel_ui.available_height()),
+                        let component_rect = egui::Rect::from_min_size(
+                            panel_rect.min,
+                            egui::vec2(SIDEBAR_WIDTH, panel_rect.height()),
+                        )
+                        .shrink(12.0);
+                        let corner_radius = egui::CornerRadius::same(28);
+                        paint_rounded_panel(&panel_ui, component_rect, corner_radius);
+                        panel_ui.painter().rect_stroke(
+                            component_rect,
+                            corner_radius,
+                            panel_ui.visuals().window_stroke,
+                            egui::StrokeKind::Inside,
                         );
+                        let content_rect = component_rect.shrink(16.0);
                         let mut content_ui = panel_ui.new_child(
                             egui::UiBuilder::new()
                                 .id_salt("sidebar contents")
                                 .max_rect(content_rect),
                         );
-                        content_ui.set_clip_rect(panel_ui.clip_rect());
+                        content_ui.set_clip_rect(panel_ui.clip_rect().intersect(content_rect));
 
                         content_ui.add_space(8.0);
                         let header_width = content_ui.available_width();
