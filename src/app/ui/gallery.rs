@@ -286,7 +286,7 @@ fn show_artwork_thumbnail(ui: &mut egui::Ui, thumbnail: Option<&Thumbnail>) -> e
     let Some(thumbnail) = thumbnail else {
         let image = egui::Image::new(egui::include_image!("../../../assets/icons/paintbrush.svg"))
             .tint(ui.visuals().weak_text_color())
-            .corner_radius(12)
+            .corner_radius(20)
             .fit_to_exact_size(slot_size);
         return ui.add(egui::Button::image(image).frame(false));
     };
@@ -300,7 +300,7 @@ fn show_artwork_thumbnail(ui: &mut egui::Ui, thumbnail: Option<&Thumbnail>) -> e
     let content = egui::Rect::from_center_size(slot.center(), content_size);
     egui::Image::new((thumbnail.texture.id(), content_size))
         .uv(thumbnail.content_uv)
-        .corner_radius(12)
+        .corner_radius(20)
         .alt_text("Open artwork")
         .paint_at(ui, content);
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
