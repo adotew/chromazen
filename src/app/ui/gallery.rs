@@ -86,7 +86,8 @@ impl GalleryUi {
                 }
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.horizontal_wrapped(|ui| {
+                    let row = egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true);
+                    ui.with_layout(row, |ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(32.0, 10.0);
                         for artwork in artworks {
                             ui.allocate_ui_with_layout(
@@ -95,7 +96,7 @@ impl GalleryUi {
                                 |ui| {
                                     egui::Frame::NONE.inner_margin(0).show(ui, |ui| {
                                         ui.set_width(198.0);
-                                        let open =
+                                        let (open, content) =
                                             show_artwork_thumbnail(ui, self.thumbnail(&artwork.id));
                                         open.context_menu(|ui| {
                                             self.show_artwork_menu(ui, artwork, commands);
@@ -105,32 +106,13 @@ impl GalleryUi {
                                                 NavigationCommand::OpenArtwork(artwork.id.clone()),
                                             ));
                                         }
+                                        self.show_artwork_menu_button(
+                                            ui, content, artwork, commands,
+                                        );
                                         ui.add_space(8.0);
-                                        ui.horizontal_top(|ui| {
-                                            ui.vertical(|ui| {
-                                                ui.strong(&artwork.title);
-                                                ui.label(format_dimensions(artwork.dimensions));
-                                            });
-                                            ui.with_layout(
-                                                egui::Layout::right_to_left(egui::Align::Center),
-                                                |ui| {
-                                                    let icon = egui::Image::new(egui::include_image!(
-                                                        "../../../assets/icons/ellipsis-vertical.svg"
-                                                    ))
-                                                    .fit_to_exact_size(egui::Vec2::splat(18.0))
-                                                    .alt_text("Artwork menu");
-                                                    let (menu, _) = MenuButton::from_button(
-                                                        egui::Button::image(icon)
-                                                            .frame_when_inactive(false)
-                                                            .corner_radius(8)
-                                                            .min_size(egui::Vec2::splat(32.0)),
-                                                    )
-                                                    .ui(ui, |ui| {
-                                                        self.show_artwork_menu(ui, artwork, commands);
-                                                    });
-                                                    menu.on_hover_text("Artwork menu");
-                                                },
-                                            );
+                                        ui.vertical_centered(|ui| {
+                                            ui.strong(&artwork.title);
+                                            ui.label(format_dimensions(artwork.dimensions));
                                         });
                                     });
                                 },
@@ -141,6 +123,58 @@ impl GalleryUi {
             });
         self.show_rename_dialog(ui.ctx(), commands);
         self.show_delete_dialog(ui.ctx(), commands);
+    }
+
+    /// A hover-revealed menu button overlaid on the thumbnail's top-right corner.
+    fn show_artwork_menu_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        content: egui::Rect,
+        artwork: &ArtworkSummary,
+        commands: &mut Vec<AppCommand>,
+    ) {
+        const SIZE: f32 = 28.0;
+        const ICON_SIZE: f32 = 16.0;
+        let rect = egui::Rect::from_min_size(
+            content.right_top() + egui::vec2(-SIZE - 8.0, 8.0),
+            egui::Vec2::splat(SIZE),
+        );
+        let mut overlay = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt(&artwork.id)
+                .max_rect(rect)
+                .layout(egui::Layout::centered_and_justified(
+                    egui::Direction::TopDown,
+                )),
+        );
+        // Keep the button visible while its menu is open, even after the pointer leaves the card.
+        let menu_open = egui::Popup::is_id_open(ui.ctx(), overlay.next_auto_id().with("popup"));
+        let opacity = ui.ctx().animate_bool(
+            overlay.id().with("menu fade"),
+            menu_open || ui.rect_contains_pointer(content),
+        );
+        if opacity == 0.0 {
+            return;
+        }
+        overlay.multiply_opacity(opacity);
+        // The app-wide 8pt horizontal button padding would make this wider than tall.
+        overlay.spacing_mut().button_padding = egui::Vec2::splat((SIZE - ICON_SIZE) / 2.0);
+        let icon = egui::Image::new(egui::include_image!(
+            "../../../assets/icons/ellipsis-vertical.svg"
+        ))
+        .fit_to_exact_size(egui::Vec2::splat(ICON_SIZE))
+        .tint(egui::Color32::WHITE)
+        .alt_text("Artwork menu");
+        let (menu, _) = MenuButton::from_button(
+            egui::Button::image(icon)
+                .fill(egui::Color32::from_black_alpha(140))
+                .corner_radius(8)
+                .min_size(egui::Vec2::splat(SIZE)),
+        )
+        .ui(&mut overlay, |ui| {
+            self.show_artwork_menu(ui, artwork, commands);
+        });
+        menu.on_hover_text("Artwork menu");
     }
 
     fn sync_thumbnails(&mut self, artworks: &[ArtworkSummary]) {
@@ -280,18 +314,25 @@ fn format_dimensions(dimensions: [u32; 2]) -> String {
     format!("{} \u{00d7} {}", dimensions[0], dimensions[1])
 }
 
-fn show_artwork_thumbnail(ui: &mut egui::Ui, thumbnail: Option<&Thumbnail>) -> egui::Response {
+/// Returns the click response and the rect the artwork occupies within its square slot.
+fn show_artwork_thumbnail(
+    ui: &mut egui::Ui,
+    thumbnail: Option<&Thumbnail>,
+) -> (egui::Response, egui::Rect) {
     const SIZE: f32 = 198.0;
     let slot_size = egui::Vec2::splat(SIZE);
+    let (slot, response) = ui.allocate_exact_size(slot_size, egui::Sense::click());
     let Some(thumbnail) = thumbnail else {
-        let image = egui::Image::new(egui::include_image!("../../../assets/icons/paintbrush.svg"))
+        egui::Image::new(egui::include_image!("../../../assets/icons/paintbrush.svg"))
             .tint(ui.visuals().weak_text_color())
-            .corner_radius(20)
-            .fit_to_exact_size(slot_size);
-        return ui.add(egui::Button::image(image).frame(false));
+            .alt_text("Open artwork")
+            .paint_at(ui, slot);
+        return (
+            response.on_hover_cursor(egui::CursorIcon::PointingHand),
+            slot,
+        );
     };
 
-    let (slot, response) = ui.allocate_exact_size(slot_size, egui::Sense::click());
     let content_size = if thumbnail.content_aspect >= 1.0 {
         egui::vec2(SIZE, SIZE / thumbnail.content_aspect)
     } else {
@@ -303,7 +344,10 @@ fn show_artwork_thumbnail(ui: &mut egui::Ui, thumbnail: Option<&Thumbnail>) -> e
         .corner_radius(20)
         .alt_text("Open artwork")
         .paint_at(ui, content);
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    (
+        response.on_hover_cursor(egui::CursorIcon::PointingHand),
+        content,
+    )
 }
 
 fn thumbnail_content_bounds(image: &image::RgbaImage) -> (egui::Rect, f32) {
