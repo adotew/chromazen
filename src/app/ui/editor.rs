@@ -27,6 +27,8 @@ impl GuiLayer {
             self.tool_opacities[index] = self.brush.opacity;
             self.ensure_brush_preview_cached(&self.tool_brushes[tool_index(paint_tool)].clone());
         }
+        self.brush_slider_active = false;
+        self.brush_slider_focus = None;
         self.sync_reference_textures(references);
         let raw_input = self.state.take_egui_input(window);
         let context = self.context.clone();
@@ -305,19 +307,11 @@ impl GuiLayer {
             let selected_tool = egui::Area::new(egui::Id::new("toolbar"))
                 .anchor(egui::Align2::CENTER_TOP, egui::Vec2::ZERO)
                 .order(egui::Order::Foreground)
-                .show(ui.ctx(), |ui| self.show_toolbar(ui, tool))
-                .inner;
-            let selected_setting = egui::Area::new(egui::Id::new("tool settings"))
-                .anchor(
-                    egui::Align2::RIGHT_CENTER,
-                    egui::vec2(-SIDEBAR_WIDTH * sidebar_progress, 0.0),
-                )
-                .order(egui::Order::Foreground)
                 .show(ui.ctx(), |ui| {
-                    self.show_tool_settings(ui, tool, selection.is_some())
+                    self.show_toolbar(ui, tool, selection.is_some())
                 })
                 .inner;
-            if let Some(tool) = selected_tool.or(selected_setting) {
+            if let Some(tool) = selected_tool {
                 self.commands
                     .push(AppCommand::Editor(EditorCommand::SelectTool(tool)));
             }
