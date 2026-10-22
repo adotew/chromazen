@@ -70,7 +70,7 @@ impl GalleryUi {
                     commands.push(AppCommand::Ui(UiCommand::DragWindow));
                 }
                 ui.painter().text(
-                    header_rect.left_center() + egui::vec2(title_inset, 0.0),
+                    header_rect.left_center() + egui::vec2(title_inset, 2.0),
                     egui::Align2::LEFT_CENTER,
                     "Chromazen",
                     egui::FontId::new(TITLE_SIZE, egui::FontFamily::Name("heming".into())),
