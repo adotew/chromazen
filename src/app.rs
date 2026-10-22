@@ -62,6 +62,8 @@ use crate::{
 pub(super) type WakeCallback = Arc<dyn Fn() + Send + Sync>;
 
 const WINDOW_TITLE: &str = "Chromazen";
+// Logical height of the transparent titlebar strip that AppKit uses for window dragging.
+const MACOS_TITLEBAR_HEIGHT: f64 = 32.0;
 #[cfg(target_os = "linux")]
 const LINUX_APPLICATION_ID: &str = "io.github.adotew.chromazen";
 
@@ -379,6 +381,16 @@ impl ApplicationHandler<AppEvent> for App {
                 // still reach the canvas beneath them.
                 let wheel_over_reference =
                     point_over_reference && matches!(&event, WindowEvent::MouseWheel { .. });
+                let press_in_titlebar = cfg!(target_os = "macos")
+                    && matches!(
+                        &event,
+                        WindowEvent::MouseInput {
+                            state: ElementState::Pressed,
+                            ..
+                        }
+                    )
+                    && f64::from(self.input.cursor_position()[1])
+                        < MACOS_TITLEBAR_HEIGHT * window.scale_factor();
                 if !egui_consumed
                     && matches!(
                         &event,
@@ -398,7 +410,7 @@ impl ApplicationHandler<AppEvent> for App {
                     && (self.input.has_active_document_drag()
                         || pan_over_reference
                         || wheel_over_reference
-                        || (!egui_consumed && !primary_press_over_reference))
+                        || (!egui_consumed && !primary_press_over_reference && !press_in_titlebar))
                     && let (Some(paint), Some(gui)) = (self.paint.as_mut(), self.gui.as_mut())
                 {
                     let brush_size_range = gui.brush_size_range();
