@@ -1,57 +1,38 @@
 use super::*;
 
-pub(super) const CONTROLS_HEIGHT: f32 = 348.0;
-const CONTROL_CHROME: f32 = 14.0;
-
 impl GuiLayer {
-    pub(super) fn show_brush_controls(
-        &mut self,
-        ui: &mut egui::Ui,
-        active_tool: EditorTool,
-        height: f32,
-    ) {
-        let enabled = active_tool.paint_tool().is_some() && !self.canvas_crop_active();
-        let track_height = (height * 0.5 - CONTROL_CHROME).clamp(64.0, 160.0);
-        egui::ScrollArea::vertical()
-            .id_salt("brush controls scroll")
-            .max_height(height)
-            .auto_shrink([false, false])
-            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-            .show(ui, |ui| {
-                ui.add_enabled_ui(enabled, |ui| {
-                    ui.add_space(10.0);
-                    let size_response = brush_slider(
+    pub(super) fn show_brush_panel_controls(&mut self, ui: &mut egui::Ui, tool: PaintTool) {
+        ui.add_enabled_ui(!self.canvas_crop_active(), |ui| {
+            let spacing = ui.spacing().item_spacing.x;
+            ui.spacing_mut().slider_width =
+                (ui.available_width() - 112.0 - 2.0 * spacing).max(24.0);
+            egui::Grid::new("brush panel controls")
+                .spacing(egui::vec2(spacing, 12.0))
+                .show(ui, |ui| {
+                    let size_response = panel_slider(
                         ui,
                         "Size",
                         &mut self.brush.size,
                         self.size_range.clone(),
-                        track_height,
                         true,
                     );
-                    ui.add_space(5.0);
-
-                    let opacity_response = brush_slider(
-                        ui,
-                        "Opacity",
-                        &mut self.brush.opacity,
-                        0.01..=1.0,
-                        track_height,
-                        false,
-                    );
-                    if (size_response.changed() || opacity_response.changed())
-                        && let Some(tool) = active_tool.paint_tool()
-                    {
+                    let opacity_response =
+                        panel_slider(ui, "Opacity", &mut self.brush.opacity, 0.01..=1.0, false);
+                    if size_response.changed() || opacity_response.changed() {
                         self.store_current_brush_settings_for_tool(tool);
                     }
-                    let size_active = slider_preview_active(&size_response);
-                    let opacity_active = slider_preview_active(&opacity_response);
-                    self.brush_slider_active = size_active || opacity_active;
-                    self.brush_slider_focus = [&size_response, &opacity_response]
-                        .into_iter()
-                        .find(|response| response.has_focus())
-                        .map(|response| response.id);
+                    self.track_brush_sliders(&size_response, &opacity_response);
                 });
-            });
+        });
+    }
+
+    fn track_brush_sliders(&mut self, size: &egui::Response, opacity: &egui::Response) {
+        self.brush_slider_active |= slider_preview_active(size) | slider_preview_active(opacity);
+        self.brush_slider_focus = [size, opacity]
+            .into_iter()
+            .find(|response| response.has_focus())
+            .map(|response| response.id)
+            .or(self.brush_slider_focus);
     }
 
     pub(super) fn show_brush_adjustment_preview(
@@ -62,8 +43,6 @@ impl GuiLayer {
         workspace: egui::Rect,
         tool: EditorTool,
     ) {
-        let workspace =
-            workspace.with_max_x((workspace.right() - TOOL_RAIL_THICKNESS).max(workspace.left()));
         let enabled = ui.ctx().input(|input| input.focused)
             && tool.paint_tool().is_some()
             && !self.canvas_crop_active();
@@ -129,7 +108,10 @@ fn slider_preview_active(response: &egui::Response) -> bool {
     // Releasing the pointer hides the preview until keyboard adjustment resumes.
     let keyboard_input = response.has_focus()
         && response.ctx.input(|input| {
-            input.key_pressed(egui::Key::ArrowUp) || input.key_pressed(egui::Key::ArrowDown)
+            input.key_pressed(egui::Key::ArrowUp)
+                || input.key_pressed(egui::Key::ArrowDown)
+                || input.key_pressed(egui::Key::ArrowLeft)
+                || input.key_pressed(egui::Key::ArrowRight)
         });
     let clear_keyboard = response.drag_stopped() || !response.has_focus();
     let start_keyboard =
@@ -145,77 +127,56 @@ fn slider_preview_active(response: &egui::Response) -> bool {
     response.is_pointer_button_down_on() || keyboard_active
 }
 
-fn brush_slider(
+fn panel_slider(
     ui: &mut egui::Ui,
     label: &str,
     value: &mut f32,
     range: std::ops::RangeInclusive<f32>,
-    height: f32,
-    curved: bool,
+    size: bool,
 ) -> egui::Response {
-    ui.push_id(label, |ui| {
-        ui.spacing_mut().item_spacing.y = 0.0;
-        let dark = ui.visuals().dark_mode;
-        let response = ui
-            .horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                ui.add_space(4.0);
-                let style = ui.style_mut();
-                style.spacing.slider_width = height;
-                style.spacing.interact_size.y = 34.0;
-                style.visuals.slider_trailing_fill = false;
-                for widget in [
-                    &mut style.visuals.widgets.inactive,
-                    &mut style.visuals.widgets.hovered,
-                    &mut style.visuals.widgets.active,
-                ] {
-                    widget.bg_fill = egui::Color32::TRANSPARENT;
-                    widget.fg_stroke = egui::Stroke::NONE;
-                }
-                let mut fraction = slider_fraction(*value, &range, curved);
-                let response = ui.add(
-                    egui::Slider::new(&mut fraction, 0.0..=1.0)
-                        .vertical()
-                        .show_value(false)
-                        .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 }),
-                );
-                if response.changed() {
-                    *value = slider_value(fraction, &range, curved);
-                }
-                response
-            })
-            .inner;
-        let fraction = slider_fraction(*value, &range, curved);
-        let track = egui::Rect::from_center_size(
-            response.rect.center(),
-            egui::vec2(26.0, response.rect.height()),
-        );
-        let frosted = ui.visuals().window_fill().a() < u8::MAX;
-        let [track_fill, idle, hovered, active, disabled] = brush_slider_fills(dark, frosted);
-        ui.painter()
-            .rect_filled(track, egui::CornerRadius::same(4), track_fill);
-        let value_fill = if !response.enabled() {
-            disabled
-        } else if response.is_pointer_button_down_on() {
-            active
-        } else if response.hovered() {
-            hovered
-        } else {
-            idle
-        };
-        if fraction > 0.0 {
-            let filled = egui::Rect::from_min_max(
-                egui::pos2(track.left(), track.bottom() - track.height() * fraction),
-                track.right_bottom(),
-            );
-            ui.painter()
-                .rect_filled(filled, egui::CornerRadius::same(4), value_fill);
-        }
-        response
-            .widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), f64::from(*value), label));
-        response.on_hover_text(label)
-    })
-    .inner
+    ui.add_sized([52.0, 20.0], egui::Label::new(label));
+    let mut fraction = slider_fraction(*value, &range, size);
+    let response = ui
+        .scope(|ui| {
+            ui.set_opacity(0.0);
+            ui.add(
+                egui::Slider::new(&mut fraction, 0.0..=1.0)
+                    .show_value(false)
+                    .handle_shape(egui::style::HandleShape::Circle),
+            )
+        })
+        .inner;
+    let rect = response.rect;
+    // Match egui's handle travel while retaining the full-height interaction area.
+    let travel = rect.x_range().shrink(rect.height() / 2.5);
+    let center = egui::pos2(egui::lerp(travel, fraction), rect.center().y);
+    let dark_mode = ui.visuals().dark_mode;
+    let track = egui::Color32::from_gray(if dark_mode { 72 } else { 190 });
+    let fill = egui::Color32::from_gray(if dark_mode { 170 } else { 105 });
+    let thumb = egui::Color32::from_gray(if dark_mode { 238 } else { 65 });
+    let mut painter = ui.painter().clone();
+    painter.set_opacity(if ui.is_enabled() { 1.0 } else { 0.5 });
+    painter.line_segment(
+        [rect.left_center(), rect.right_center()],
+        egui::Stroke::new(2.0, track),
+    );
+    painter.line_segment([rect.left_center(), center], egui::Stroke::new(2.0, fill));
+    painter.circle_filled(center, 5.0, thumb);
+    if response.has_focus() {
+        painter.circle_stroke(center, 7.0, ui.visuals().selection.stroke);
+    }
+    if response.changed() {
+        *value = slider_value(fraction, &range, size);
+    }
+    let text = if size {
+        format!("{value:.0} px")
+    } else {
+        format!("{:.0}%", *value * 100.0)
+    };
+    ui.add_sized([60.0, 20.0], egui::Label::new(text));
+    ui.end_row();
+    response.widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), f64::from(*value), label));
+    response
 }
 
 // Like Procreate, size eases in quadratically: fine control for small brushes,
@@ -256,7 +217,11 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                let response = brush_slider(ui, "Opacity", value, 0.01..=1.0, 140.0, false);
+                let response = egui::Grid::new("test slider")
+                    .show(ui, |ui| {
+                        panel_slider(ui, "Opacity", value, 0.01..=1.0, false)
+                    })
+                    .inner;
                 result = (response.rect, slider_preview_active(&response));
             },
         );
@@ -298,7 +263,7 @@ mod tests {
             &mut value,
             pointer_button(rect.center(), true)
         ));
-        let outside = egui::pos2(rect.right() + 80.0, rect.top() - 20.0);
+        let outside = egui::pos2(rect.right() + 80.0, rect.center().y);
         assert!(slider_event(
             &context,
             &mut value,
@@ -318,7 +283,7 @@ mod tests {
             &context,
             &mut value,
             egui::Event::Key {
-                key: egui::Key::ArrowUp,
+                key: egui::Key::ArrowRight,
                 physical_key: None,
                 pressed: true,
                 repeat: false,
@@ -327,6 +292,52 @@ mod tests {
         ));
         assert!(value > before);
         assert!(!slider_frame(&context, &mut value, [], false).1);
+    }
+
+    #[test]
+    fn panel_slider_updates_value_and_previews_keyboard_adjustment() {
+        let context = egui::Context::default();
+        let mut value = 25.75;
+        let mut slider_id = None;
+        for pressed in [false, true] {
+            let _ = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(300.0, 100.0),
+                    )),
+                    events: if pressed {
+                        vec![egui::Event::Key {
+                            key: egui::Key::ArrowRight,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: egui::Modifiers::NONE,
+                        }]
+                    } else {
+                        vec![]
+                    },
+                    focused: true,
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::Grid::new("test controls").show(ui, |ui| {
+                        let response = panel_slider(ui, "Size", &mut value, 1.0..=100.0, true);
+                        if let Some(id) = slider_id {
+                            assert_eq!(response.id, id);
+                        }
+                        slider_id = Some(response.id);
+                        if pressed {
+                            assert!(response.changed());
+                            assert!(slider_preview_active(&response));
+                        } else {
+                            response.request_focus();
+                        }
+                    });
+                },
+            );
+        }
+        assert!(value > 25.75);
     }
 
     #[test]

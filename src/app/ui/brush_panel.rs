@@ -9,7 +9,8 @@ impl GuiLayer {
         let brushes = self.brushes.clone();
         let mut switch_to = None;
 
-        ui.add_space(4.0);
+        self.show_brush_panel_controls(ui, tool);
+        ui.add_space(12.0);
         egui::ScrollArea::vertical()
             .id_salt("brush preset list")
             .max_height(BRUSH_PRESET_LIST_MAX_HEIGHT)

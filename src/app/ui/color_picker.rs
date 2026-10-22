@@ -1,6 +1,13 @@
-use egui::{Color32, Response, Sense, Ui, ecolor::Hsva, ecolor::HsvaGamma, epaint::Mesh};
+use egui::{
+    Color32, ColorImage, Response, Sense, TextureHandle, TextureOptions, Ui,
+    ecolor::Hsva,
+    ecolor::HsvaGamma,
+    epaint::{Mesh, RectShape},
+};
 
 const GRADIENT_STEPS: u32 = 36;
+const SQUARE_TEXTURE_SIZE: usize = 64;
+const SQUARE_CORNER_RADIUS: u8 = 14;
 
 #[derive(Clone, Copy)]
 struct PickerState {
@@ -161,35 +168,55 @@ fn color_slider_2d(
 
     if ui.is_rect_visible(rect) {
         let visuals = ui.style().interact(&response);
-        let mut mesh = Mesh::default();
-        for x_index in 0..=GRADIENT_STEPS {
-            for y_index in 0..=GRADIENT_STEPS {
-                let x_t = x_index as f32 / GRADIENT_STEPS as f32;
-                let y_t = y_index as f32 / GRADIENT_STEPS as f32;
-                let x = egui::lerp(rect.x_range(), x_t);
-                let y = egui::lerp(rect.bottom()..=rect.top(), y_t);
-                mesh.colored_vertex(egui::pos2(x, y), color_at(x_t, y_t));
-
-                if x_index < GRADIENT_STEPS && y_index < GRADIENT_STEPS {
-                    let row = GRADIENT_STEPS + 1;
-                    let top_left = y_index * row + x_index;
-                    mesh.add_triangle(top_left, top_left + 1, top_left + row);
-                    mesh.add_triangle(top_left + 1, top_left + row, top_left + row + 1);
-                }
+        // A texture lets the gradient be painted with rounded corners, which a mesh can't clip to.
+        let texture_id = ui.id().with("chromazen color square texture");
+        let key = color_at(1.0, 1.0);
+        let cached = ui
+            .ctx()
+            .data(|data| data.get_temp::<(Color32, TextureHandle)>(texture_id));
+        let texture = match cached {
+            Some((cached_key, texture)) if cached_key == key => texture,
+            _ => {
+                let size = SQUARE_TEXTURE_SIZE;
+                let last = (size - 1) as f32;
+                let pixels = (0..size * size)
+                    .map(|i| color_at((i % size) as f32 / last, 1.0 - (i / size) as f32 / last))
+                    .collect();
+                let image = ColorImage::new([size, size], pixels);
+                let texture = match cached {
+                    Some((_, mut texture)) => {
+                        texture.set(image, TextureOptions::LINEAR);
+                        texture
+                    }
+                    None => ui
+                        .ctx()
+                        .load_texture("color square", image, TextureOptions::LINEAR),
+                };
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(texture_id, (key, texture.clone())));
+                texture
             }
-        }
-        ui.painter().add(egui::Shape::mesh(mesh));
+        };
+        let half_texel = 0.5 / SQUARE_TEXTURE_SIZE as f32;
+        let uv = egui::Rect::from_min_max(
+            egui::pos2(half_texel, half_texel),
+            egui::pos2(1.0 - half_texel, 1.0 - half_texel),
+        );
+        ui.painter().add(
+            RectShape::filled(rect, SQUARE_CORNER_RADIUS, Color32::WHITE)
+                .with_texture(texture.id(), uv),
+        );
         let center = egui::pos2(
             egui::lerp(rect.x_range(), *x_value),
             egui::lerp(rect.bottom()..=rect.top(), *y_value),
         );
         let picked = color_at(*x_value, *y_value);
-        ui.painter().circle(
-            center,
-            ui.spacing().interact_size.y * 0.32,
-            picked,
-            egui::Stroke::new(visuals.fg_stroke.width, contrast_color(picked)),
-        );
+        let radius = ui.spacing().interact_size.y * 0.5;
+        let stroke = egui::Stroke::new(visuals.fg_stroke.width, contrast_color(picked));
+        // The parent clip ends at the square's edge; let the thumb overhang it.
+        let mut painter = ui.painter().clone();
+        painter.set_clip_rect(ui.clip_rect().union(rect.expand(radius + stroke.width)));
+        painter.circle(center, radius, picked, stroke);
     }
 
     response

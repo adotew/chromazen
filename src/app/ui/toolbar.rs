@@ -89,24 +89,16 @@ impl GuiLayer {
         &mut self,
         ui: &mut egui::Ui,
         active_tool: EditorTool,
+        has_selection: bool,
     ) -> Option<EditorTool> {
         const TOOL_SIZE: f32 = 40.0;
         const PADDING: f32 = 6.0;
 
         let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(5.0 * TOOL_SIZE + 2.0 * PADDING, TOOL_RAIL_THICKNESS),
+            egui::vec2(7.0 * TOOL_SIZE + 2.0 * PADDING, TOOL_RAIL_THICKNESS),
             egui::Sense::hover(),
         );
-        paint_rounded_panel(
-            ui,
-            rect,
-            egui::CornerRadius {
-                nw: 0,
-                ne: 0,
-                sw: 16,
-                se: 16,
-            },
-        );
+        paint_rounded_panel(ui, rect, egui::CornerRadius::same(16));
         let body = rect.shrink2(egui::vec2(PADDING, 0.0));
 
         let mut selected_tool = None;
@@ -134,8 +126,43 @@ impl GuiLayer {
             }
         }
 
-        let layers_rect = egui::Rect::from_min_size(
+        let transform_rect = egui::Rect::from_min_size(
             egui::pos2(body.left() + 3.0 * TOOL_SIZE, body.top()),
+            egui::vec2(TOOL_SIZE, TOOL_RAIL_THICKNESS),
+        );
+        let transform_response = show_tool_button(
+            ui,
+            transform_rect,
+            EditorTool::Transform,
+            active_tool == EditorTool::Transform,
+        );
+        let select_rect = transform_rect.translate(egui::vec2(TOOL_SIZE, 0.0));
+        let select_response = show_tool_button(
+            ui,
+            select_rect,
+            EditorTool::Select,
+            active_tool == EditorTool::Select || has_selection,
+        );
+        if transform_response.clicked() {
+            egui::Popup::close_all(ui.ctx());
+            if active_tool == EditorTool::Transform {
+                self.commands
+                    .push(AppCommand::Editor(EditorCommand::ApplyLayerTransform));
+            } else {
+                selected_tool = Some(EditorTool::Transform);
+            }
+        } else if select_response.clicked() {
+            egui::Popup::close_all(ui.ctx());
+            if active_tool == EditorTool::Select || has_selection {
+                self.commands
+                    .push(AppCommand::Editor(EditorCommand::CancelSelection));
+            } else {
+                selected_tool = Some(EditorTool::Select);
+            }
+        }
+
+        let layers_rect = egui::Rect::from_min_size(
+            egui::pos2(body.left() + 5.0 * TOOL_SIZE, body.top()),
             egui::vec2(TOOL_SIZE, TOOL_RAIL_THICKNESS),
         );
         let layers_response = ui
@@ -184,93 +211,5 @@ impl GuiLayer {
             }
         }
         selected_tool
-    }
-
-    pub(super) fn show_tool_settings(
-        &mut self,
-        ui: &mut egui::Ui,
-        active_tool: EditorTool,
-        has_selection: bool,
-    ) -> Option<EditorTool> {
-        const TOOL_SIZE: f32 = 40.0;
-        const VERTICAL_PADDING: f32 = 6.0;
-        const EDGE_MARGIN: f32 = 12.0;
-
-        let controls_height = (ui.ctx().content_rect().height()
-            - 2.0 * TOOL_SIZE
-            - 2.0 * VERTICAL_PADDING
-            - 2.0 * EDGE_MARGIN)
-            .clamp(0.0, brush_controls::CONTROLS_HEIGHT);
-        let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(
-                TOOL_RAIL_THICKNESS,
-                2.0 * TOOL_SIZE + controls_height + 2.0 * VERTICAL_PADDING,
-            ),
-            egui::Sense::hover(),
-        );
-        paint_rounded_panel(
-            ui,
-            rect,
-            egui::CornerRadius {
-                nw: 16,
-                ne: 0,
-                sw: 16,
-                se: 0,
-            },
-        );
-        let body = rect.shrink2(egui::vec2(0.0, VERTICAL_PADDING));
-
-        self.brush_slider_active = false;
-        self.brush_slider_focus = None;
-        let controls_rect =
-            egui::Rect::from_min_size(body.min, egui::vec2(TOOL_RAIL_THICKNESS, controls_height));
-        if controls_height > 0.0 {
-            let mut controls_ui = ui.new_child(
-                egui::UiBuilder::new()
-                    .id_salt("brush controls")
-                    .max_rect(controls_rect),
-            );
-            controls_ui.set_clip_rect(controls_rect.intersect(ui.clip_rect()));
-            self.show_brush_controls(&mut controls_ui, active_tool, controls_height);
-        }
-
-        let transform_rect = egui::Rect::from_min_size(
-            controls_rect.left_bottom(),
-            egui::vec2(TOOL_RAIL_THICKNESS, TOOL_SIZE),
-        );
-        let transform_response = show_tool_button(
-            ui,
-            transform_rect,
-            EditorTool::Transform,
-            active_tool == EditorTool::Transform,
-        );
-        let select_rect = transform_rect.translate(egui::vec2(0.0, TOOL_SIZE));
-        let select_response = show_tool_button(
-            ui,
-            select_rect,
-            EditorTool::Select,
-            active_tool == EditorTool::Select || has_selection,
-        );
-        if transform_response.clicked() {
-            egui::Popup::close_all(ui.ctx());
-            if active_tool == EditorTool::Transform {
-                self.commands
-                    .push(AppCommand::Editor(EditorCommand::ApplyLayerTransform));
-                None
-            } else {
-                Some(EditorTool::Transform)
-            }
-        } else if select_response.clicked() {
-            egui::Popup::close_all(ui.ctx());
-            if active_tool == EditorTool::Select || has_selection {
-                self.commands
-                    .push(AppCommand::Editor(EditorCommand::CancelSelection));
-                None
-            } else {
-                Some(EditorTool::Select)
-            }
-        } else {
-            None
-        }
     }
 }
