@@ -73,12 +73,16 @@
           macOS
         </h2>
         <p class="mt-2 mb-6 max-w-none text-sm text-muted leading-[1.6]">Apple silicon and Intel</p>
-        <a
-          class="mt-auto inline-flex cursor-pointer items-center justify-center gap-[0.55rem] rounded-full bg-foreground px-6 py-[0.8rem] font-semibold text-background no-underline transition-[transform,box-shadow] duration-150 hover:-translate-y-px hover:shadow-[0_6px_20px_rgb(0_0_0/0.35)] active:translate-y-0 active:shadow-none focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-current"
-          href={`${latestDownloadUrl}/Chromazen.dmg`}
-        >
-          Download .dmg
-        </a>
+        <div class="mt-auto flex flex-col gap-3">
+          {#each [['Apple silicon', 'arm64'], ['Intel', 'x86_64']] as [label, arch]}
+            <a
+              class="inline-flex cursor-pointer items-center justify-center gap-[0.55rem] rounded-full bg-foreground px-6 py-[0.8rem] font-semibold text-background no-underline transition-[transform,box-shadow] duration-150 hover:-translate-y-px hover:shadow-[0_6px_20px_rgb(0_0_0/0.35)] active:translate-y-0 active:shadow-none focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-current"
+              href={`${latestDownloadUrl}/Chromazen-macos-${arch}.dmg`}
+            >
+              {label} .dmg
+            </a>
+          {/each}
+        </div>
       </section>
       <section class="flex flex-col rounded-lg border border-[rgb(128_128_128/0.25)] p-8">
         <details>

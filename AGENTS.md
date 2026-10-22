@@ -20,7 +20,7 @@ Use a current stable Rust toolchain with edition 2024 support.
 - `cargo test -p chromazen-canvas --test headless -- --ignored` runs the surfaceless GPU integration test and requires a wgpu adapter.
 - `cargo fmt --all -- --check` verifies formatting; `cargo fmt --all` applies it.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` treats every lint as an error.
-- `./packaging/macos/build-app.sh` builds a release binary, creates and ad-hoc signs `dist/Chromazen.app`, then replaces `/Applications/Chromazen.app`; run it only on macOS when that side effect is intended.
+- `./packaging/macos/build-app.sh` builds separate Apple silicon and Intel bundles under `dist/arm64/` and `dist/x86_64/`, then creates `dist/Chromazen-macos-arm64.dmg` and `dist/Chromazen-macos-x86_64.dmg`. Signing is ad-hoc unless credentials are provided. Run it on macOS; add `--install` to also replace `/Applications/Chromazen.app` with the native bundle.
 - `cd web && npm install && npm run dev` installs and serves the landing page locally.
 - `cd web && npm run check && npm run build` validates and builds the static website.
 
