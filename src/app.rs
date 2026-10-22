@@ -63,7 +63,7 @@ pub(super) type WakeCallback = Arc<dyn Fn() + Send + Sync>;
 
 const WINDOW_TITLE: &str = "Chromazen";
 // Logical height of the transparent titlebar strip that AppKit uses for window dragging.
-const MACOS_TITLEBAR_HEIGHT: f64 = 32.0;
+const MACOS_TITLEBAR_HEIGHT: f64 = 32.0 + crate::platform::WINDOW_CONTROLS_MARGIN as f64;
 #[cfg(target_os = "linux")]
 const LINUX_APPLICATION_ID: &str = "io.github.adotew.chromazen";
 

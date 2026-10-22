@@ -116,6 +116,7 @@ impl App {
         app_action_processed |= self.apply_reference_load_completions();
         app_action_processed |= self.dispatch_pending_commands();
         let mut brush_switched = self.apply_pending_brush_change();
+        crate::platform::position_window_controls(window);
 
         if self.pending_exit && self.screen == AppScreen::Gallery && !self.export.is_exporting() {
             event_loop.exit();

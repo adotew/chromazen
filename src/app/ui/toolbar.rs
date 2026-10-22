@@ -85,17 +85,49 @@ impl GuiLayer {
         }
     }
 
+    pub(super) fn show_editor_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        menu: ApplicationMenuState,
+        active_tool: EditorTool,
+        has_selection: bool,
+    ) -> Option<EditorTool> {
+        let left_width = if cfg!(target_os = "macos") {
+            80.0
+        } else {
+            36.0
+        };
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(left_width + 86.0, 32.0), egui::Sense::hover());
+        paint_rounded_panel(ui, rect, egui::CornerRadius::same(16));
+        let mut menu_ui =
+            ui.new_child(egui::UiBuilder::new().id_salt("application menu").max_rect(
+                egui::Rect::from_min_size(rect.min, egui::vec2(left_width, 32.0)),
+            ));
+        self.show_application_menu(&mut menu_ui, menu);
+        let tools_rect = egui::Rect::from_min_size(
+            rect.min + egui::vec2(left_width, 0.0),
+            egui::vec2(80.0, 32.0),
+        );
+        show_selection_tools(
+            ui,
+            tools_rect,
+            active_tool,
+            has_selection,
+            &mut self.commands,
+        )
+    }
+
     pub(super) fn show_toolbar(
         &mut self,
         ui: &mut egui::Ui,
         active_tool: EditorTool,
-        has_selection: bool,
     ) -> Option<EditorTool> {
         const TOOL_SIZE: f32 = 40.0;
         const PADDING: f32 = 6.0;
 
         let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(7.0 * TOOL_SIZE + 2.0 * PADDING, TOOL_RAIL_THICKNESS),
+            egui::vec2(5.0 * TOOL_SIZE + 2.0 * PADDING, TOOL_RAIL_THICKNESS),
             egui::Sense::hover(),
         );
         paint_rounded_panel(ui, rect, egui::CornerRadius::same(16));
@@ -126,43 +158,8 @@ impl GuiLayer {
             }
         }
 
-        let transform_rect = egui::Rect::from_min_size(
-            egui::pos2(body.left() + 3.0 * TOOL_SIZE, body.top()),
-            egui::vec2(TOOL_SIZE, TOOL_RAIL_THICKNESS),
-        );
-        let transform_response = show_tool_button(
-            ui,
-            transform_rect,
-            EditorTool::Transform,
-            active_tool == EditorTool::Transform,
-        );
-        let select_rect = transform_rect.translate(egui::vec2(TOOL_SIZE, 0.0));
-        let select_response = show_tool_button(
-            ui,
-            select_rect,
-            EditorTool::Select,
-            active_tool == EditorTool::Select || has_selection,
-        );
-        if transform_response.clicked() {
-            egui::Popup::close_all(ui.ctx());
-            if active_tool == EditorTool::Transform {
-                self.commands
-                    .push(AppCommand::Editor(EditorCommand::ApplyLayerTransform));
-            } else {
-                selected_tool = Some(EditorTool::Transform);
-            }
-        } else if select_response.clicked() {
-            egui::Popup::close_all(ui.ctx());
-            if active_tool == EditorTool::Select || has_selection {
-                self.commands
-                    .push(AppCommand::Editor(EditorCommand::CancelSelection));
-            } else {
-                selected_tool = Some(EditorTool::Select);
-            }
-        }
-
         let layers_rect = egui::Rect::from_min_size(
-            egui::pos2(body.left() + 5.0 * TOOL_SIZE, body.top()),
+            egui::pos2(body.left() + 3.0 * TOOL_SIZE, body.top()),
             egui::vec2(TOOL_SIZE, TOOL_RAIL_THICKNESS),
         );
         let layers_response = ui
@@ -211,5 +208,118 @@ impl GuiLayer {
             }
         }
         selected_tool
+    }
+}
+
+fn show_selection_tools(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    active_tool: EditorTool,
+    has_selection: bool,
+    commands: &mut Vec<AppCommand>,
+) -> Option<EditorTool> {
+    for (index, tool) in [EditorTool::Select, EditorTool::Transform]
+        .into_iter()
+        .enumerate()
+    {
+        let tool_rect = egui::Rect::from_min_size(
+            rect.min + egui::vec2(index as f32 * 40.0, 0.0),
+            egui::vec2(40.0, rect.height()),
+        );
+        let selected = active_tool == tool || (tool == EditorTool::Select && has_selection);
+        if show_tool_button(ui, tool_rect, tool, selected).clicked() {
+            egui::Popup::close_all(ui.ctx());
+            if selected {
+                commands.push(AppCommand::Editor(match tool {
+                    EditorTool::Select => EditorCommand::CancelSelection,
+                    _ => EditorCommand::ApplyLayerTransform,
+                }));
+            } else {
+                return Some(tool);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn top_controls_select_cancel_and_apply_tools() {
+        for (x, active_tool, has_selection, expected_tool, expected_command) in [
+            (
+                20.0,
+                EditorTool::Paint(PaintTool::Brush),
+                false,
+                Some(EditorTool::Select),
+                None,
+            ),
+            (
+                60.0,
+                EditorTool::Paint(PaintTool::Brush),
+                false,
+                Some(EditorTool::Transform),
+                None,
+            ),
+            (
+                20.0,
+                EditorTool::Select,
+                false,
+                None,
+                Some(EditorCommand::CancelSelection),
+            ),
+            (
+                20.0,
+                EditorTool::Paint(PaintTool::Brush),
+                true,
+                None,
+                Some(EditorCommand::CancelSelection),
+            ),
+            (
+                60.0,
+                EditorTool::Transform,
+                false,
+                None,
+                Some(EditorCommand::ApplyLayerTransform),
+            ),
+        ] {
+            let context = egui::Context::default();
+            let mut commands = Vec::new();
+            let mut selected_tool = None;
+            let position = egui::pos2(x, 16.0);
+            for pressed in [None, Some(true), Some(false)] {
+                let mut events = vec![egui::Event::PointerMoved(position)];
+                if let Some(pressed) = pressed {
+                    events.push(egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+                let _ = context.run_ui(
+                    egui::RawInput {
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        selected_tool = show_selection_tools(
+                            ui,
+                            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(80.0, 32.0)),
+                            active_tool,
+                            has_selection,
+                            &mut commands,
+                        );
+                    },
+                );
+            }
+            assert_eq!(selected_tool, expected_tool);
+            assert_eq!(commands.len(), usize::from(expected_command.is_some()));
+            if let Some(expected) = expected_command {
+                assert_eq!(commands, vec![AppCommand::Editor(expected)]);
+            }
+        }
     }
 }

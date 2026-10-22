@@ -34,7 +34,6 @@ impl GuiLayer {
         let context = self.context.clone();
 
         context.run_ui(raw_input, |ui| {
-            self.show_application_menu(ui.ctx(), menu);
             if !ui.ctx().egui_wants_keyboard_input()
                 && ui
                     .ctx()
@@ -287,12 +286,24 @@ impl GuiLayer {
                 self.layer_transform_drag = None;
             }
 
+            let selected_tool = egui::Area::new(egui::Id::new("editor controls"))
+                .anchor(
+                    egui::Align2::LEFT_TOP,
+                    egui::Vec2::splat(crate::platform::WINDOW_CONTROLS_MARGIN),
+                )
+                .order(egui::Order::Foreground)
+                .show(ui.ctx(), |ui| {
+                    self.show_editor_controls(ui, menu, tool, selection.is_some())
+                })
+                .inner;
+            if let Some(tool) = selected_tool {
+                self.commands
+                    .push(AppCommand::Editor(EditorCommand::SelectTool(tool)));
+            }
             let selected_tool = egui::Area::new(egui::Id::new("toolbar"))
                 .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -12.0))
                 .order(egui::Order::Foreground)
-                .show(ui.ctx(), |ui| {
-                    self.show_toolbar(ui, tool, selection.is_some())
-                })
+                .show(ui.ctx(), |ui| self.show_toolbar(ui, tool))
                 .inner;
             if let Some(tool) = selected_tool {
                 self.commands
