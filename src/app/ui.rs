@@ -1310,12 +1310,6 @@ fn install_fonts(context: &egui::Context) {
         ))),
     );
     fonts.font_data.insert(
-        "elms_sans_light".to_owned(),
-        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
-            "../../assets/fonts/ElmsSans-Light.ttf"
-        ))),
-    );
-    fonts.font_data.insert(
         "hack".to_owned(),
         std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
             "../../assets/fonts/Hack-Regular.ttf"
@@ -1351,10 +1345,6 @@ fn install_fonts(context: &egui::Context) {
     fonts.families.insert(
         egui::FontFamily::Name("elms_sans_regular".into()),
         vec!["elms_sans_regular".to_owned(), "inter".to_owned()],
-    );
-    fonts.families.insert(
-        egui::FontFamily::Name("elms_sans_light".into()),
-        vec!["elms_sans_light".to_owned(), "inter".to_owned()],
     );
     context.set_fonts(fonts);
     context.all_styles_mut(|style| {

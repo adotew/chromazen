@@ -122,4 +122,5 @@ pub(super) enum GalleryCommand {
 pub(super) enum UiCommand {
     ShowSettings,
     ShowShortcuts,
+    DragWindow,
 }

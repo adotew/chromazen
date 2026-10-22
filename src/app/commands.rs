@@ -405,6 +405,13 @@ impl App {
                     gui.open_shortcuts_dialog();
                 }
             }
+            UiCommand::DragWindow => {
+                if let Some(window) = self.window.as_ref()
+                    && let Err(error) = window.drag_window()
+                {
+                    log::debug!("window drag unavailable: {error}");
+                }
+            }
         }
     }
 

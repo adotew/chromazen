@@ -5,10 +5,25 @@ use egui::containers::menu::MenuButton;
 use crate::artwork::{ArtworkId, ArtworkSummary};
 
 use super::super::{
-    command::{AppCommand, GalleryCommand, NavigationCommand},
+    command::{AppCommand, GalleryCommand, NavigationCommand, UiCommand},
     gallery::ThumbnailCompletion,
 };
 use super::apply_menu_item_padding;
+
+const HEADER_HEIGHT: f32 = 32.0;
+// On macOS the header sits in the transparent titlebar, vertically centered on the traffic lights.
+#[cfg(target_os = "macos")]
+const HEADER_TOP_SPACE: f32 = 0.0;
+#[cfg(target_os = "macos")]
+const TITLE_INSET: f32 = 64.0;
+#[cfg(target_os = "macos")]
+const TITLE_SIZE: f32 = 20.0;
+#[cfg(not(target_os = "macos"))]
+const HEADER_TOP_SPACE: f32 = 40.0;
+#[cfg(not(target_os = "macos"))]
+const TITLE_INSET: f32 = 0.0;
+#[cfg(not(target_os = "macos"))]
+const TITLE_SIZE: f32 = 28.0;
 
 #[derive(Default)]
 pub(super) struct GalleryUi {
@@ -34,21 +49,30 @@ impl GalleryUi {
         commands: &mut Vec<AppCommand>,
     ) {
         self.sync_thumbnails(artworks);
-        let panel_frame =
-            egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin::symmetric(24, 8));
+        let top_margin = if cfg!(target_os = "macos") { 0 } else { 8 };
+        let panel_frame = egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin {
+            left: 24,
+            right: 24,
+            top: top_margin,
+            bottom: 8,
+        });
         egui::CentralPanel::default()
             .frame(panel_frame)
             .show_inside(ui, |ui| {
-                ui.add_space(40.0);
-                let (header_rect, _) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), 32.0),
-                    egui::Sense::hover(),
+                ui.add_space(HEADER_TOP_SPACE);
+                let (header_rect, header) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), HEADER_HEIGHT),
+                    egui::Sense::click_and_drag(),
                 );
+                if cfg!(target_os = "macos") && header.drag_started_by(egui::PointerButton::Primary)
+                {
+                    commands.push(AppCommand::Ui(UiCommand::DragWindow));
+                }
                 ui.painter().text(
-                    header_rect.left_center(),
+                    header_rect.left_center() + egui::vec2(TITLE_INSET, 0.0),
                     egui::Align2::LEFT_CENTER,
                     "Chromazen",
-                    egui::FontId::new(28.0, egui::FontFamily::Name("elms_sans_light".into())),
+                    egui::FontId::proportional(TITLE_SIZE),
                     ui.visuals().text_color(),
                 );
                 let add_icon =
@@ -56,15 +80,15 @@ impl GalleryUi {
                         .fit_to_exact_size(egui::Vec2::splat(18.0))
                         .alt_text("New artwork");
                 let add_button = egui::Button::image(add_icon)
-                    .frame_when_inactive(false)
-                    .image_tint_follows_text_color(true)
-                    .corner_radius(8);
+                    .frame(false)
+                    .image_tint_follows_text_color(true);
                 let add_rect = egui::Rect::from_min_size(
-                    egui::pos2(header_rect.right() - 32.0, header_rect.top()),
-                    egui::Vec2::splat(32.0),
+                    egui::pos2(header_rect.right() - HEADER_HEIGHT, header_rect.top()),
+                    egui::Vec2::splat(HEADER_HEIGHT),
                 );
                 if ui
                     .put(add_rect, add_button)
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text("New artwork")
                     .clicked()
                 {

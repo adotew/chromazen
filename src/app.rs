@@ -158,6 +158,14 @@ impl ApplicationHandler<AppEvent> for App {
             .with_title(WINDOW_TITLE)
             .with_resizable(true)
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 900.0));
+        #[cfg(target_os = "macos")]
+        let window_attributes = {
+            use winit::platform::macos::WindowAttributesExtMacOS;
+            window_attributes
+                .with_titlebar_transparent(true)
+                .with_title_hidden(true)
+                .with_fullsize_content_view(true)
+        };
         #[cfg(target_os = "linux")]
         let window_attributes = {
             use winit::platform::wayland::WindowAttributesExtWayland;
