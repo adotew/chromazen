@@ -84,60 +84,24 @@ impl GuiLayer {
                                 .id_salt("foreground")
                                 .layer_id(layer_id),
                         );
-                        let component_rect = egui::Rect::from_min_size(
-                            panel_rect.min,
-                            egui::vec2(SIDEBAR_WIDTH, panel_rect.height()),
-                        )
-                        .shrink(12.0);
-                        let corner_radius = egui::CornerRadius::same(28);
-                        paint_rounded_panel(&panel_ui, component_rect, corner_radius);
-                        panel_ui.painter().rect_stroke(
-                            component_rect,
-                            corner_radius,
-                            panel_ui.visuals().window_stroke,
-                            egui::StrokeKind::Inside,
-                        );
-                        let content_rect = component_rect.shrink(16.0);
-                        let mut content_ui = panel_ui.new_child(
-                            egui::UiBuilder::new()
-                                .id_salt("sidebar contents")
-                                .max_rect(content_rect),
-                        );
-                        content_ui.set_clip_rect(panel_ui.clip_rect().intersect(content_rect));
-
-                        content_ui.add_space(8.0);
-                        let header_width = content_ui.available_width();
-                        content_ui.allocate_ui(egui::vec2(header_width, 28.0), |ui| {
-                            ui.columns(3, |columns| {
-                                columns[1].vertical_centered(|ui| {
-                                    ui.heading("Color");
+                        show_sidebar_frame(&mut panel_ui, |content_ui| {
+                            content_ui.add_space(8.0);
+                            let header_width = content_ui.available_width();
+                            content_ui.allocate_ui(egui::vec2(header_width, 28.0), |ui| {
+                                ui.columns(3, |columns| {
+                                    columns[1].vertical_centered(|ui| {
+                                        ui.heading("Color");
+                                    });
+                                    columns[0].with_layout(
+                                        egui::Layout::left_to_right(egui::Align::Center),
+                                        |ui| self.show_brush_color_swatch(ui),
+                                    );
                                 });
-                                columns[0].with_layout(
-                                    egui::Layout::left_to_right(egui::Align::Center),
-                                    |ui| self.show_brush_color_swatch(ui),
-                                );
                             });
-                        });
-                        content_ui.add_space(8.0);
-                        self.show_brush_color_picker(&mut content_ui);
-                        content_ui.add_space(8.0);
-                        let stroke = content_ui.visuals().widgets.noninteractive.bg_stroke;
-                        content_ui
-                            .visuals_mut()
-                            .widgets
-                            .noninteractive
-                            .bg_stroke
-                            .color = stroke.color.gamma_multiply(0.5);
-                        content_ui.add(egui::Separator::default().grow(8.0));
-                        content_ui.visuals_mut().widgets.noninteractive.bg_stroke = stroke;
-                        if let Some(paint_tool) = tool.paint_tool() {
                             content_ui.add_space(8.0);
-                            content_ui.vertical_centered(|ui| {
-                                ui.heading("Brush");
-                            });
-                            content_ui.add_space(4.0);
-                            self.show_brush_panel(&mut content_ui, paint_tool);
+                            self.show_brush_color_picker(content_ui);
                             content_ui.add_space(8.0);
+                            let stroke = content_ui.visuals().widgets.noninteractive.bg_stroke;
                             content_ui
                                 .visuals_mut()
                                 .widgets
@@ -146,27 +110,45 @@ impl GuiLayer {
                                 .color = stroke.color.gamma_multiply(0.5);
                             content_ui.add(egui::Separator::default().grow(8.0));
                             content_ui.visuals_mut().widgets.noninteractive.bg_stroke = stroke;
-                        }
-                        content_ui.add_space(8.0);
-                        let header_width = content_ui.available_width();
-                        content_ui.allocate_ui(egui::vec2(header_width, 28.0), |ui| {
-                            ui.columns(3, |columns| {
-                                columns[1].vertical_centered(|ui| {
-                                    ui.heading("Layers");
+                            if let Some(paint_tool) = tool.paint_tool() {
+                                content_ui.add_space(8.0);
+                                content_ui.vertical_centered(|ui| {
+                                    ui.heading("Brush");
                                 });
-                                columns[0].with_layout(
-                                    egui::Layout::left_to_right(egui::Align::Center),
-                                    |ui| {
-                                        if add_layer_button(ui) {
-                                            self.commands
-                                                .push(AppCommand::Editor(EditorCommand::AddLayer));
-                                        }
-                                    },
-                                );
+                                content_ui.add_space(4.0);
+                                self.show_brush_panel(content_ui, paint_tool);
+                                content_ui.add_space(8.0);
+                                content_ui
+                                    .visuals_mut()
+                                    .widgets
+                                    .noninteractive
+                                    .bg_stroke
+                                    .color = stroke.color.gamma_multiply(0.5);
+                                content_ui.add(egui::Separator::default().grow(8.0));
+                                content_ui.visuals_mut().widgets.noninteractive.bg_stroke = stroke;
+                            }
+                            content_ui.add_space(8.0);
+                            let header_width = content_ui.available_width();
+                            content_ui.allocate_ui(egui::vec2(header_width, 28.0), |ui| {
+                                ui.columns(3, |columns| {
+                                    columns[1].vertical_centered(|ui| {
+                                        ui.heading("Layers");
+                                    });
+                                    columns[0].with_layout(
+                                        egui::Layout::left_to_right(egui::Align::Center),
+                                        |ui| {
+                                            if add_layer_button(ui) {
+                                                self.commands.push(AppCommand::Editor(
+                                                    EditorCommand::AddLayer,
+                                                ));
+                                            }
+                                        },
+                                    );
+                                });
                             });
+                            content_ui.add_space(8.0);
+                            self.show_layers_panel(content_ui, layers, background);
                         });
-                        content_ui.add_space(8.0);
-                        self.show_layers_panel(&mut content_ui, layers, background);
                     });
             }
 
@@ -369,5 +351,71 @@ impl GuiLayer {
             self.show_settings_dialog(ui.ctx());
             self.show_shortcuts_dialog(ui.ctx());
         })
+    }
+}
+
+fn show_sidebar_frame(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    let bounds = egui::Rect::from_min_size(
+        ui.max_rect().min,
+        egui::vec2(SIDEBAR_WIDTH, ui.max_rect().height()),
+    )
+    .shrink(12.0);
+    let mut frame_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("sidebar contents")
+            .max_rect(bounds),
+    );
+    frame_ui.set_clip_rect(ui.clip_rect().intersect(bounds));
+    egui::Frame::new()
+        .fill(ui.visuals().window_fill())
+        .stroke(ui.visuals().window_stroke)
+        .corner_radius(28)
+        .inner_margin(16.0)
+        .show(&mut frame_ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            add_contents(ui);
+        });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sidebar_frame_tracks_content_instead_of_window_height() {
+        let context = egui::Context::default();
+        for (window_height, content_height) in [(1600.0, 600.0), (2000.0, 300.0), (1200.0, 500.0)] {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, window_height),
+                )),
+                ..Default::default()
+            };
+            let output = context.run_ui(input, |ui| {
+                show_sidebar_frame(ui, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), content_height),
+                            egui::Sense::hover(),
+                        );
+                    });
+                });
+            });
+            let panel = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Rect(rect)
+                        if rect.corner_radius == egui::CornerRadius::same(28) =>
+                    {
+                        Some(rect.rect)
+                    }
+                    _ => None,
+                })
+                .expect("sidebar background");
+            assert!((panel.width() - (SIDEBAR_WIDTH - 24.0)).abs() < 1.0);
+            assert!((panel.height() - (content_height + 32.0)).abs() < 3.0);
+        }
     }
 }
