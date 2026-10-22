@@ -8,7 +8,7 @@ use super::super::{
     command::{AppCommand, GalleryCommand, NavigationCommand, UiCommand},
     gallery::ThumbnailCompletion,
 };
-use super::{apply_menu_item_padding, paint_rounded_panel};
+use super::apply_menu_item_padding;
 
 const HEADER_HEIGHT: f32 = 32.0;
 // On macOS the header sits in the transparent titlebar.
@@ -46,19 +46,6 @@ impl GalleryUi {
         commands: &mut Vec<AppCommand>,
     ) {
         self.sync_thumbnails(artworks);
-        if has_titlebar {
-            egui::Area::new(egui::Id::new("gallery window controls"))
-                .anchor(
-                    egui::Align2::LEFT_TOP,
-                    egui::Vec2::splat(crate::platform::WINDOW_CONTROLS_MARGIN),
-                )
-                .order(egui::Order::Foreground)
-                .show(ui.ctx(), |ui| {
-                    let (rect, _) = ui
-                        .allocate_exact_size(egui::vec2(80.0, HEADER_HEIGHT), egui::Sense::hover());
-                    paint_rounded_panel(ui, rect, egui::CornerRadius::same(16));
-                });
-        }
         let title_inset = if has_titlebar {
             64.0 + crate::platform::WINDOW_CONTROLS_MARGIN
         } else {
