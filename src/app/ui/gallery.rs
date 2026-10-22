@@ -11,9 +11,9 @@ use super::super::{
 use super::apply_menu_item_padding;
 
 const HEADER_HEIGHT: f32 = 32.0;
-// On macOS the header sits in the transparent titlebar, vertically centered on the traffic lights.
+// On macOS the header sits in the transparent titlebar.
 #[cfg(target_os = "macos")]
-const HEADER_TOP_SPACE: f32 = 0.0;
+const HEADER_TOP_SPACE: f32 = 4.0;
 #[cfg(target_os = "macos")]
 const TITLE_INSET: f32 = 64.0;
 #[cfg(target_os = "macos")]
@@ -72,13 +72,8 @@ impl GalleryUi {
                     header_rect.left_center() + egui::vec2(TITLE_INSET, 0.0),
                     egui::Align2::LEFT_CENTER,
                     "Chromazen",
-<<<<<<< HEAD
-                    egui::FontId::proportional(TITLE_SIZE),
-                    ui.visuals().text_color(),
-=======
-                    egui::FontId::new(28.0, egui::FontFamily::Name("heming".into())),
+                    egui::FontId::new(TITLE_SIZE, egui::FontFamily::Name("heming".into())),
                     ui.visuals().strong_text_color(),
->>>>>>> feature/ui-redesign
                 );
                 let add_icon =
                     egui::Image::new(egui::include_image!("../../../assets/icons/plus.svg"))
