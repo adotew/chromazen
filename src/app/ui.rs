@@ -1424,8 +1424,8 @@ fn install_rounded_ui_style(
 
 fn surface_fill(dark_mode: bool, surface_style: SurfaceStyle) -> egui::Color32 {
     match (dark_mode, surface_style) {
-        (true, SurfaceStyle::Frosted) => egui::Color32::from_rgba_unmultiplied(17, 19, 24, 160),
-        (false, SurfaceStyle::Frosted) => egui::Color32::from_rgba_unmultiplied(248, 250, 252, 205),
+        (true, SurfaceStyle::Frosted) => egui::Color32::from_rgba_unmultiplied(17, 19, 24, 220),
+        (false, SurfaceStyle::Frosted) => egui::Color32::from_rgba_unmultiplied(248, 250, 252, 235),
         (true, SurfaceStyle::Opaque) => egui::Color32::from_rgb(17, 19, 24),
         (false, SurfaceStyle::Opaque) => egui::Color32::from_rgb(248, 250, 252),
     }
@@ -1442,7 +1442,7 @@ fn frosted_row_fill(dark_mode: bool, selected: bool) -> egui::Color32 {
 
 fn brush_slider_fills(dark_mode: bool, frosted: bool) -> [egui::Color32; 5] {
     let shades = if dark_mode {
-        [if frosted { 24 } else { 48 }, 105, 135, 155, 60]
+        [48, 105, 135, 155, 60]
     } else {
         [if frosted { 195 } else { 230 }, 65, 45, 30, 130]
     };
