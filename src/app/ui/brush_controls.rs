@@ -2,27 +2,28 @@ use super::*;
 
 impl GuiLayer {
     pub(super) fn show_brush_panel_controls(&mut self, ui: &mut egui::Ui, tool: PaintTool) {
-        ui.add_enabled_ui(!self.canvas_crop_active(), |ui| {
-            let spacing = ui.spacing().item_spacing.x;
-            ui.spacing_mut().slider_width =
-                (ui.available_width() - 112.0 - 2.0 * spacing).max(24.0);
-            egui::Grid::new("brush panel controls")
-                .spacing(egui::vec2(spacing, 12.0))
-                .show(ui, |ui| {
-                    let size_response = panel_slider(
-                        ui,
-                        "Size",
-                        &mut self.brush.size,
-                        self.size_range.clone(),
-                        true,
-                    );
-                    let opacity_response =
-                        panel_slider(ui, "Opacity", &mut self.brush.opacity, 0.01..=1.0, false);
-                    if size_response.changed() || opacity_response.changed() {
-                        self.store_current_brush_settings_for_tool(tool);
-                    }
-                    self.track_brush_sliders(&size_response, &opacity_response);
-                });
+        egui::Frame::NONE.inner_margin(10.0).show(ui, |ui| {
+            ui.add_enabled_ui(!self.canvas_crop_active(), |ui| {
+                let spacing = ui.spacing().item_spacing.x;
+                ui.spacing_mut().slider_width = (ui.available_width() - 52.0 - spacing).max(24.0);
+                egui::Grid::new("brush panel controls")
+                    .spacing(egui::vec2(spacing, 12.0))
+                    .show(ui, |ui| {
+                        let size_response = panel_slider(
+                            ui,
+                            "Size",
+                            &mut self.brush.size,
+                            self.size_range.clone(),
+                            true,
+                        );
+                        let opacity_response =
+                            panel_slider(ui, "Opacity", &mut self.brush.opacity, 0.01..=1.0, false);
+                        if size_response.changed() || opacity_response.changed() {
+                            self.store_current_brush_settings_for_tool(tool);
+                        }
+                        self.track_brush_sliders(&size_response, &opacity_response);
+                    });
+            });
         });
     }
 
@@ -168,15 +169,52 @@ fn panel_slider(
     if response.changed() {
         *value = slider_value(fraction, &range, size);
     }
-    let text = if size {
-        format!("{value:.0} px")
-    } else {
-        format!("{:.0}%", *value * 100.0)
-    };
-    ui.add_sized([60.0, 20.0], egui::Label::new(text));
+    if response.enabled()
+        && ui.input(|input| input.focused)
+        && (response.hovered() || response.is_pointer_button_down_on() || response.has_focus())
+    {
+        let text = if size {
+            format!("{value:.0} px")
+        } else {
+            format!("{:.0}%", *value * 100.0)
+        };
+        let painter = ui.ctx().layer_painter(egui::LayerId::new(
+            egui::Order::Tooltip,
+            response.id.with("value bubble"),
+        ));
+        let galley = painter.layout_no_wrap(
+            text,
+            egui::TextStyle::Body.resolve(ui.style()),
+            ui.visuals().text_color(),
+        );
+        let bounds =
+            egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), ui.ctx().content_rect().y_range())
+                .intersect(ui.ctx().content_rect());
+        let padding = egui::vec2(6.0, 3.0);
+        let bubble = slider_value_bubble_rect(center, galley.size() + 2.0 * padding, bounds);
+        painter.rect(
+            bubble,
+            6,
+            ui.visuals().extreme_bg_color,
+            ui.visuals().widgets.noninteractive.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
+        painter.galley(bubble.min + padding, galley, ui.visuals().text_color());
+    }
     ui.end_row();
     response.widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), f64::from(*value), label));
     response
+}
+
+fn slider_value_bubble_rect(
+    center: egui::Pos2,
+    size: egui::Vec2,
+    bounds: egui::Rect,
+) -> egui::Rect {
+    let left = (center.x - size.x / 2.0)
+        .clamp(bounds.left(), (bounds.right() - size.x).max(bounds.left()));
+    let top = (center.y - 10.0 - size.y).max(bounds.top());
+    egui::Rect::from_min_size(egui::pos2(left, top), size)
 }
 
 // Like Procreate, size eases in quadratically: fine control for small brushes,
@@ -204,9 +242,9 @@ mod tests {
         value: &mut f32,
         events: impl IntoIterator<Item = egui::Event>,
         focused: bool,
-    ) -> (egui::Rect, bool) {
+    ) -> (egui::Rect, bool, Vec<egui::epaint::ClippedShape>) {
         let mut result = (egui::Rect::NOTHING, false);
-        let _ = context.run_ui(
+        let output = context.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -225,7 +263,7 @@ mod tests {
                 result = (response.rect, slider_preview_active(&response));
             },
         );
-        result
+        (result.0, result.1, output.shapes)
     }
 
     fn slider_event(context: &egui::Context, value: &mut f32, event: egui::Event) -> bool {
@@ -239,6 +277,66 @@ mod tests {
             pressed,
             modifiers: egui::Modifiers::NONE,
         }
+    }
+
+    #[test]
+    fn slider_value_bubble_stays_above_the_thumb_and_within_horizontal_bounds() {
+        let bounds = egui::Rect::from_min_max(egui::pos2(10.0, 0.0), egui::pos2(250.0, 400.0));
+        let size = egui::vec2(60.0, 24.0);
+        for x in [bounds.left(), bounds.center().x, bounds.right()] {
+            let rect = slider_value_bubble_rect(egui::pos2(x, 80.0), size, bounds);
+            assert!(bounds.contains_rect(rect));
+            assert_eq!(rect.bottom(), 70.0);
+        }
+        let rect = slider_value_bubble_rect(egui::pos2(120.0, 10.0), size, bounds);
+        assert_eq!(rect.top(), bounds.top());
+    }
+
+    #[test]
+    fn slider_value_is_hidden_at_rest_and_shown_on_hover_drag_and_focus() {
+        let context = egui::Context::default();
+        let mut value = 0.5;
+        let has_value = |shapes: &[egui::epaint::ClippedShape]| {
+            shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().ends_with('%'))
+            })
+        };
+        let (rect, active, shapes) = slider_frame(&context, &mut value, [], true);
+        assert!(!active);
+        assert!(!has_value(&shapes));
+
+        let (_, active, shapes) = slider_frame(
+            &context,
+            &mut value,
+            [egui::Event::PointerMoved(rect.center())],
+            true,
+        );
+        assert!(!active);
+        assert!(has_value(&shapes));
+        let (_, active, shapes) = slider_frame(
+            &context,
+            &mut value,
+            [pointer_button(rect.center(), true)],
+            true,
+        );
+        assert!(active);
+        assert!(has_value(&shapes));
+
+        let outside = egui::pos2(rect.right() + 80.0, rect.center().y);
+        let (_, active, shapes) = slider_frame(
+            &context,
+            &mut value,
+            [egui::Event::PointerMoved(outside)],
+            true,
+        );
+        assert!(active);
+        assert!(has_value(&shapes));
+        assert_eq!(value, 1.0);
+        let (_, active, shapes) =
+            slider_frame(&context, &mut value, [pointer_button(outside, false)], true);
+        assert!(!active);
+        assert!(has_value(&shapes));
+        assert!(!has_value(&slider_frame(&context, &mut value, [], false).2));
     }
 
     #[test]
@@ -300,7 +398,7 @@ mod tests {
         let mut value = 25.75;
         let mut slider_id = None;
         for pressed in [false, true] {
-            let _ = context.run_ui(
+            let output = context.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
@@ -336,6 +434,11 @@ mod tests {
                     });
                 },
             );
+            if pressed {
+                assert!(output.shapes.iter().any(|shape| {
+                    matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().ends_with(" px"))
+                }));
+            }
         }
         assert!(value > 25.75);
     }
