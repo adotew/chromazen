@@ -1316,6 +1316,12 @@ fn install_fonts(context: &egui::Context) {
         ))),
     );
     fonts.font_data.insert(
+        "heming".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../assets/fonts/heming-variable.ttf"
+        ))),
+    );
+    fonts.font_data.insert(
         "hack".to_owned(),
         std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
             "../../assets/fonts/Hack-Regular.ttf"
@@ -1355,6 +1361,10 @@ fn install_fonts(context: &egui::Context) {
     fonts.families.insert(
         egui::FontFamily::Name("elms_sans_light".into()),
         vec!["elms_sans_light".to_owned(), "inter".to_owned()],
+    );
+    fonts.families.insert(
+        egui::FontFamily::Name("heming".into()),
+        vec!["heming".to_owned(), "inter".to_owned()],
     );
     context.set_fonts(fonts);
     context.all_styles_mut(|style| {

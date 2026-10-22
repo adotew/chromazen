@@ -48,8 +48,8 @@ impl GalleryUi {
                     header_rect.left_center(),
                     egui::Align2::LEFT_CENTER,
                     "Chromazen",
-                    egui::FontId::new(28.0, egui::FontFamily::Name("elms_sans_light".into())),
-                    ui.visuals().text_color(),
+                    egui::FontId::new(28.0, egui::FontFamily::Name("heming".into())),
+                    ui.visuals().strong_text_color(),
                 );
                 let add_icon =
                     egui::Image::new(egui::include_image!("../../../assets/icons/plus.svg"))
