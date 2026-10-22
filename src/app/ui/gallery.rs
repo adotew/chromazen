@@ -8,22 +8,16 @@ use super::super::{
     command::{AppCommand, GalleryCommand, NavigationCommand, UiCommand},
     gallery::ThumbnailCompletion,
 };
-use super::apply_menu_item_padding;
-#[cfg(target_os = "macos")]
-use super::paint_rounded_panel;
+use super::{apply_menu_item_padding, paint_rounded_panel};
 
 const HEADER_HEIGHT: f32 = 32.0;
 // On macOS the header sits in the transparent titlebar.
 #[cfg(target_os = "macos")]
 const HEADER_TOP_SPACE: f32 = crate::platform::WINDOW_CONTROLS_MARGIN;
 #[cfg(target_os = "macos")]
-const TITLE_INSET: f32 = 64.0 + crate::platform::WINDOW_CONTROLS_MARGIN;
-#[cfg(target_os = "macos")]
 const TITLE_SIZE: f32 = 20.0;
 #[cfg(not(target_os = "macos"))]
 const HEADER_TOP_SPACE: f32 = 40.0;
-#[cfg(not(target_os = "macos"))]
-const TITLE_INSET: f32 = 0.0;
 #[cfg(not(target_os = "macos"))]
 const TITLE_SIZE: f32 = 28.0;
 
@@ -48,21 +42,28 @@ impl GalleryUi {
         ui: &mut egui::Ui,
         artworks: &[ArtworkSummary],
         warning: Option<&str>,
+        has_titlebar: bool,
         commands: &mut Vec<AppCommand>,
     ) {
         self.sync_thumbnails(artworks);
-        #[cfg(target_os = "macos")]
-        egui::Area::new(egui::Id::new("gallery window controls"))
-            .anchor(
-                egui::Align2::LEFT_TOP,
-                egui::Vec2::splat(crate::platform::WINDOW_CONTROLS_MARGIN),
-            )
-            .order(egui::Order::Foreground)
-            .show(ui.ctx(), |ui| {
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(80.0, HEADER_HEIGHT), egui::Sense::hover());
-                paint_rounded_panel(ui, rect, egui::CornerRadius::same(16));
-            });
+        if has_titlebar {
+            egui::Area::new(egui::Id::new("gallery window controls"))
+                .anchor(
+                    egui::Align2::LEFT_TOP,
+                    egui::Vec2::splat(crate::platform::WINDOW_CONTROLS_MARGIN),
+                )
+                .order(egui::Order::Foreground)
+                .show(ui.ctx(), |ui| {
+                    let (rect, _) = ui
+                        .allocate_exact_size(egui::vec2(80.0, HEADER_HEIGHT), egui::Sense::hover());
+                    paint_rounded_panel(ui, rect, egui::CornerRadius::same(16));
+                });
+        }
+        let title_inset = if has_titlebar {
+            64.0 + crate::platform::WINDOW_CONTROLS_MARGIN
+        } else {
+            0.0
+        };
         let top_margin = if cfg!(target_os = "macos") { 0 } else { 8 };
         let panel_frame = egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin {
             left: 24,
@@ -78,12 +79,11 @@ impl GalleryUi {
                     egui::vec2(ui.available_width(), HEADER_HEIGHT),
                     egui::Sense::click_and_drag(),
                 );
-                if cfg!(target_os = "macos") && header.drag_started_by(egui::PointerButton::Primary)
-                {
+                if has_titlebar && header.drag_started_by(egui::PointerButton::Primary) {
                     commands.push(AppCommand::Ui(UiCommand::DragWindow));
                 }
                 ui.painter().text(
-                    header_rect.left_center() + egui::vec2(TITLE_INSET, 0.0),
+                    header_rect.left_center() + egui::vec2(title_inset, 0.0),
                     egui::Align2::LEFT_CENTER,
                     "Chromazen",
                     egui::FontId::new(TITLE_SIZE, egui::FontFamily::Name("heming".into())),

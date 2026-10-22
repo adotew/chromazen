@@ -91,9 +91,12 @@ impl GuiLayer {
         menu: ApplicationMenuState,
         active_tool: EditorTool,
         has_selection: bool,
+        has_titlebar: bool,
     ) -> Option<EditorTool> {
-        let left_width = if cfg!(target_os = "macos") {
+        let left_width = if has_titlebar {
             80.0
+        } else if cfg!(target_os = "macos") {
+            6.0
         } else {
             36.0
         };

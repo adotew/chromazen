@@ -575,8 +575,13 @@ impl GuiLayer {
             {
                 self.shortcuts_dialog_open = true;
             }
-            self.gallery
-                .show(ui, artworks, discovery_warning, &mut self.commands);
+            self.gallery.show(
+                ui,
+                artworks,
+                discovery_warning,
+                has_macos_titlebar(window.fullscreen().is_some()),
+                &mut self.commands,
+            );
             if let Some(delay) = load_dialog_delay {
                 if delay.is_zero() {
                     show_loading_dialog(ui.ctx(), "artwork load dialog", "Opening artwork…");
@@ -736,6 +741,10 @@ impl GuiLayer {
         ));
         self.context.request_repaint();
     }
+}
+
+pub(super) fn has_macos_titlebar(fullscreen: bool) -> bool {
+    cfg!(target_os = "macos") && !fullscreen
 }
 
 pub(crate) fn workspace_background_color(
@@ -1575,6 +1584,13 @@ pub fn repaint_delay(output: &egui::FullOutput) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn macos_titlebar_space_tracks_fullscreen_transitions() {
+        assert_eq!(has_macos_titlebar(false), cfg!(target_os = "macos"));
+        assert!(!has_macos_titlebar(true));
+        assert_eq!(has_macos_titlebar(false), cfg!(target_os = "macos"));
+    }
 
     #[test]
     fn workspace_background_follows_theme_only_for_standard() {

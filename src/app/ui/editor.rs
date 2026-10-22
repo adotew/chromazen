@@ -293,7 +293,13 @@ impl GuiLayer {
                 )
                 .order(egui::Order::Foreground)
                 .show(ui.ctx(), |ui| {
-                    self.show_editor_controls(ui, menu, tool, selection.is_some())
+                    self.show_editor_controls(
+                        ui,
+                        menu,
+                        tool,
+                        selection.is_some(),
+                        has_macos_titlebar(window.fullscreen().is_some()),
+                    )
                 })
                 .inner;
             if let Some(tool) = selected_tool {

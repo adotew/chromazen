@@ -381,7 +381,7 @@ impl ApplicationHandler<AppEvent> for App {
                 // still reach the canvas beneath them.
                 let wheel_over_reference =
                     point_over_reference && matches!(&event, WindowEvent::MouseWheel { .. });
-                let press_in_titlebar = cfg!(target_os = "macos")
+                let press_in_titlebar = ui::has_macos_titlebar(window.fullscreen().is_some())
                     && matches!(
                         &event,
                         WindowEvent::MouseInput {
