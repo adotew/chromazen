@@ -72,6 +72,16 @@ struct EyedropperDrag {
     last_sample: Option<(Instant, [f32; 2])>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum QuickMenuRequest {
+    /// Window position in physical pixels.
+    Open {
+        position: [f32; 2],
+        held_by_key: bool,
+    },
+    ReleaseKey,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum KeyboardShortcut {
     ToggleSidebar,
@@ -122,6 +132,7 @@ pub struct PaintInputController {
     resize_drag: Option<BrushResizeDrag>,
     eyedropper_drag: Option<EyedropperDrag>,
     lasso: Option<Vec<[f32; 2]>>,
+    quick_menu_request: Option<QuickMenuRequest>,
     last_point: Option<StrokePoint>,
     last_raw_point: Option<StrokePoint>,
     last_pan_pos: [f32; 2],
@@ -192,6 +203,10 @@ impl PaintInputController {
 
     pub(crate) fn lasso_points(&self) -> Option<&[[f32; 2]]> {
         self.lasso.as_deref()
+    }
+
+    pub(crate) fn take_quick_menu_request(&mut self) -> Option<QuickMenuRequest> {
+        self.quick_menu_request.take()
     }
 
     pub fn has_active_document_drag(&self) -> bool {
@@ -490,6 +505,16 @@ impl PaintInputController {
                 true
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                if event.physical_key == PhysicalKey::Code(KeyCode::KeyQ) {
+                    self.quick_menu_request = quick_menu_key_request(
+                        event.state,
+                        event.repeat,
+                        self.modifiers,
+                        self.has_active_document_drag(),
+                        self.cursor_pos,
+                    );
+                    return self.quick_menu_request.is_some();
+                }
                 if event.physical_key == PhysicalKey::Code(KeyCode::KeyR) {
                     let pressed = event.state == ElementState::Pressed;
                     let active = pressed && self.modifiers.is_empty();
@@ -717,6 +742,25 @@ fn keyboard_shortcut_for_key(
         }
         (KeyCode::KeyF, ModifiersState::SHIFT) => Some(KeyboardShortcut::FlipCanvasVertical),
         _ => None,
+    }
+}
+
+fn quick_menu_key_request(
+    state: ElementState,
+    repeat: bool,
+    modifiers: ModifiersState,
+    document_busy: bool,
+    cursor_pos: [f32; 2],
+) -> Option<QuickMenuRequest> {
+    match state {
+        ElementState::Pressed if !repeat && modifiers.is_empty() && !document_busy => {
+            Some(QuickMenuRequest::Open {
+                position: cursor_pos,
+                held_by_key: true,
+            })
+        }
+        ElementState::Pressed => None,
+        ElementState::Released => Some(QuickMenuRequest::ReleaseKey),
     }
 }
 
@@ -1099,6 +1143,43 @@ mod tests {
         assert_eq!(input.eyedropper_indicator_pos(), Some([40.0, 50.0]));
         assert!(input.is_eyedropper_active());
         assert!(!input.has_active_document_drag());
+    }
+
+    #[test]
+    fn quick_menu_key_opens_on_press_and_reports_release() {
+        let open = Some(QuickMenuRequest::Open {
+            position: [3.0, 4.0],
+            held_by_key: true,
+        });
+        let request = |state, repeat, modifiers, busy| {
+            quick_menu_key_request(state, repeat, modifiers, busy, [3.0, 4.0])
+        };
+
+        assert_eq!(
+            request(ElementState::Pressed, false, ModifiersState::empty(), false),
+            open
+        );
+        assert_eq!(
+            request(ElementState::Pressed, true, ModifiersState::empty(), false),
+            None
+        );
+        assert_eq!(
+            request(ElementState::Pressed, false, ModifiersState::SUPER, false),
+            None
+        );
+        assert_eq!(
+            request(ElementState::Pressed, false, ModifiersState::empty(), true),
+            None
+        );
+        assert_eq!(
+            request(
+                ElementState::Released,
+                false,
+                ModifiersState::empty(),
+                false
+            ),
+            Some(QuickMenuRequest::ReleaseKey)
+        );
     }
 
     #[test]

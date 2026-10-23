@@ -52,6 +52,7 @@ Press `?` or choose **Help → Keyboard Shortcuts** for the complete shortcut li
 | --- | --- |
 | Brush / Eraser / Smudge / Transform | `B` / `E` / `S` / `T` |
 | Show or hide sidebar | `Tab` |
+| Quick menu | Right-click or hold `Q` |
 | Resize brush | `Shift` + left-drag vertically |
 | Eyedropper | Hold `Option` (macOS) or `Alt` |
 | Zoom | Mouse wheel |

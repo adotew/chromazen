@@ -94,17 +94,8 @@ impl GuiLayer {
                         .iter()
                         .position(|candidate| candidate.id == layer.id)
                         .expect("displayed layer must exist in snapshot");
-                    let can_merge_down = layer.visible
-                        && merge_down_target_index(layer_index).is_some_and(|lower_index| {
-                            layers.layers[lower_index].visible
-                                && !layers.layers[lower_index].clipped
-                        })
-                        && !layers
-                            .layers
-                            .get(layer_index + 1)
-                            .is_some_and(|upper| upper.clipped);
-                    let can_delete =
-                        layers.layers.len() == 1 || (layer_index != 0 || !layers.layers[1].clipped);
+                    let can_merge_down = can_merge_layer_down(&layers.layers, layer_index);
+                    let can_delete = can_delete_layer(&layers.layers, layer_index);
                     row.row.context_menu(|ui| {
                         apply_menu_item_padding(ui);
                         if ui.button("Rename").clicked() {
@@ -326,5 +317,68 @@ impl GuiLayer {
                         }));
                 }
             });
+    }
+}
+
+pub(super) fn can_merge_layer_down(layers: &[LayerInfo], index: usize) -> bool {
+    layers[index].visible
+        && merge_down_target_index(index)
+            .is_some_and(|lower| layers[lower].visible && !layers[lower].clipped)
+        && !layers.get(index + 1).is_some_and(|upper| upper.clipped)
+}
+
+/// Deleting the only layer clears it instead. The bottom layer stays while a layer above is
+/// clipped to it.
+pub(super) fn can_delete_layer(layers: &[LayerInfo], index: usize) -> bool {
+    layers.len() == 1 || index != 0 || !layers[1].clipped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn layer(id: u64, visible: bool, clipped: bool) -> LayerInfo {
+        LayerInfo {
+            id: LayerId(id),
+            name: format!("Layer {id}"),
+            visible,
+            opacity: 255,
+            clipped,
+            blend_mode: BlendMode::default(),
+        }
+    }
+
+    #[test]
+    fn merge_down_needs_two_visible_unclipped_layers() {
+        let layers = [layer(1, true, false), layer(2, true, false)];
+        assert!(!can_merge_layer_down(&layers, 0));
+        assert!(can_merge_layer_down(&layers, 1));
+
+        let hidden_lower = [layer(1, false, false), layer(2, true, false)];
+        assert!(!can_merge_layer_down(&hidden_lower, 1));
+        let hidden_upper = [layer(1, true, false), layer(2, false, false)];
+        assert!(!can_merge_layer_down(&hidden_upper, 1));
+        let clipped_lower = [
+            layer(1, true, false),
+            layer(2, true, true),
+            layer(3, true, false),
+        ];
+        assert!(!can_merge_layer_down(&clipped_lower, 2));
+        let clipped_above = [
+            layer(1, true, false),
+            layer(2, true, false),
+            layer(3, true, true),
+        ];
+        assert!(!can_merge_layer_down(&clipped_above, 1));
+    }
+
+    #[test]
+    fn clipping_base_cannot_be_deleted_but_a_lone_layer_can() {
+        assert!(can_delete_layer(&[layer(1, true, false)], 0));
+        let clipped = [layer(1, true, false), layer(2, true, true)];
+        assert!(!can_delete_layer(&clipped, 0));
+        assert!(can_delete_layer(&clipped, 1));
+        let unclipped = [layer(1, true, false), layer(2, true, false)];
+        assert!(can_delete_layer(&unclipped, 0));
     }
 }

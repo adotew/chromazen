@@ -37,7 +37,7 @@ use self::{
     },
     export::{ExportController, choose_export_path},
     gallery::GalleryController,
-    input::{EditorTool, KeyboardShortcut, PaintInputController},
+    input::{EditorTool, KeyboardShortcut, PaintInputController, QuickMenuRequest},
     menu::NativeMenu,
     reference_import::{ReferenceImportController, choose_reference_paths},
     reference_load::ReferenceLoadController,
@@ -422,6 +422,14 @@ impl ApplicationHandler<AppEvent> for App {
                         brush_size_range,
                         &self.pressure_state,
                     );
+                    match self.input.take_quick_menu_request() {
+                        Some(QuickMenuRequest::Open {
+                            position,
+                            held_by_key,
+                        }) => gui.open_quick_menu(position, held_by_key),
+                        Some(QuickMenuRequest::ReleaseKey) => gui.release_quick_menu_key(),
+                        None => {}
+                    }
                     if self.input.tool() != previous_tool {
                         if let Some(tool) = previous_tool.paint_tool() {
                             gui.store_current_brush_settings_for_tool(tool);
