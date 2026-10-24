@@ -1665,8 +1665,12 @@ fn frost_shape(
             }
             surface_rects.push(rect.rect);
             let border = frosted_surface_edge();
-            tint.stroke = border;
-            tint.stroke_kind = egui::StrokeKind::Inside;
+            let edge = egui::epaint::RectShape::stroke(
+                rect.rect,
+                rect.corner_radius,
+                border,
+                egui::StrokeKind::Inside,
+            );
             let mut corner_radius = egui::epaint::CornerRadiusF32::from(rect.corner_radius);
             corner_radius -= border.width;
             let [sheen, highlight] = frosted_surface_lighting(
@@ -1676,6 +1680,7 @@ fn frost_shape(
             *shape = egui::Shape::Vec(vec![
                 egui::Shape::Rect(backdrop),
                 egui::Shape::Rect(tint),
+                egui::Shape::Rect(edge),
                 sheen,
                 highlight,
             ]);
@@ -2194,7 +2199,12 @@ mod tests {
             };
             assert_eq!(backdrop.rect, tint.rect);
             assert_eq!((backdrop.fill, tint.fill), frosted_layer_fills(fill));
-            assert_eq!(tint.stroke, frosted_surface_edge());
+            assert_eq!(tint.stroke, egui::Stroke::NONE);
+            let egui::Shape::Rect(edge) = &layers[2] else {
+                panic!("surface edge");
+            };
+            assert_eq!(edge.rect, tint.rect);
+            assert_eq!(edge.stroke, frosted_surface_edge());
         }
     }
 
