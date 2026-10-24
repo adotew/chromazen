@@ -22,7 +22,8 @@ const APP_NAME: &str = "Chromazen";
 const DATA_DIR_ENV: &str = "CHROMAZEN_DATA_DIR";
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CURRENT_SCHEMA_VERSION: u32 = 1;
-pub(crate) const DEFAULT_ACCENT_COLOR: [u8; 3] = [10, 132, 255];
+/// White stands for the monochrome accent, which is drawn black in light mode.
+pub(crate) const DEFAULT_ACCENT_COLOR: [u8; 3] = [255, 255, 255];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]

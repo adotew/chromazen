@@ -1771,7 +1771,16 @@ fn frosted_surface_lighting(
     ]
 }
 
+fn resolve_accent_color(accent_color: egui::Color32, dark_mode: bool) -> egui::Color32 {
+    if accent_color == egui::Color32::WHITE && !dark_mode {
+        egui::Color32::BLACK
+    } else {
+        accent_color
+    }
+}
+
 fn apply_accent_color_to_style(style: &mut egui::Style, accent_color: egui::Color32) {
+    let accent_color = resolve_accent_color(accent_color, style.visuals.dark_mode);
     style.visuals.selection.bg_fill = accent_color;
     style.visuals.selection.stroke.color = if egui::Rgba::from(accent_color).intensity() < 0.5 {
         egui::Color32::WHITE
@@ -2332,6 +2341,21 @@ mod tests {
 
         assert_eq!(style.visuals.selection.bg_fill, accent);
         assert_eq!(style.visuals.selection.stroke.color, egui::Color32::WHITE);
+    }
+
+    #[test]
+    fn monochrome_accent_contrasts_with_the_theme() {
+        let mut dark = egui::Style::default();
+        dark.visuals = egui::Visuals::dark();
+        apply_accent_color_to_style(&mut dark, egui::Color32::WHITE);
+        assert_eq!(dark.visuals.selection.bg_fill, egui::Color32::WHITE);
+        assert_eq!(dark.visuals.selection.stroke.color, egui::Color32::BLACK);
+
+        let mut light = egui::Style::default();
+        light.visuals = egui::Visuals::light();
+        apply_accent_color_to_style(&mut light, egui::Color32::WHITE);
+        assert_eq!(light.visuals.selection.bg_fill, egui::Color32::BLACK);
+        assert_eq!(light.visuals.selection.stroke.color, egui::Color32::WHITE);
     }
 
     #[test]

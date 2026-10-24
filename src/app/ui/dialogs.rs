@@ -2,15 +2,16 @@ use super::*;
 
 use crate::config::DEFAULT_ACCENT_COLOR;
 
-const ACCENT_COLORS: [(&str, egui::Color32); 7] = [
+const ACCENT_COLORS: [(&str, egui::Color32); 8] = [
     (
-        "Blue",
+        "Monochrome",
         egui::Color32::from_rgb(
             DEFAULT_ACCENT_COLOR[0],
             DEFAULT_ACCENT_COLOR[1],
             DEFAULT_ACCENT_COLOR[2],
         ),
     ),
+    ("Blue", egui::Color32::from_rgb(10, 132, 255)),
     ("Teal", egui::Color32::from_rgb(0, 151, 167)),
     ("Green", egui::Color32::from_rgb(46, 155, 98)),
     ("Orange", egui::Color32::from_rgb(217, 119, 6)),
@@ -291,7 +292,11 @@ fn accent_swatch(
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, name)
     });
-    ui.painter().circle_filled(rect.center(), 10.0, color);
+    ui.painter().circle_filled(
+        rect.center(),
+        10.0,
+        resolve_accent_color(color, ui.visuals().dark_mode),
+    );
     if selected || response.hovered() {
         ui.painter().circle_stroke(
             rect.center(),
@@ -712,7 +717,7 @@ mod tests {
     }
 
     #[test]
-    fn accent_colors_include_original_blue() {
+    fn accent_colors_include_the_default() {
         let original = egui::Color32::from_rgb(
             DEFAULT_ACCENT_COLOR[0],
             DEFAULT_ACCENT_COLOR[1],
