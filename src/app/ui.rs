@@ -1458,6 +1458,11 @@ fn install_rounded_ui_style(
         visuals.widgets.hovered.corner_radius = radius;
         visuals.widgets.active.corner_radius = radius;
         visuals.widgets.open.corner_radius = radius;
+        // Interactive widgets show state through fill only; noninteractive keeps its separators.
+        visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+        visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+        visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+        visuals.widgets.open.bg_stroke = egui::Stroke::NONE;
         visuals.widgets.inactive.weak_bg_fill = if dark_mode {
             egui::Color32::from_white_alpha(12)
         } else {
