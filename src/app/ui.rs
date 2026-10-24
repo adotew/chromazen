@@ -1509,15 +1509,28 @@ fn frost_shape(
 
             let mut tint = rect.clone();
             tint.fill = tint_fill;
-            tint.stroke = if rect.fill == surface_fill {
-                frosted_surface_edge()
-            } else {
-                egui::Stroke::NONE
-            };
-            if rect.fill == surface_fill {
-                surface_rects.push(rect.rect);
+            tint.stroke = egui::Stroke::NONE;
+            if rect.fill != surface_fill {
+                *shape =
+                    egui::Shape::Vec(vec![egui::Shape::Rect(backdrop), egui::Shape::Rect(tint)]);
+                return;
             }
-            *shape = egui::Shape::Vec(vec![egui::Shape::Rect(backdrop), egui::Shape::Rect(tint)]);
+            surface_rects.push(rect.rect);
+            let border = frosted_surface_edge();
+            tint.stroke = border;
+            tint.stroke_kind = egui::StrokeKind::Inside;
+            let mut corner_radius = egui::epaint::CornerRadiusF32::from(rect.corner_radius);
+            corner_radius -= border.width;
+            let [sheen, highlight] = frosted_surface_lighting(
+                rect.rect.shrink(border.width),
+                corner_radius.at_least(0.0),
+            );
+            *shape = egui::Shape::Vec(vec![
+                egui::Shape::Rect(backdrop),
+                egui::Shape::Rect(tint),
+                sheen,
+                highlight,
+            ]);
         }
         // Untextured surface meshes, such as the quick menu's group band, whose only other
         // vertices are a transparent anti-aliasing fringe.
@@ -1564,7 +1577,56 @@ fn frosted_layer_fills(tint: egui::Color32) -> (egui::Color32, egui::Color32) {
 }
 
 fn frosted_surface_edge() -> egui::Stroke {
-    egui::Stroke::new(0.5_f32, egui::Color32::from_white_alpha(36))
+    egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(46))
+}
+
+fn frosted_surface_lighting(
+    rect: egui::Rect,
+    corner_radius: egui::epaint::CornerRadiusF32,
+) -> [egui::Shape; 2] {
+    const SHEEN_ALPHA: f32 = 12.0;
+    const SHEEN_END: f32 = 0.55;
+    const TOP_HIGHLIGHT_ALPHA: f32 = 36.0;
+    const BOTTOM_HIGHLIGHT_ALPHA: f32 = 10.0;
+
+    let mut outline = Vec::new();
+    egui::epaint::tessellator::path::rounded_rectangle(&mut outline, rect, corner_radius);
+
+    let extent = (rect.width() + rect.height()).max(1.0);
+    let progress = |point: egui::Pos2| (point.x - rect.min.x + point.y - rect.min.y) / extent;
+    let mut sheen_points = Vec::new();
+    for (index, &start) in outline.iter().enumerate() {
+        let end = outline[(index + 1) % outline.len()];
+        let (start_progress, end_progress) = (progress(start), progress(end));
+        if start_progress <= SHEEN_END {
+            sheen_points.push(start);
+        }
+        if (start_progress <= SHEEN_END) != (end_progress <= SHEEN_END) {
+            let t = (SHEEN_END - start_progress) / (end_progress - start_progress);
+            sheen_points.push(start.lerp(end, t));
+        }
+    }
+    let mut sheen = egui::Mesh::default();
+    for &point in &sheen_points {
+        let alpha = SHEEN_ALPHA * (1.0 - progress(point) / SHEEN_END).max(0.0);
+        sheen.colored_vertex(point, egui::Color32::from_white_alpha(alpha.round() as u8));
+    }
+    for index in 1..sheen_points.len().saturating_sub(1) as u32 {
+        sheen.add_triangle(0, index, index + 1);
+    }
+
+    let fade = corner_radius.nw.max(1.0);
+    let highlight = egui::epaint::PathStroke::new_uv(1.0, move |_, point| {
+        let top = (1.0 - (point.y - rect.top()) / fade).clamp(0.0, 1.0);
+        let bottom = (1.0 - (rect.bottom() - point.y) / fade).clamp(0.0, 1.0);
+        let alpha = TOP_HIGHLIGHT_ALPHA * top + BOTTOM_HIGHLIGHT_ALPHA * bottom;
+        egui::Color32::from_white_alpha(alpha.round() as u8)
+    })
+    .inside();
+    [
+        egui::Shape::mesh(sheen),
+        egui::epaint::PathShape::closed_line(outline, highlight).into(),
+    ]
 }
 
 fn apply_accent_color_to_style(style: &mut egui::Style, accent_color: egui::Color32) {
@@ -1937,6 +1999,26 @@ mod tests {
             assert_eq!((backdrop.fill, tint.fill), frosted_layer_fills(fill));
             assert_eq!(tint.stroke, frosted_surface_edge());
         }
+    }
+
+    #[test]
+    fn frosted_sheen_fades_from_the_top_left_and_stays_inside_the_surface() {
+        let rect = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(100.0, 300.0));
+        let [egui::Shape::Mesh(sheen), _] = frosted_surface_lighting(rect, 20.0.into()) else {
+            panic!("sheen mesh");
+        };
+        let brightest = sheen
+            .vertices
+            .iter()
+            .max_by_key(|vertex| vertex.color.a())
+            .expect("sheen vertices");
+        assert!(brightest.pos.x < rect.center().x && brightest.pos.y < rect.center().y);
+        for vertex in &sheen.vertices {
+            assert!(rect.expand(0.01).contains(vertex.pos));
+            let progress = (vertex.pos.x - rect.min.x + vertex.pos.y - rect.min.y) / 400.0;
+            assert!(progress <= 0.551, "sheen extends to {progress}");
+        }
+        assert!(sheen.vertices.iter().any(|vertex| vertex.color.a() == 0));
     }
 
     #[test]
