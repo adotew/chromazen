@@ -417,7 +417,6 @@ impl GuiLayer {
         let mut surface_style = self.surface_style;
         let mut workspace_background = self.workspace_background;
         let mut changed = false;
-        let mut close = false;
         let frame = dialog_frame(context).inner_margin(0);
         let response = egui::Modal::new(egui::Id::new("settings dialog"))
             .frame(frame)
@@ -455,10 +454,7 @@ impl GuiLayer {
                         .show(ui, |ui| {
                             ui.vertical(|ui| {
                                 ui.set_width(SETTINGS_CONTENT_WIDTH);
-                                ui.horizontal(|ui| {
-                                    ui.heading(page.title());
-                                    close = dialog_close_button(ui);
-                                });
+                                ui.heading(page.title());
                                 ui.add_space(12.0);
                                 match page {
                                     SettingsPage::Appearance => {
@@ -488,7 +484,7 @@ impl GuiLayer {
                     );
                 });
             });
-        close |= response.should_close();
+        let close = response.should_close();
         self.settings_page = page;
         if changed {
             self.set_accent_color(accent_color);
@@ -532,16 +528,9 @@ impl GuiLayer {
                     shortcut_x + shortcut_width + COLUMN_GAP + ui.spacing().scroll.bar_width + 24.0,
                 );
                 ui.add_space(12.0);
-                let close = egui::Frame::NONE
+                egui::Frame::NONE
                     .inner_margin(egui::Margin::symmetric(12, 0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.heading("Keyboard Shortcuts");
-                            dialog_close_button(ui)
-                        })
-                        .inner
-                    })
-                    .inner;
+                    .show(ui, |ui| ui.heading("Keyboard Shortcuts"));
                 ui.add_space(16.0);
                 egui::Frame::NONE
                     .inner_margin(egui::Margin::symmetric(12, 8))
@@ -560,29 +549,11 @@ impl GuiLayer {
                             });
                     });
                 ui.add_space(12.0);
-                close
             });
-        if response.inner || response.should_close() {
+        if response.should_close() {
             self.shortcuts_dialog_open = false;
         }
     }
-}
-
-fn dialog_close_button(ui: &mut egui::Ui) -> bool {
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let icon = egui::Image::new(egui::include_image!("../../../assets/icons/x.svg"))
-            .fit_to_exact_size(egui::Vec2::splat(18.0))
-            .alt_text("Close");
-        ui.add(
-            egui::Button::image(icon)
-                .frame(false)
-                .image_tint_follows_text_color(true),
-        )
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text("Close")
-        .clicked()
-    })
-    .inner
 }
 
 const SHORTCUT_SECTIONS: &[(&str, &[(&str, &str)])] = &[
