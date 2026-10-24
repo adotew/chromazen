@@ -1501,12 +1501,14 @@ fn frost_shape(
                 )
             };
             let uv = egui::Rect::from_min_max(uv_for(rect.rect.min), uv_for(rect.rect.max));
+            let (backdrop_fill, tint_fill) = frosted_layer_fills(rect.fill);
             let mut backdrop = rect.clone().with_texture(texture_id, uv);
-            backdrop.fill = egui::Color32::WHITE;
+            backdrop.fill = backdrop_fill;
             backdrop.stroke = egui::Stroke::NONE;
             backdrop.blur_width = 0.0;
 
             let mut tint = rect.clone();
+            tint.fill = tint_fill;
             tint.stroke = if rect.fill == surface_fill {
                 frosted_surface_edge()
             } else {
@@ -1547,6 +1549,18 @@ fn frost_shape(
         }
         _ => {}
     }
+}
+
+/// Splits "tint over opaque backdrop" into a pre-darkened opaque backdrop plus an additive tint.
+/// Both layers then scale with the same edge coverage, so their anti-aliased fringes don't stack
+/// and leak the backdrop around rounded corners. Exact because egui blends premultiplied colors
+/// in the same gamma space that vertex colors multiply the texture in.
+fn frosted_layer_fills(tint: egui::Color32) -> (egui::Color32, egui::Color32) {
+    let backdrop = u8::MAX - tint.a();
+    (
+        egui::Color32::from_rgba_premultiplied(backdrop, backdrop, backdrop, u8::MAX),
+        egui::Color32::from_rgba_premultiplied(tint.r(), tint.g(), tint.b(), 0),
+    )
 }
 
 fn frosted_surface_edge() -> egui::Stroke {
@@ -1919,7 +1933,8 @@ mod tests {
             let egui::Shape::Rect(tint) = &layers[1] else {
                 panic!("surface tint");
             };
-            assert_eq!(tint.fill, fill);
+            assert_eq!(backdrop.rect, tint.rect);
+            assert_eq!((backdrop.fill, tint.fill), frosted_layer_fills(fill));
             assert_eq!(tint.stroke, frosted_surface_edge());
         }
     }
@@ -2012,7 +2027,7 @@ mod tests {
         let egui::Shape::Rect(tint) = &layers[1] else {
             panic!("frosted row tint");
         };
-        assert_eq!(tint.fill, row_fill);
+        assert_eq!(tint.fill, frosted_layer_fills(row_fill).1);
         assert!(row_fill.r() > surface.r());
         assert!(frosted_row_fill(false, true).r() < surface_fill(false, SurfaceStyle::Frosted).r());
     }
