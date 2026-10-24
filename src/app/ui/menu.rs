@@ -29,7 +29,7 @@ impl GuiLayer {
                 menu_item(
                     ui,
                     "New Artwork",
-                    Some("Ctrl-N"),
+                    Some("Ctrl+N"),
                     true,
                     AppCommand::Navigation(NavigationCommand::NewArtwork),
                     &mut self.commands,
@@ -109,7 +109,7 @@ impl GuiLayer {
                 menu_item(
                     ui,
                     "Rotate Left 90°",
-                    Some("Ctrl-Alt-←"),
+                    Some("Ctrl+Alt+←"),
                     state.canvas_enabled,
                     AppCommand::Editor(EditorCommand::RotateCanvasLeft),
                     &mut self.commands,
@@ -117,7 +117,7 @@ impl GuiLayer {
                 menu_item(
                     ui,
                     "Rotate Right 90°",
-                    Some("Ctrl-Alt-→"),
+                    Some("Ctrl+Alt+→"),
                     state.canvas_enabled,
                     AppCommand::Editor(EditorCommand::RotateCanvasRight),
                     &mut self.commands,
@@ -125,7 +125,7 @@ impl GuiLayer {
                 menu_item(
                     ui,
                     "Reset Rotation",
-                    Some("Shift-R"),
+                    Some("Shift+R"),
                     state.canvas_enabled,
                     AppCommand::Editor(EditorCommand::ResetCanvasRotation),
                     &mut self.commands,
@@ -142,7 +142,7 @@ impl GuiLayer {
                 menu_item(
                     ui,
                     "Flip Vertically",
-                    Some("Shift-F"),
+                    Some("Shift+F"),
                     state.canvas_enabled,
                     AppCommand::Editor(EditorCommand::ToggleCanvasFlipVertical),
                     &mut self.commands,
@@ -162,7 +162,7 @@ impl GuiLayer {
                 menu_item(
                     ui,
                     "Settings…",
-                    Some("Ctrl-,"),
+                    Some("Ctrl+,"),
                     true,
                     AppCommand::Ui(UiCommand::ShowSettings),
                     &mut self.commands,
@@ -207,7 +207,7 @@ impl GuiLayer {
                 menu_item(
                     ui,
                     "Keyboard Shortcuts",
-                    Some("Shift-?"),
+                    Some("Shift+?"),
                     true,
                     AppCommand::Ui(UiCommand::ShowShortcuts),
                     &mut self.commands,

@@ -61,51 +61,47 @@ const LAYER_LIST_MAX_HEIGHT: f32 = 440.0;
 #[cfg(target_os = "macos")]
 const SETTINGS_SHORTCUT: &str = "⌘ ,";
 #[cfg(not(target_os = "macos"))]
-const SETTINGS_SHORTCUT: &str = "Ctrl-,";
+const SETTINGS_SHORTCUT: &str = "Ctrl+,";
 #[cfg(target_os = "macos")]
 const SAVE_SHORTCUT: &str = "⌘ S";
 #[cfg(not(target_os = "macos"))]
-const SAVE_SHORTCUT: &str = "Ctrl-S";
+const SAVE_SHORTCUT: &str = "Ctrl+S";
 #[cfg(target_os = "macos")]
 const EXPORT_SHORTCUT: &str = "⇧ ⌘ E";
 #[cfg(not(target_os = "macos"))]
-const EXPORT_SHORTCUT: &str = "Ctrl-Shift-E";
+const EXPORT_SHORTCUT: &str = "Ctrl+Shift+E";
 #[cfg(target_os = "macos")]
 const GALLERY_SHORTCUT: &str = "⌘ G";
 #[cfg(not(target_os = "macos"))]
-const GALLERY_SHORTCUT: &str = "Ctrl-G";
+const GALLERY_SHORTCUT: &str = "Ctrl+G";
 #[cfg(target_os = "macos")]
 const UNDO_SHORTCUT: &str = "⌘ Z";
 #[cfg(not(target_os = "macos"))]
-const UNDO_SHORTCUT: &str = "Ctrl-Z";
+const UNDO_SHORTCUT: &str = "Ctrl+Z";
 #[cfg(target_os = "macos")]
 const REDO_SHORTCUT: &str = "⇧ ⌘ Z";
 #[cfg(not(target_os = "macos"))]
-const REDO_SHORTCUT: &str = "Ctrl-Y / Ctrl-Shift-Z";
+const REDO_SHORTCUT: &str = "Ctrl+Y / Ctrl+Shift+Z";
 #[cfg(target_os = "macos")]
 const ROTATE_SHORTCUT: &str = "⌥ ⌘ ← / ⌥ ⌘ →";
 #[cfg(not(target_os = "macos"))]
-const ROTATE_SHORTCUT: &str = "Ctrl-Alt-← / →";
+const ROTATE_SHORTCUT: &str = "Ctrl+Alt+← / →";
 #[cfg(target_os = "macos")]
 const FLIP_SHORTCUT: &str = "F / ⇧ F";
 #[cfg(not(target_os = "macos"))]
-const FLIP_SHORTCUT: &str = "F / Shift-F";
-#[cfg(target_os = "macos")]
-const ROTATE_FREELY_SHORTCUT: &str = "R drag";
-#[cfg(not(target_os = "macos"))]
-const ROTATE_FREELY_SHORTCUT: &str = "R-drag";
+const FLIP_SHORTCUT: &str = "F / Shift+F";
 #[cfg(target_os = "macos")]
 const RESET_ROTATION_SHORTCUT: &str = "⇧ R";
 #[cfg(not(target_os = "macos"))]
-const RESET_ROTATION_SHORTCUT: &str = "Shift-R";
+const RESET_ROTATION_SHORTCUT: &str = "Shift+R";
 #[cfg(target_os = "macos")]
 const CYCLE_TOOLS_SHORTCUT: &str = "⇧ Tab";
 #[cfg(not(target_os = "macos"))]
-const CYCLE_TOOLS_SHORTCUT: &str = "Shift-Tab";
+const CYCLE_TOOLS_SHORTCUT: &str = "Shift+Tab";
 #[cfg(target_os = "macos")]
 const RESIZE_BRUSH_SHORTCUT: &str = "⇧ drag";
 #[cfg(not(target_os = "macos"))]
-const RESIZE_BRUSH_SHORTCUT: &str = "Shift-drag";
+const RESIZE_BRUSH_SHORTCUT: &str = "Shift drag";
 #[cfg(target_os = "macos")]
 const EYEDROPPER_SHORTCUT: &str = "Hold ⌥";
 #[cfg(not(target_os = "macos"))]
@@ -113,7 +109,7 @@ const EYEDROPPER_SHORTCUT: &str = "Hold Alt";
 #[cfg(target_os = "macos")]
 const CROP_SHORTCUT: &str = "⌥ ⌘ C";
 #[cfg(not(target_os = "macos"))]
-const CROP_SHORTCUT: &str = "Ctrl-Alt-C";
+const CROP_SHORTCUT: &str = "Ctrl+Alt+C";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ApplicationMenuState {
@@ -786,7 +782,33 @@ pub(crate) fn workspace_background_color(
     [gray; 3]
 }
 
-fn shortcut_section(ui: &mut egui::Ui, title: &str, shortcuts: &[(&str, &str)]) {
+fn shortcut_font() -> egui::FontId {
+    egui::FontId::monospace(14.0)
+}
+
+fn shortcut_column_widths(ui: &egui::Ui, sections: &[(&str, &[(&str, &str)])]) -> (f32, f32) {
+    let width = |text: &str, font: egui::FontId| {
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER)
+            .size()
+            .x
+    };
+    let action_font = egui::TextStyle::Body.resolve(ui.style());
+    sections
+        .iter()
+        .flat_map(|(_, shortcuts)| shortcuts.iter())
+        .fold(
+            (0.0, 0.0),
+            |(action_width, shortcut_width), &(action, shortcut)| {
+                (
+                    f32::max(action_width, width(action, action_font.clone())),
+                    f32::max(shortcut_width, width(shortcut, shortcut_font())),
+                )
+            },
+        )
+}
+
+fn shortcut_section(ui: &mut egui::Ui, title: &str, shortcuts: &[(&str, &str)], shortcut_x: f32) {
     ui.strong(title);
     ui.add_space(8.0);
     ui.scope(|ui| {
@@ -809,10 +831,10 @@ fn shortcut_section(ui: &mut egui::Ui, title: &str, shortcuts: &[(&str, &str)]) 
                 ui.visuals().text_color(),
             );
             ui.painter().text(
-                egui::pos2(rect.center().x, rect.center().y),
+                egui::pos2(rect.left() + shortcut_x, rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 shortcut,
-                egui::FontId::monospace(14.0),
+                shortcut_font(),
                 ui.visuals().strong_text_color(),
             );
         }

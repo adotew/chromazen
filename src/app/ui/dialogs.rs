@@ -386,7 +386,12 @@ impl GuiLayer {
         let response = egui::Modal::new(egui::Id::new("keyboard shortcuts"))
             .frame(frame)
             .show(context, |ui| {
-                ui.set_width(700.0);
+                const COLUMN_GAP: f32 = 32.0;
+                let (action_width, shortcut_width) = shortcut_column_widths(ui, SHORTCUT_SECTIONS);
+                let shortcut_x = action_width + COLUMN_GAP;
+                ui.set_width(
+                    shortcut_x + shortcut_width + COLUMN_GAP + ui.spacing().scroll.bar_width + 24.0,
+                );
                 ui.add_space(12.0);
                 let close = egui::Frame::NONE
                     .inner_margin(egui::Margin::symmetric(12, 0))
@@ -420,51 +425,14 @@ impl GuiLayer {
                         egui::ScrollArea::vertical()
                             .max_height(520.0)
                             .show(ui, |ui| {
-                                shortcut_section(
-                                    ui,
-                                    "Tools",
-                                    &[
-                                        ("Brush / Eraser / Smudge", "D/B, E, S"),
-                                        ("Transform", "T"),
-                                        ("Freehand selection", "L"),
-                                        ("Cycle paint tools", CYCLE_TOOLS_SHORTCUT),
-                                        ("Show or hide sidebar", "Tab"),
-                                        ("Resize brush", RESIZE_BRUSH_SHORTCUT),
-                                        ("Eyedropper", EYEDROPPER_SHORTCUT),
-                                        ("Quick menu", "Hold Q"),
-                                    ],
-                                );
-                                ui.add_space(14.0);
-                                ui.add_space(14.0);
-                                shortcut_section(
-                                    ui,
-                                    "Canvas",
-                                    &[
-                                        ("Pan", "Space, middle or right drag"),
-                                        ("Zoom", "Wheel"),
-                                        ("Rotate freely", ROTATE_FREELY_SHORTCUT),
-                                        ("Reset rotation", RESET_ROTATION_SHORTCUT),
-                                        ("Rotate left / right", ROTATE_SHORTCUT),
-                                        ("Flip horizontal / vertical", FLIP_SHORTCUT),
-                                        ("Crop or resize", CROP_SHORTCUT),
-                                    ],
-                                );
-                                ui.add_space(14.0);
-                                ui.add_space(14.0);
-                                shortcut_section(
-                                    ui,
-                                    "Document",
-                                    &[
-                                        ("Settings", SETTINGS_SHORTCUT),
-                                        ("Save", SAVE_SHORTCUT),
-                                        ("Export PNG", EXPORT_SHORTCUT),
-                                        ("Return to gallery", GALLERY_SHORTCUT),
-                                        ("Undo", UNDO_SHORTCUT),
-                                        ("Redo", REDO_SHORTCUT),
-                                        ("Apply transform or crop", "Enter"),
-                                        ("Cancel transform or crop, or deselect", "Escape"),
-                                    ],
-                                );
+                                for (index, &(title, shortcuts)) in
+                                    SHORTCUT_SECTIONS.iter().enumerate()
+                                {
+                                    if index > 0 {
+                                        ui.add_space(28.0);
+                                    }
+                                    shortcut_section(ui, title, shortcuts, shortcut_x);
+                                }
                             });
                     });
                 ui.add_space(12.0);
@@ -475,6 +443,47 @@ impl GuiLayer {
         }
     }
 }
+
+const SHORTCUT_SECTIONS: &[(&str, &[(&str, &str)])] = &[
+    (
+        "Tools",
+        &[
+            ("Brush / Eraser / Smudge", "D/B, E, S"),
+            ("Transform", "T"),
+            ("Freehand selection", "L"),
+            ("Cycle paint tools", CYCLE_TOOLS_SHORTCUT),
+            ("Show or hide sidebar", "Tab"),
+            ("Resize brush", RESIZE_BRUSH_SHORTCUT),
+            ("Eyedropper", EYEDROPPER_SHORTCUT),
+            ("Quick menu", "Hold Q"),
+        ],
+    ),
+    (
+        "Canvas",
+        &[
+            ("Pan", "Space drag"),
+            ("Zoom", "Wheel"),
+            ("Rotate freely", "R drag"),
+            ("Reset rotation", RESET_ROTATION_SHORTCUT),
+            ("Rotate left / right", ROTATE_SHORTCUT),
+            ("Flip horizontal / vertical", FLIP_SHORTCUT),
+            ("Crop or resize", CROP_SHORTCUT),
+        ],
+    ),
+    (
+        "Document",
+        &[
+            ("Settings", SETTINGS_SHORTCUT),
+            ("Save", SAVE_SHORTCUT),
+            ("Export PNG", EXPORT_SHORTCUT),
+            ("Return to gallery", GALLERY_SHORTCUT),
+            ("Undo", UNDO_SHORTCUT),
+            ("Redo", REDO_SHORTCUT),
+            ("Apply transform or crop", "Enter"),
+            ("Cancel transform or crop, or deselect", "Escape"),
+        ],
+    ),
+];
 
 #[cfg(test)]
 mod tests {
