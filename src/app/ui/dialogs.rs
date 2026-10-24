@@ -427,7 +427,8 @@ impl GuiLayer {
                 visuals.selection.stroke = egui::Stroke::new(1.0_f32, visuals.strong_text_color());
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
-                    egui::Frame::NONE
+                    let sidebar_background = ui.painter().add(egui::Shape::Noop);
+                    let sidebar = egui::Frame::NONE
                         .inner_margin(egui::Margin {
                             left: 24,
                             right: 12,
@@ -446,7 +447,9 @@ impl GuiLayer {
                                     }
                                 }
                             });
-                        });
+                        })
+                        .response
+                        .rect;
                     egui::Frame::NONE
                         .inner_margin(egui::Margin::same(24))
                         .show(ui, |ui| {
@@ -469,6 +472,20 @@ impl GuiLayer {
                                 }
                             });
                         });
+                    // Spans the dialog's full height, which the content column may set.
+                    let rect = sidebar.with_max_y(ui.min_rect().bottom());
+                    ui.painter().set(
+                        sidebar_background,
+                        egui::epaint::RectShape::filled(
+                            rect,
+                            egui::CornerRadius {
+                                nw: 28,
+                                sw: 28,
+                                ..Default::default()
+                            },
+                            egui::Color32::from_black_alpha(90),
+                        ),
+                    );
                 });
             });
         close |= response.should_close();
