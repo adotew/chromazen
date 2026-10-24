@@ -207,17 +207,32 @@ impl GuiLayer {
                                 bottom: 0,
                             })
                             .show(ui, |ui| {
+                                const FIELD_WIDTH: f32 = 48.0;
+                                let spacing = ui.spacing().item_spacing.x;
+                                ui.spacing_mut().slider_width =
+                                    (ui.available_width() - FIELD_WIDTH - spacing).max(24.0);
                                 ui.horizontal(|ui| {
-                                    let mut opacity = layer.opacity;
-                                    let opacity_changed = ui
-                                        .add(
-                                            egui::Slider::new(&mut opacity, 0..=100)
-                                                .suffix("%")
-                                                .show_value(true),
+                                    let mut fraction = f32::from(layer.opacity) / 100.0;
+                                    let slider_changed = brush_controls::panel_slider(
+                                        ui,
+                                        None,
+                                        &mut fraction,
+                                        0.0..=1.0,
+                                        false,
+                                        false,
+                                    )
+                                    .changed();
+                                    let mut opacity = (fraction * 100.0).round() as u8;
+                                    let field_changed = ui
+                                        .add_sized(
+                                            [FIELD_WIDTH, 20.0],
+                                            egui::DragValue::new(&mut opacity)
+                                                .range(0..=100)
+                                                .suffix("%"),
                                         )
-                                        .on_hover_text("Layer opacity")
                                         .changed();
-                                    if opacity_changed {
+                                    if (slider_changed || field_changed) && opacity != layer.opacity
+                                    {
                                         let edit = self.layer_opacity_edit.get_or_insert(
                                             LayerOpacityEdit {
                                                 id: layer.id,

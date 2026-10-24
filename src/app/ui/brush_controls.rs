@@ -11,13 +11,20 @@ impl GuiLayer {
                     .show(ui, |ui| {
                         let size_response = panel_slider(
                             ui,
-                            "Size",
+                            Some("Size"),
                             &mut self.brush.size,
                             self.size_range.clone(),
                             true,
+                            true,
                         );
-                        let opacity_response =
-                            panel_slider(ui, "Opacity", &mut self.brush.opacity, 0.01..=1.0, false);
+                        let opacity_response = panel_slider(
+                            ui,
+                            Some("Opacity"),
+                            &mut self.brush.opacity,
+                            0.01..=1.0,
+                            false,
+                            true,
+                        );
                         if size_response.changed() || opacity_response.changed() {
                             self.store_current_brush_settings_for_tool(tool);
                         }
@@ -128,21 +135,24 @@ fn slider_preview_active(response: &egui::Response) -> bool {
     response.is_pointer_button_down_on() || keyboard_active
 }
 
-fn panel_slider(
+pub(super) fn panel_slider(
     ui: &mut egui::Ui,
-    label: &str,
+    label: Option<&str>,
     value: &mut f32,
     range: std::ops::RangeInclusive<f32>,
     size: bool,
+    value_bubble: bool,
 ) -> egui::Response {
-    ui.allocate_ui_with_layout(
-        egui::vec2(52.0, 20.0),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.set_min_size(egui::vec2(52.0, 20.0));
-            ui.label(label);
-        },
-    );
+    if let Some(label) = label {
+        ui.allocate_ui_with_layout(
+            egui::vec2(52.0, 20.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_size(egui::vec2(52.0, 20.0));
+                ui.label(label);
+            },
+        );
+    }
     let mut fraction = slider_fraction(*value, &range, size);
     let response = ui
         .scope(|ui| {
@@ -176,7 +186,8 @@ fn panel_slider(
     if response.changed() {
         *value = slider_value(fraction, &range, size);
     }
-    if response.enabled()
+    if value_bubble
+        && response.enabled()
         && ui.input(|input| input.focused)
         && (response.hovered() || response.is_pointer_button_down_on() || response.has_focus())
     {
@@ -209,7 +220,13 @@ fn panel_slider(
         painter.galley(bubble.min + padding, galley, ui.visuals().text_color());
     }
     ui.end_row();
-    response.widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), f64::from(*value), label));
+    response.widget_info(|| {
+        egui::WidgetInfo::slider(
+            ui.is_enabled(),
+            f64::from(*value),
+            label.unwrap_or_default(),
+        )
+    });
     response
 }
 
@@ -264,7 +281,7 @@ mod tests {
             |ui| {
                 let response = egui::Grid::new("test slider")
                     .show(ui, |ui| {
-                        panel_slider(ui, "Opacity", value, 0.01..=1.0, false)
+                        panel_slider(ui, Some("Opacity"), value, 0.01..=1.0, false, true)
                     })
                     .inner;
                 result = (response.rect, slider_preview_active(&response));
@@ -427,7 +444,8 @@ mod tests {
                 },
                 |ui| {
                     egui::Grid::new("test controls").show(ui, |ui| {
-                        let response = panel_slider(ui, "Size", &mut value, 1.0..=100.0, true);
+                        let response =
+                            panel_slider(ui, Some("Size"), &mut value, 1.0..=100.0, true, true);
                         if let Some(id) = slider_id {
                             assert_eq!(response.id, id);
                         }
