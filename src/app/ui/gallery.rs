@@ -8,7 +8,10 @@ use super::super::{
     command::{AppCommand, GalleryCommand, NavigationCommand, UiCommand},
     gallery::ThumbnailCompletion,
 };
-use super::apply_menu_item_padding;
+use super::{
+    DIALOG_WIDTH, DialogButton, DialogButtonKind, apply_menu_item_padding, dialog_buttons,
+    dialog_frame,
+};
 
 const HEADER_HEIGHT: f32 = 32.0;
 // On macOS the header sits in the transparent titlebar.
@@ -251,31 +254,40 @@ impl GalleryUi {
             return;
         };
         let mut close = false;
-        egui::Window::new("Rename Artwork")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        egui::Modal::new(egui::Id::new("rename artwork dialog"))
+            .frame(dialog_frame(context))
             .show(context, |ui| {
-                let response = ui.text_edit_singleline(title);
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        close = true;
-                    }
-                    let submit = ui
-                        .add_enabled(!title.trim().is_empty(), egui::Button::new("Rename"))
-                        .clicked()
-                        || (response.lost_focus()
-                            && ui.input(|input| input.key_pressed(egui::Key::Enter))
-                            && !title.trim().is_empty());
-                    if submit {
-                        commands.push(AppCommand::Gallery(GalleryCommand::Rename {
-                            id: id.clone(),
-                            title: title.clone(),
-                        }));
-                        close = true;
-                    }
-                });
+                ui.set_width(DIALOG_WIDTH);
+                ui.heading("Rename Artwork");
+                ui.add_space(16.0);
+                let response = ui.add(
+                    egui::TextEdit::singleline(title)
+                        .desired_width(f32::INFINITY)
+                        .margin(egui::vec2(10.0, 8.0)),
+                );
+                ui.add_space(20.0);
+                let valid = !title.trim().is_empty();
+                let clicked = dialog_buttons(
+                    ui,
+                    &[
+                        DialogButton::new("Rename", DialogButtonKind::Primary).enabled(valid),
+                        DialogButton::new("Cancel", DialogButtonKind::Secondary),
+                    ],
+                );
+                close = clicked == Some(1);
+                let submit = clicked == Some(0)
+                    || (response.lost_focus()
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter))
+                        && valid);
+                if submit {
+                    commands.push(AppCommand::Gallery(GalleryCommand::Rename {
+                        id: id.clone(),
+                        title: title.clone(),
+                    }));
+                    close = true;
+                }
             });
+        close |= context.input(|input| input.key_pressed(egui::Key::Escape));
         if close {
             self.rename = None;
         }
@@ -288,25 +300,30 @@ impl GalleryUi {
         let id = id.clone();
         let title = title.clone();
         let mut close = false;
-        egui::Window::new("Delete Artwork?")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        let response = egui::Modal::new(egui::Id::new("delete artwork dialog"))
+            .frame(dialog_frame(context))
             .show(context, |ui| {
-                ui.label(format!("Delete “{title}” permanently?"));
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        close = true;
-                    }
-                    if ui
-                        .button(egui::RichText::new("Delete").color(egui::Color32::LIGHT_RED))
-                        .clicked()
-                    {
+                ui.set_width(DIALOG_WIDTH);
+                ui.heading("Delete Artwork?");
+                ui.add_space(16.0);
+                ui.label(format!("“{title}” will be permanently deleted."));
+                ui.add_space(20.0);
+                match dialog_buttons(
+                    ui,
+                    &[
+                        DialogButton::new("Delete", DialogButtonKind::Destructive),
+                        DialogButton::new("Cancel", DialogButtonKind::Secondary),
+                    ],
+                ) {
+                    Some(0) => {
                         commands.push(AppCommand::Gallery(GalleryCommand::Delete(id.clone())));
                         close = true;
                     }
-                });
+                    Some(_) => close = true,
+                    None => {}
+                }
             });
+        close |= response.should_close();
         if close {
             self.delete = None;
         }

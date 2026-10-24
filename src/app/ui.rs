@@ -847,13 +847,86 @@ fn layer_preview_is_current(current: &[LayerPreviewKey], cached: LayerPreviewKey
     current.contains(&cached)
 }
 
+const DIALOG_WIDTH: f32 = 320.0;
+
+fn dialog_frame(context: &egui::Context) -> egui::Frame {
+    egui::Frame::popup(&context.global_style())
+        .corner_radius(28)
+        .inner_margin(24)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum DialogButtonKind {
+    Primary,
+    Destructive,
+    Secondary,
+}
+
+#[derive(Clone, Copy)]
+struct DialogButton<'a> {
+    label: &'a str,
+    kind: DialogButtonKind,
+    enabled: bool,
+}
+
+impl<'a> DialogButton<'a> {
+    fn new(label: &'a str, kind: DialogButtonKind) -> Self {
+        Self {
+            label,
+            kind,
+            enabled: true,
+        }
+    }
+
+    fn enabled(self, enabled: bool) -> Self {
+        Self { enabled, ..self }
+    }
+}
+
+/// Lays out equal-width pill buttons across the dialog and returns the clicked index.
+fn dialog_buttons(ui: &mut egui::Ui, buttons: &[DialogButton]) -> Option<usize> {
+    let count = buttons.len().max(1) as f32;
+    ui.horizontal(|ui| {
+        let gap = ui.spacing().item_spacing.x;
+        let size = egui::vec2((ui.available_width() - gap * (count - 1.0)) / count, 36.0);
+        let mut clicked = None;
+        for (index, button) in buttons.iter().enumerate() {
+            let fill = match button.kind {
+                DialogButtonKind::Primary => Some(ui.visuals().selection.bg_fill),
+                DialogButtonKind::Destructive => Some(egui::Color32::from_rgb(214, 64, 69)),
+                DialogButtonKind::Secondary => None,
+            };
+            let text = match button.kind {
+                DialogButtonKind::Primary => {
+                    egui::RichText::new(button.label).color(ui.visuals().selection.stroke.color)
+                }
+                DialogButtonKind::Destructive => {
+                    egui::RichText::new(button.label).color(egui::Color32::WHITE)
+                }
+                DialogButtonKind::Secondary => egui::RichText::new(button.label),
+            };
+            let mut widget = egui::Button::new(text).corner_radius(18).min_size(size);
+            if let Some(fill) = fill {
+                widget = widget.fill(fill);
+            }
+            if ui.add_enabled(button.enabled, widget).clicked() {
+                clicked = Some(index);
+            }
+        }
+        clicked
+    })
+    .inner
+}
+
 fn show_loading_dialog(context: &egui::Context, id: &str, message: &str) {
-    egui::Modal::new(egui::Id::new(id)).show(context, |ui| {
-        ui.horizontal(|ui| {
-            ui.spinner();
-            ui.label(message);
+    egui::Modal::new(egui::Id::new(id))
+        .frame(dialog_frame(context))
+        .show(context, |ui| {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(message);
+            });
         });
-    });
     context.request_repaint_after(Duration::from_millis(16));
 }
 
@@ -863,29 +936,44 @@ fn show_save_blocker(
     status: &SaveStatus,
     commands: &mut Vec<AppCommand>,
 ) {
-    egui::Window::new(action)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+    egui::Modal::new(egui::Id::new("save blocker"))
+        .frame(dialog_frame(context))
         .show(context, |ui| {
+            ui.set_width(DIALOG_WIDTH);
+            ui.heading(action);
+            ui.add_space(16.0);
+            let failed = matches!(status, SaveStatus::Failed(_));
             match status {
                 SaveStatus::Failed(error) => {
                     ui.colored_label(egui::Color32::LIGHT_RED, "The artwork could not be saved.");
                     ui.label(error);
                 }
                 _ => {
-                    ui.label("Saving the artwork before continuing…");
-                    ui.spinner();
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Saving the artwork before continuing…");
+                    });
                 }
             }
-            ui.horizontal(|ui| {
-                if matches!(status, SaveStatus::Failed(_)) && ui.button("Retry").clicked() {
-                    commands.push(AppCommand::Editor(EditorCommand::SaveArtwork));
+            ui.add_space(20.0);
+            let cancel = DialogButton::new("Cancel", DialogButtonKind::Secondary);
+            if failed {
+                match dialog_buttons(
+                    ui,
+                    &[
+                        DialogButton::new("Retry", DialogButtonKind::Primary),
+                        cancel,
+                    ],
+                ) {
+                    Some(0) => commands.push(AppCommand::Editor(EditorCommand::SaveArtwork)),
+                    Some(_) => {
+                        commands.push(AppCommand::Navigation(NavigationCommand::CancelPending));
+                    }
+                    None => {}
                 }
-                if ui.button("Cancel").clicked() {
-                    commands.push(AppCommand::Navigation(NavigationCommand::CancelPending));
-                }
-            });
+            } else if dialog_buttons(ui, &[cancel]).is_some() {
+                commands.push(AppCommand::Navigation(NavigationCommand::CancelPending));
+            }
         });
 }
 
@@ -1749,6 +1837,46 @@ pub fn repaint_delay(output: &egui::FullOutput) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dialog_buttons_report_the_clicked_enabled_button() {
+        let buttons = [
+            DialogButton::new("Create", DialogButtonKind::Primary),
+            DialogButton::new("Cancel", DialogButtonKind::Secondary),
+        ];
+        for (x, buttons, expected) in [
+            (40.0, buttons, Some(0)),
+            (260.0, buttons, Some(1)),
+            (40.0, [buttons[0].enabled(false), buttons[1]], None),
+        ] {
+            let context = egui::Context::default();
+            let position = egui::pos2(x, 18.0);
+            let mut clicked = None;
+            for pressed in [None, Some(true), Some(false)] {
+                let mut events = vec![egui::Event::PointerMoved(position)];
+                if let Some(pressed) = pressed {
+                    events.push(egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+                let _ = context.run_ui(
+                    egui::RawInput {
+                        events,
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(DIALOG_WIDTH, 100.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| clicked = clicked.or(dialog_buttons(ui, &buttons)),
+                );
+            }
+            assert_eq!(clicked, expected, "click at {x}");
+        }
+    }
 
     #[test]
     fn macos_titlebar_space_tracks_fullscreen_transitions() {

@@ -265,11 +265,8 @@ impl GuiLayer {
         };
         let mut close = false;
         let mut create = None;
-        let frame = egui::Frame::popup(&context.global_style())
-            .corner_radius(28)
-            .inner_margin(24);
         egui::Modal::new(egui::Id::new("new artwork dialog"))
-            .frame(frame)
+            .frame(dialog_frame(context))
             .show(context, |ui| {
                 ui.set_width(NEW_ARTWORK_FORM_WIDTH + 16.0 + SIZE_PREVIEW_WIDTH);
                 ui.heading("New Artwork");
@@ -347,29 +344,16 @@ impl GuiLayer {
                     ui.colored_label(egui::Color32::LIGHT_RED, error);
                 }
                 ui.add_space(20.0);
-                let submit = ui
-                    .horizontal(|ui| {
-                        let size = egui::vec2(
-                            (ui.available_width() - ui.spacing().item_spacing.x) / 2.0,
-                            36.0,
-                        );
-                        let accent = ui.visuals().selection;
-                        let submit = ui.add_enabled(
-                            validation.is_ok(),
-                            egui::Button::new(
-                                egui::RichText::new("Create").color(accent.stroke.color),
-                            )
-                            .fill(accent.bg_fill)
-                            .corner_radius(18)
-                            .min_size(size),
-                        );
-                        close = ui
-                            .add(egui::Button::new("Cancel").corner_radius(18).min_size(size))
-                            .clicked();
-                        submit
-                    })
-                    .inner;
-                if submit.clicked()
+                let clicked = dialog_buttons(
+                    ui,
+                    &[
+                        DialogButton::new("Create", DialogButtonKind::Primary)
+                            .enabled(validation.is_ok()),
+                        DialogButton::new("Cancel", DialogButtonKind::Secondary),
+                    ],
+                );
+                close = clicked == Some(1);
+                if clicked == Some(0)
                     || (validation.is_ok() && ui.input(|input| input.key_pressed(egui::Key::Enter)))
                 {
                     create = Some((dialog.width, dialog.height, rgb(dialog.background)));
@@ -409,17 +393,16 @@ impl GuiLayer {
         let Some(dialog) = self.message_dialog.as_ref() else {
             return;
         };
-        let response = egui::Modal::new(egui::Id::new("message dialog")).show(context, |ui| {
-            ui.set_width(320.0);
-            ui.heading(dialog.title);
-            ui.add_space(8.0);
-            ui.label(&dialog.message);
-            ui.add_space(16.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.button("OK").clicked()
-            })
-            .inner
-        });
+        let response = egui::Modal::new(egui::Id::new("message dialog"))
+            .frame(dialog_frame(context))
+            .show(context, |ui| {
+                ui.set_width(DIALOG_WIDTH);
+                ui.heading(dialog.title);
+                ui.add_space(16.0);
+                ui.label(&dialog.message);
+                ui.add_space(20.0);
+                dialog_buttons(ui, &[DialogButton::new("OK", DialogButtonKind::Primary)]).is_some()
+            });
         if response.inner || context.input(|input| input.key_pressed(egui::Key::Escape)) {
             self.message_dialog = None;
         }
@@ -435,9 +418,7 @@ impl GuiLayer {
         let mut workspace_background = self.workspace_background;
         let mut changed = false;
         let mut close = false;
-        let frame = egui::Frame::popup(&context.global_style())
-            .corner_radius(28)
-            .inner_margin(0);
+        let frame = dialog_frame(context).inner_margin(0);
         let response = egui::Modal::new(egui::Id::new("settings dialog"))
             .frame(frame)
             .show(context, |ui| {
@@ -523,9 +504,7 @@ impl GuiLayer {
         if !self.shortcuts_dialog_open {
             return;
         }
-        let frame = egui::Frame::popup(&context.global_style())
-            .corner_radius(28)
-            .inner_margin(12);
+        let frame = dialog_frame(context).inner_margin(12);
         let response = egui::Modal::new(egui::Id::new("keyboard shortcuts"))
             .frame(frame)
             .show(context, |ui| {
