@@ -28,7 +28,8 @@ const TITLE_SIZE: f32 = 28.0;
 #[derive(Default)]
 pub(super) struct GalleryUi {
     thumbnails: Vec<Thumbnail>,
-    rename: Option<(ArtworkId, String)>,
+    /// The bool requests focus with the title selected on the dialog's first frame.
+    rename: Option<(ArtworkId, String, bool)>,
     delete: Option<(ArtworkId, String)>,
 }
 
@@ -250,7 +251,7 @@ impl GalleryUi {
     }
 
     fn show_rename_dialog(&mut self, context: &egui::Context, commands: &mut Vec<AppCommand>) {
-        let Some((id, title)) = self.rename.as_mut() else {
+        let Some((id, title, focus)) = self.rename.as_mut() else {
             return;
         };
         let mut close = false;
@@ -260,11 +261,15 @@ impl GalleryUi {
                 ui.set_width(DIALOG_WIDTH);
                 ui.heading("Rename Artwork");
                 ui.add_space(16.0);
-                let response = ui.add(
-                    egui::TextEdit::singleline(title)
-                        .desired_width(f32::INFINITY)
-                        .margin(egui::vec2(10.0, 8.0)),
-                );
+                let mut output = egui::TextEdit::singleline(title)
+                    .desired_width(f32::INFINITY)
+                    .margin(egui::vec2(10.0, 8.0))
+                    .show(ui);
+                if std::mem::take(focus) {
+                    output.response.request_focus();
+                    select_all(ui.ctx(), &mut output.state, output.response.id, title);
+                }
+                let response = output.response;
                 ui.add_space(20.0);
                 let valid = !title.trim().is_empty();
                 let clicked = dialog_buttons(
@@ -337,7 +342,7 @@ impl GalleryUi {
     ) {
         apply_menu_item_padding(ui);
         if ui.button("Rename").clicked() {
-            self.rename = Some((artwork.id.clone(), artwork.title.clone()));
+            self.rename = Some((artwork.id.clone(), artwork.title.clone(), true));
             ui.close();
         }
         if ui.button("Duplicate").clicked() {
@@ -351,6 +356,21 @@ impl GalleryUi {
             ui.close();
         }
     }
+}
+
+fn select_all(
+    context: &egui::Context,
+    state: &mut egui::text_edit::TextEditState,
+    id: egui::Id,
+    text: &str,
+) {
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(0),
+            egui::text::CCursor::new(text.chars().count()),
+        )));
+    state.clone().store(context, id);
 }
 
 fn format_dimensions(dimensions: [u32; 2]) -> String {
@@ -435,6 +455,41 @@ fn thumbnail_content_bounds(image: &image::RgbaImage) -> (egui::Rect, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rename_dialog_opens_focused_with_the_title_selected() {
+        let context = egui::Context::default();
+        let mut gallery = GalleryUi {
+            rename: Some((ArtworkId::new(), "Untitled".to_owned(), true)),
+            ..Default::default()
+        };
+        let mut commands = Vec::new();
+        // The menu click that opened the dialog arrives in the dialog's first frame.
+        let click = egui::pos2(5.0, 5.0);
+        let opening_click = egui::RawInput {
+            events: [true, false]
+                .map(|pressed| egui::Event::PointerButton {
+                    pos: click,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                })
+                .to_vec(),
+            ..Default::default()
+        };
+        for input in [opening_click, egui::RawInput::default()] {
+            let _ = context.run_ui(input, |ui| {
+                gallery.show_rename_dialog(ui.ctx(), &mut commands);
+            });
+        }
+
+        let focused = context.memory(|memory| memory.focused());
+        let range = focused
+            .and_then(|id| egui::text_edit::TextEditState::load(&context, id))
+            .and_then(|state| state.cursor.char_range())
+            .map(|range| (range.primary.index, range.secondary.index));
+        assert!(matches!(range, Some((0, 8)) | Some((8, 0))), "{range:?}");
+    }
 
     #[test]
     fn transparent_bars_are_excluded_from_thumbnail_bounds() {
