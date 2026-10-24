@@ -438,7 +438,7 @@ impl GuiLayer {
                 ui.add_space(12.0);
                 close
             });
-        if response.inner || context.input(|input| input.key_pressed(egui::Key::Escape)) {
+        if response.inner || response.should_close() {
             self.shortcuts_dialog_open = false;
         }
     }
