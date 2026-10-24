@@ -58,12 +58,7 @@ fn appearance_settings(
         ui,
         "Accent color",
         "Highlights selections and active controls.",
-        |ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            for (name, color) in ACCENT_COLORS.into_iter().rev() {
-                changed |= accent_swatch(ui, name, color, accent_color);
-            }
-        },
+        |ui| changed |= accent_color_dropdown(ui, accent_color),
     );
     setting_row(
         ui,
@@ -281,37 +276,75 @@ fn background_row(ui: &mut egui::Ui, color: &mut egui::Color32) {
     });
 }
 
-fn accent_swatch(
-    ui: &mut egui::Ui,
-    name: &str,
-    color: egui::Color32,
-    accent_color: &mut egui::Color32,
-) -> bool {
-    let selected = color == *accent_color;
-    let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(30.0), egui::Sense::click());
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, name)
-    });
-    ui.painter().circle_filled(
-        rect.center(),
-        10.0,
-        resolve_accent_color(color, ui.visuals().dark_mode),
+fn accent_color_dropdown(ui: &mut egui::Ui, accent_color: &mut egui::Color32) -> bool {
+    let previous = *accent_color;
+    let selected_name = ACCENT_COLORS
+        .iter()
+        .find(|(_, color)| *color == previous)
+        .map_or("Custom", |(name, _)| name);
+    const DOT_RADIUS: f32 = 6.0;
+    let gap = ui.spacing().button_padding.x;
+    // Leaves room before the label for the dot painted over the button below.
+    let mut selected_text = egui::text::LayoutJob::default();
+    selected_text.append(
+        selected_name,
+        2.0 * DOT_RADIUS + gap,
+        egui::TextFormat::simple(
+            egui::TextStyle::Button.resolve(ui.style()),
+            egui::Color32::PLACEHOLDER,
+        ),
     );
-    if selected || response.hovered() {
-        ui.painter().circle_stroke(
-            rect.center(),
-            13.5,
-            egui::Stroke::new(
-                if selected { 2.0_f32 } else { 1.0_f32 },
-                ui.visuals().text_color(),
-            ),
-        );
-    }
-    let clicked = response.on_hover_text(name).clicked();
-    if clicked {
-        *accent_color = color;
-    }
-    clicked && !selected
+    let combo = egui::ComboBox::from_id_salt("accent color")
+        .selected_text(selected_text)
+        .width(140.0)
+        .height(f32::INFINITY)
+        .icon(|ui, rect, visuals, open| {
+            let turn = ui
+                .ctx()
+                .animate_bool_responsive(egui::Id::new("accent color chevron"), open);
+            egui::Image::new(egui::include_image!(
+                "../../../assets/icons/chevron-down.svg"
+            ))
+            .tint(visuals.fg_stroke.color)
+            .rotate(turn * std::f32::consts::PI, egui::Vec2::splat(0.5))
+            .paint_at(ui, rect);
+        })
+        .show_ui(ui, |ui| {
+            // Popups don't inherit the dialog's neutral selection style.
+            let visuals = ui.visuals_mut();
+            visuals.selection.bg_fill = visuals.text_color().gamma_multiply(0.08);
+            visuals.selection.stroke = egui::Stroke::new(1.0_f32, visuals.strong_text_color());
+            for (name, color) in ACCENT_COLORS {
+                let dot = ui.id().with(name);
+                let response = egui::Button::selectable(
+                    *accent_color == color,
+                    (
+                        egui::Atom::custom(dot, egui::Vec2::splat(2.0 * DOT_RADIUS)),
+                        name,
+                        egui::Atom::grow(),
+                    ),
+                )
+                .min_size(egui::vec2(ui.available_width(), 0.0))
+                .atom_ui(ui);
+                if let Some(rect) = response.rect(dot) {
+                    ui.painter().circle_filled(
+                        rect.center(),
+                        DOT_RADIUS,
+                        resolve_accent_color(color, ui.visuals().dark_mode),
+                    );
+                }
+                if response.response.clicked() {
+                    *accent_color = color;
+                }
+            }
+        });
+    let button = combo.response.rect;
+    ui.painter().circle_filled(
+        egui::pos2(button.left() + gap + DOT_RADIUS, button.center().y),
+        DOT_RADIUS,
+        resolve_accent_color(*accent_color, ui.visuals().dark_mode),
+    );
+    *accent_color != previous
 }
 
 impl GuiLayer {
