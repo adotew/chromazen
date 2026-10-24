@@ -1,6 +1,7 @@
 use super::*;
 
 const FROST_BLUR_SUPPORT_PIXELS: f32 = 96.0;
+const NAVIGATION_DIALOG_DELAY: Duration = Duration::from_millis(500);
 
 struct EguiPaintBatch {
     range: std::ops::Range<usize>,
@@ -197,6 +198,21 @@ impl App {
                             PendingArtwork::Gallery => "Returning to Gallery",
                             PendingArtwork::Create(..) => "Creating New Artwork",
                         })
+                    };
+                    let pending_navigation = match pending_navigation {
+                        Some(action) => {
+                            let started = self
+                                .pending_navigation_started
+                                .get_or_insert_with(Instant::now);
+                            Some((
+                                action,
+                                NAVIGATION_DIALOG_DELAY.saturating_sub(started.elapsed()),
+                            ))
+                        }
+                        None => {
+                            self.pending_navigation_started = None;
+                            None
+                        }
                     };
                     gui.run_editor(
                         window,

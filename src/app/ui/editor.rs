@@ -332,8 +332,12 @@ impl GuiLayer {
                 show_eyedropper_indicator(ui, indicator);
             }
             self.show_quick_menu(ui.ctx(), menu, tool, layers);
-            if let Some(action) = pending_navigation {
-                show_save_blocker(ui.ctx(), action, &save_status, &mut self.commands);
+            if let Some((action, delay)) = pending_navigation {
+                if delay.is_zero() || matches!(save_status, SaveStatus::Failed(_)) {
+                    show_save_blocker(ui.ctx(), action, &save_status, &mut self.commands);
+                } else {
+                    ui.ctx().request_repaint_after(delay);
+                }
             }
             if let Some(delay) = brush_import_dialog_delay {
                 if delay.is_zero() {

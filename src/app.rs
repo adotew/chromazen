@@ -146,6 +146,7 @@ pub struct App {
     screen: AppScreen,
     pending_artwork: Option<PendingArtwork>,
     pending_exit: bool,
+    pending_navigation_started: Option<Instant>,
 }
 
 impl Drop for App {
@@ -576,6 +577,7 @@ impl App {
             screen: AppScreen::Gallery,
             pending_artwork: None,
             pending_exit: false,
+            pending_navigation_started: None,
         }
     }
 }

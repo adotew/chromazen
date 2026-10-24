@@ -156,7 +156,8 @@ pub(crate) struct EditorUiState<'a> {
     pub(crate) brush_outline_half_size: &'a dyn Fn(f32) -> [f32; 2],
     pub(crate) eyedropper_indicator: Option<EyedropperIndicator>,
     pub(crate) save_status: SaveStatus,
-    pub(crate) pending_navigation: Option<&'a str>,
+    /// The pending action and the time left before its save blocker appears.
+    pub(crate) pending_navigation: Option<(&'a str, Duration)>,
     pub(crate) brush_import_dialog_delay: Option<Duration>,
     pub(crate) reference_import_dialog_delay: Option<Duration>,
     pub(crate) reference_load_dialog_delay: Option<Duration>,
