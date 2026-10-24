@@ -59,36 +59,59 @@ const LAYER_PANEL_WIDTH: f32 = 300.0;
 const LAYER_LIST_MAX_HEIGHT: f32 = 440.0;
 
 #[cfg(target_os = "macos")]
-const SETTINGS_SHORTCUT: &str = "⌘-,";
+const SETTINGS_SHORTCUT: &str = "⌘ ,";
 #[cfg(not(target_os = "macos"))]
 const SETTINGS_SHORTCUT: &str = "Ctrl-,";
 #[cfg(target_os = "macos")]
-const SAVE_SHORTCUT: &str = "⌘-S";
+const SAVE_SHORTCUT: &str = "⌘ S";
 #[cfg(not(target_os = "macos"))]
 const SAVE_SHORTCUT: &str = "Ctrl-S";
 #[cfg(target_os = "macos")]
-const EXPORT_SHORTCUT: &str = "⌘-Shift-E";
+const EXPORT_SHORTCUT: &str = "⇧ ⌘ E";
 #[cfg(not(target_os = "macos"))]
 const EXPORT_SHORTCUT: &str = "Ctrl-Shift-E";
 #[cfg(target_os = "macos")]
-const GALLERY_SHORTCUT: &str = "⌘-G";
+const GALLERY_SHORTCUT: &str = "⌘ G";
 #[cfg(not(target_os = "macos"))]
 const GALLERY_SHORTCUT: &str = "Ctrl-G";
 #[cfg(target_os = "macos")]
-const UNDO_SHORTCUT: &str = "⌘-Z";
+const UNDO_SHORTCUT: &str = "⌘ Z";
 #[cfg(not(target_os = "macos"))]
 const UNDO_SHORTCUT: &str = "Ctrl-Z";
 #[cfg(target_os = "macos")]
-const REDO_SHORTCUT: &str = "⌘-Shift-Z";
+const REDO_SHORTCUT: &str = "⇧ ⌘ Z";
 #[cfg(not(target_os = "macos"))]
 const REDO_SHORTCUT: &str = "Ctrl-Y / Ctrl-Shift-Z";
 #[cfg(target_os = "macos")]
-const ROTATE_SHORTCUT: &str = "⌘-Option-← / →";
+const ROTATE_SHORTCUT: &str = "⌥ ⌘ ← / ⌥ ⌘ →";
 #[cfg(not(target_os = "macos"))]
 const ROTATE_SHORTCUT: &str = "Ctrl-Alt-← / →";
+#[cfg(target_os = "macos")]
+const FLIP_SHORTCUT: &str = "F / ⇧ F";
+#[cfg(not(target_os = "macos"))]
 const FLIP_SHORTCUT: &str = "F / Shift-F";
 #[cfg(target_os = "macos")]
-const CROP_SHORTCUT: &str = "⌘-Option-C";
+const ROTATE_FREELY_SHORTCUT: &str = "R drag";
+#[cfg(not(target_os = "macos"))]
+const ROTATE_FREELY_SHORTCUT: &str = "R-drag";
+#[cfg(target_os = "macos")]
+const RESET_ROTATION_SHORTCUT: &str = "⇧ R";
+#[cfg(not(target_os = "macos"))]
+const RESET_ROTATION_SHORTCUT: &str = "Shift-R";
+#[cfg(target_os = "macos")]
+const CYCLE_TOOLS_SHORTCUT: &str = "⇧ Tab";
+#[cfg(not(target_os = "macos"))]
+const CYCLE_TOOLS_SHORTCUT: &str = "Shift-Tab";
+#[cfg(target_os = "macos")]
+const RESIZE_BRUSH_SHORTCUT: &str = "⇧ drag";
+#[cfg(not(target_os = "macos"))]
+const RESIZE_BRUSH_SHORTCUT: &str = "Shift-drag";
+#[cfg(target_os = "macos")]
+const EYEDROPPER_SHORTCUT: &str = "Hold ⌥";
+#[cfg(not(target_os = "macos"))]
+const EYEDROPPER_SHORTCUT: &str = "Hold Alt";
+#[cfg(target_os = "macos")]
+const CROP_SHORTCUT: &str = "⌥ ⌘ C";
 #[cfg(not(target_os = "macos"))]
 const CROP_SHORTCUT: &str = "Ctrl-Alt-C";
 
@@ -789,8 +812,8 @@ fn shortcut_section(ui: &mut egui::Ui, title: &str, shortcuts: &[(&str, &str)]) 
                 egui::pos2(rect.center().x, rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 shortcut,
-                egui::TextStyle::Monospace.resolve(ui.style()),
-                ui.visuals().text_color(),
+                egui::FontId::monospace(14.0),
+                ui.visuals().strong_text_color(),
             );
         }
     });
