@@ -114,7 +114,7 @@ fn setting_row(
             ui.set_width(SETTINGS_LABEL_WIDTH);
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.label(egui::RichText::new(title).color(ui.visuals().strong_text_color()));
-            ui.label(egui::RichText::new(description).text_style(egui::TextStyle::Small));
+            ui.label(egui::RichText::new(description).size(12.0));
         });
         ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), text.response.rect.height()),
