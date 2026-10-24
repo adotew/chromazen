@@ -3,7 +3,7 @@
 ; Signing is added later via SignTool=... once a certificate is available.
 
 #ifndef AppVersion
-#define AppVersion "0.1.4"
+#define AppVersion "0.1.5"
 #endif
 
 [Setup]
