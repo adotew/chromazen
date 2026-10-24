@@ -1440,6 +1440,7 @@ fn install_rounded_ui_style(
 ) {
     context.all_styles_mut(|style| {
         apply_button_padding(style);
+        style.interaction.selectable_labels = false;
         let dark_mode = style.visuals.dark_mode;
         let visuals = &mut style.visuals;
         visuals.window_corner_radius = egui::CornerRadius::same(16);
