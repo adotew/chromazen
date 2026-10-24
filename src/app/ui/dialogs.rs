@@ -138,6 +138,27 @@ fn settings_nav_item(ui: &mut egui::Ui, page: SettingsPage, selected: bool) -> b
 }
 
 const SWAP_BUTTON_SIZE: f32 = 24.0;
+const NEW_ARTWORK_FORM_WIDTH: f32 = 260.0;
+const SIZE_PREVIEW_WIDTH: f32 = 96.0;
+
+/// Fits a canvas of `size` pixels inside `bounds`, preserving its aspect ratio.
+fn fit_size_preview(size: [u32; 2], bounds: egui::Vec2) -> egui::Vec2 {
+    let size = egui::vec2(size[0].max(1) as f32, size[1].max(1) as f32);
+    let scale = (bounds.x / size.x).min(bounds.y / size.y);
+    (size * scale).max(egui::Vec2::splat(2.0))
+}
+
+fn paint_size_preview(ui: &egui::Ui, rect: egui::Rect, size: [u32; 2], color: egui::Color32) {
+    let preview = egui::Rect::from_center_size(rect.center(), fit_size_preview(size, rect.size()));
+    let painter = ui.painter();
+    painter.rect_filled(preview, 4, color);
+    painter.rect_stroke(
+        preview,
+        4,
+        egui::Stroke::new(1.0_f32, ui.visuals().text_color().gamma_multiply(0.3)),
+        egui::StrokeKind::Inside,
+    );
+}
 
 fn dimension_row(ui: &mut egui::Ui, label: &str, value: &mut u32, max: u32) -> egui::Response {
     ui.horizontal(|ui| {
@@ -250,53 +271,74 @@ impl GuiLayer {
         egui::Modal::new(egui::Id::new("new artwork dialog"))
             .frame(frame)
             .show(context, |ui| {
-                ui.set_width(260.0);
+                ui.set_width(NEW_ARTWORK_FORM_WIDTH + 16.0 + SIZE_PREVIEW_WIDTH);
                 ui.heading("New Artwork");
                 ui.add_space(16.0);
-                let max_dimension = self.canvas_size_constraints.max_dimension;
-                let width = dimension_row(ui, "Width", &mut dialog.width, max_dimension);
-                if std::mem::take(&mut dialog.focus_width) {
-                    width.request_focus();
-                }
-                ui.add_space(10.0);
-                let height = dimension_row(ui, "Height", &mut dialog.height, max_dimension);
-                let swap_rect = egui::Rect::from_center_size(
-                    egui::pos2(
-                        width.rect.left() - ui.spacing().item_spacing.x - SWAP_BUTTON_SIZE / 2.0,
-                        (width.rect.center().y + height.rect.center().y) / 2.0,
-                    ),
-                    egui::Vec2::splat(SWAP_BUTTON_SIZE),
-                );
-                // Interacts without allocating, so the button doesn't push later rows.
-                let swap = ui
-                    .interact(swap_rect, ui.id().with("swap size"), egui::Sense::click())
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .on_hover_text("Swap width and height");
-                swap.widget_info(|| {
-                    egui::WidgetInfo::labeled(
-                        egui::WidgetType::Button,
-                        true,
-                        "Swap width and height",
-                    )
+                ui.horizontal_top(|ui| {
+                    let form = ui.vertical(|ui| {
+                        ui.set_width(NEW_ARTWORK_FORM_WIDTH);
+                        let max_dimension = self.canvas_size_constraints.max_dimension;
+                        let width = dimension_row(ui, "Width", &mut dialog.width, max_dimension);
+                        if std::mem::take(&mut dialog.focus_width) {
+                            width.request_focus();
+                        }
+                        ui.add_space(10.0);
+                        let height = dimension_row(ui, "Height", &mut dialog.height, max_dimension);
+                        let swap_rect = egui::Rect::from_center_size(
+                            egui::pos2(
+                                width.rect.left()
+                                    - ui.spacing().item_spacing.x
+                                    - SWAP_BUTTON_SIZE / 2.0,
+                                (width.rect.center().y + height.rect.center().y) / 2.0,
+                            ),
+                            egui::Vec2::splat(SWAP_BUTTON_SIZE),
+                        );
+                        // Interacts without allocating, so the button doesn't push later rows.
+                        let swap = ui
+                            .interact(swap_rect, ui.id().with("swap size"), egui::Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text("Swap width and height");
+                        swap.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Button,
+                                true,
+                                "Swap width and height",
+                            )
+                        });
+                        let tint = if swap.hovered() {
+                            ui.visuals().strong_text_color()
+                        } else {
+                            ui.visuals().text_color()
+                        };
+                        egui::Image::new(egui::include_image!(
+                            "../../../assets/icons/arrow-down-up.svg"
+                        ))
+                        .tint(tint)
+                        .paint_at(
+                            ui,
+                            egui::Rect::from_center_size(
+                                swap_rect.center(),
+                                egui::Vec2::splat(14.0),
+                            ),
+                        );
+                        if swap.clicked() {
+                            std::mem::swap(&mut dialog.width, &mut dialog.height);
+                        }
+                        ui.add_space(10.0);
+                        background_row(ui, &mut dialog.background);
+                    });
+                    ui.add_space(16.0);
+                    let (preview_rect, _) = ui.allocate_exact_size(
+                        egui::vec2(SIZE_PREVIEW_WIDTH, form.response.rect.height()),
+                        egui::Sense::hover(),
+                    );
+                    paint_size_preview(
+                        ui,
+                        preview_rect,
+                        [dialog.width, dialog.height],
+                        dialog.background,
+                    );
                 });
-                let tint = if swap.hovered() {
-                    ui.visuals().strong_text_color()
-                } else {
-                    ui.visuals().text_color()
-                };
-                egui::Image::new(egui::include_image!(
-                    "../../../assets/icons/arrow-down-up.svg"
-                ))
-                .tint(tint)
-                .paint_at(
-                    ui,
-                    egui::Rect::from_center_size(swap_rect.center(), egui::Vec2::splat(14.0)),
-                );
-                if swap.clicked() {
-                    std::mem::swap(&mut dialog.width, &mut dialog.height);
-                }
-                ui.add_space(10.0);
-                background_row(ui, &mut dialog.background);
                 let validation = self
                     .canvas_size_constraints
                     .validate([dialog.width, dialog.height]);
@@ -591,6 +633,23 @@ const SHORTCUT_SECTIONS: &[(&str, &[(&str, &str)])] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn size_preview_keeps_aspect_ratio_within_bounds() {
+        let bounds = egui::vec2(96.0, 120.0);
+        for (size, expected) in [
+            ([4000, 2000], egui::vec2(96.0, 48.0)),
+            ([1000, 4000], egui::vec2(30.0, 120.0)),
+            ([20000, 1], egui::vec2(96.0, 2.0)),
+            ([0, 0], egui::vec2(96.0, 96.0)),
+        ] {
+            let fitted = fit_size_preview(size, bounds);
+            assert!(
+                (fitted - expected).length() < 1e-3,
+                "{size:?} -> {fitted:?}"
+            );
+        }
+    }
 
     #[test]
     fn accent_colors_include_original_blue() {
