@@ -60,16 +60,16 @@ impl App {
         }
     }
 
-    pub(super) fn create_artwork(&mut self, size: [u32; 2]) {
+    pub(super) fn create_artwork(&mut self, size: [u32; 2], background: [u8; 3]) {
         if self.screen == AppScreen::Editor {
-            self.pending_artwork = Some(PendingArtwork::Create(size));
+            self.pending_artwork = Some(PendingArtwork::Create(size, background));
             self.autosave.request_save();
             return;
         }
-        self.finish_create_artwork(size);
+        self.finish_create_artwork(size, background);
     }
 
-    fn finish_create_artwork(&mut self, size: [u32; 2]) {
+    fn finish_create_artwork(&mut self, size: [u32; 2], background: [u8; 3]) {
         let Some(paint) = self.paint.as_mut() else {
             return;
         };
@@ -79,6 +79,7 @@ impl App {
             }
             return;
         }
+        paint.set_background_color(background);
         let id = crate::artwork::ArtworkId::new();
         self.references.clear();
         self.pending_reference_load = None;
@@ -123,8 +124,8 @@ impl App {
         }
         let pending = self.pending_artwork.take();
         self.enter_gallery();
-        if let Some(PendingArtwork::Create(size)) = pending {
-            self.finish_create_artwork(size);
+        if let Some(PendingArtwork::Create(size, background)) = pending {
+            self.finish_create_artwork(size, background);
         }
         true
     }

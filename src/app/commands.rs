@@ -340,9 +340,13 @@ impl App {
                     gui.open_new_artwork_dialog();
                 }
             }
-            NavigationCommand::CreateArtwork { width, height } => {
+            NavigationCommand::CreateArtwork {
+                width,
+                height,
+                background,
+            } => {
                 if !self.has_pending_navigation() {
-                    self.create_artwork([width, height]);
+                    self.create_artwork([width, height], background);
                 }
             }
             NavigationCommand::OpenArtwork(id) => self.open_artwork(&id),

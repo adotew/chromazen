@@ -147,6 +147,35 @@ fn dimension_row(ui: &mut egui::Ui, label: &str, value: &mut u32, max: u32) {
     });
 }
 
+fn background_row(ui: &mut egui::Ui, color: &mut egui::Color32) {
+    ui.horizontal(|ui| {
+        ui.label("Background");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(56.0, 28.0), egui::Sense::click());
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::ColorButton, true, "Background color")
+            });
+            let painter = ui.painter();
+            painter.rect_filled(rect, 14, *color);
+            // Keeps white and near-surface colors visible against the dialog.
+            painter.rect_stroke(
+                rect,
+                14,
+                egui::Stroke::new(1.0_f32, ui.visuals().text_color().gamma_multiply(0.3)),
+                egui::StrokeKind::Inside,
+            );
+            let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+            egui::Popup::from_toggle_button_response(&response)
+                .width(220.0)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| {
+                    color_picker::show(ui, color);
+                });
+        });
+    });
+}
+
 fn accent_swatch(
     ui: &mut egui::Ui,
     name: &str,
@@ -192,6 +221,7 @@ impl GuiLayer {
         self.new_artwork_dialog = Some(NewArtworkDialog {
             width: DEFAULT_CANVAS_SIZE[0],
             height: DEFAULT_CANVAS_SIZE[1],
+            background: egui::Color32::WHITE,
         });
         self.context.request_repaint();
     }
@@ -219,6 +249,8 @@ impl GuiLayer {
                 dimension_row(ui, "Width", &mut dialog.width, max_dimension);
                 ui.add_space(10.0);
                 dimension_row(ui, "Height", &mut dialog.height, max_dimension);
+                ui.add_space(10.0);
+                background_row(ui, &mut dialog.background);
                 let validation = self
                     .canvas_size_constraints
                     .validate([dialog.width, dialog.height]);
@@ -252,16 +284,17 @@ impl GuiLayer {
                 if submit.clicked()
                     || (validation.is_ok() && ui.input(|input| input.key_pressed(egui::Key::Enter)))
                 {
-                    create = Some((dialog.width, dialog.height));
+                    create = Some((dialog.width, dialog.height, rgb(dialog.background)));
                 }
             });
         // Unlike other dialogs, a backdrop click doesn't dismiss this one.
         close |= context.input(|input| input.key_pressed(egui::Key::Escape));
-        if let Some((width, height)) = create {
+        if let Some((width, height, background)) = create {
             self.commands
                 .push(AppCommand::Navigation(NavigationCommand::CreateArtwork {
                     width,
                     height,
+                    background,
                 }));
             close = true;
         }

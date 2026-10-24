@@ -195,7 +195,7 @@ impl App {
                     } else {
                         self.pending_artwork.as_ref().map(|pending| match pending {
                             PendingArtwork::Gallery => "Returning to Gallery",
-                            PendingArtwork::Create(_) => "Creating New Artwork",
+                            PendingArtwork::Create(..) => "Creating New Artwork",
                         })
                     };
                     gui.run_editor(

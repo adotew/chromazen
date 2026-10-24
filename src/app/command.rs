@@ -104,7 +104,11 @@ pub(super) enum SettingsCommand {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum NavigationCommand {
     NewArtwork,
-    CreateArtwork { width: u32, height: u32 },
+    CreateArtwork {
+        width: u32,
+        height: u32,
+        background: [u8; 3],
+    },
     OpenArtwork(ArtworkId),
     ShowGallery,
     CancelPending,

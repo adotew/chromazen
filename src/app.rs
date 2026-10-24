@@ -93,7 +93,7 @@ enum AppScreen {
 
 enum PendingArtwork {
     Gallery,
-    Create([u32; 2]),
+    Create([u32; 2], [u8; 3]),
 }
 
 struct RenderOutcome {
