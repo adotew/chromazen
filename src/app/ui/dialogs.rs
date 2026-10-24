@@ -294,26 +294,12 @@ fn accent_color_dropdown(ui: &mut egui::Ui, accent_color: &mut egui::Color32) ->
             egui::Color32::PLACEHOLDER,
         ),
     );
-    let combo = egui::ComboBox::from_id_salt("accent color")
-        .selected_text(selected_text)
-        .width(140.0)
-        .height(f32::INFINITY)
-        .icon(|ui, rect, visuals, open| {
-            let turn = ui
-                .ctx()
-                .animate_bool_responsive(egui::Id::new("accent color chevron"), open);
-            egui::Image::new(egui::include_image!(
-                "../../../assets/icons/chevron-down.svg"
-            ))
-            .tint(visuals.fg_stroke.color)
-            .rotate(turn * std::f32::consts::PI, egui::Vec2::splat(0.5))
-            .paint_at(ui, rect);
-        })
-        .show_ui(ui, |ui| {
-            // Popups don't inherit the dialog's neutral selection style.
-            let visuals = ui.visuals_mut();
-            visuals.selection.bg_fill = visuals.text_color().gamma_multiply(0.08);
-            visuals.selection.stroke = egui::Stroke::new(1.0_f32, visuals.strong_text_color());
+    let combo = dropdown(
+        ui,
+        egui::Id::new("accent color"),
+        selected_text,
+        140.0,
+        |ui| {
             for (name, color) in ACCENT_COLORS {
                 let dot = ui.id().with(name);
                 let response = egui::Button::selectable(
@@ -337,7 +323,8 @@ fn accent_color_dropdown(ui: &mut egui::Ui, accent_color: &mut egui::Color32) ->
                     *accent_color = color;
                 }
             }
-        });
+        },
+    );
     let button = combo.response.rect;
     ui.painter().circle_filled(
         egui::pos2(button.left() + gap + DOT_RADIUS, button.center().y),

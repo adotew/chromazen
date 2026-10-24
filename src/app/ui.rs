@@ -885,6 +885,34 @@ impl<'a> DialogButton<'a> {
 }
 
 /// Lays out equal-width pill buttons across the dialog and returns the clicked index.
+/// A combo box with an animated chevron and a neutral selection highlight in its popup.
+fn dropdown<R>(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    selected_text: impl Into<egui::WidgetText>,
+    width: f32,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<Option<R>> {
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(selected_text)
+        .width(width)
+        .height(f32::INFINITY)
+        .icon(move |ui, rect, visuals, open| {
+            let turn = ui.ctx().animate_bool_responsive(id.with("chevron"), open);
+            egui::Image::new(egui::include_image!("../../assets/icons/chevron-down.svg"))
+                .tint(visuals.fg_stroke.color)
+                .rotate(turn * std::f32::consts::PI, egui::Vec2::splat(0.5))
+                .paint_at(ui, rect);
+        })
+        .show_ui(ui, |ui| {
+            // Popups don't inherit the surrounding panel's selection style.
+            let visuals = ui.visuals_mut();
+            visuals.selection.bg_fill = visuals.text_color().gamma_multiply(0.08);
+            visuals.selection.stroke = egui::Stroke::new(1.0_f32, visuals.strong_text_color());
+            add_contents(ui)
+        })
+}
+
 fn dialog_buttons(ui: &mut egui::Ui, buttons: &[DialogButton]) -> Option<usize> {
     let count = buttons.len().max(1) as f32;
     ui.horizontal(|ui| {

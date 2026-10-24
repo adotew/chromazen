@@ -258,21 +258,35 @@ impl GuiLayer {
                                     }
                                 });
                                 let mut blend_mode = layer.blend_mode;
-                                egui::ComboBox::from_id_salt(("layer_blend_mode", layer.id))
-                                    .selected_text(blend_mode_label(blend_mode))
-                                    .show_ui(ui, |ui| {
+                                dropdown(
+                                    ui,
+                                    egui::Id::new(("layer_blend_mode", layer.id)),
+                                    blend_mode_label(blend_mode),
+                                    120.0,
+                                    |ui| {
                                         for mode in [
                                             BlendMode::Normal,
                                             BlendMode::Multiply,
                                             BlendMode::Overlay,
                                         ] {
-                                            ui.selectable_value(
-                                                &mut blend_mode,
-                                                mode,
-                                                blend_mode_label(mode),
-                                            );
+                                            if ui
+                                                .add(
+                                                    egui::Button::selectable(
+                                                        blend_mode == mode,
+                                                        blend_mode_label(mode),
+                                                    )
+                                                    .min_size(egui::vec2(
+                                                        ui.available_width(),
+                                                        0.0,
+                                                    )),
+                                                )
+                                                .clicked()
+                                            {
+                                                blend_mode = mode;
+                                            }
                                         }
-                                    });
+                                    },
+                                );
                                 if blend_mode != layer.blend_mode {
                                     self.commands.push(AppCommand::Editor(
                                         EditorCommand::SetLayerBlendMode {
