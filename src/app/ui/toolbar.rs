@@ -101,17 +101,41 @@ impl GuiLayer {
             36.0
         };
         let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(left_width + 86.0, 32.0), egui::Sense::hover());
+            ui.allocate_exact_size(egui::vec2(left_width + 126.0, 32.0), egui::Sense::hover());
         paint_rounded_panel(ui, rect, egui::CornerRadius::same(16));
         let mut menu_ui =
             ui.new_child(egui::UiBuilder::new().id_salt("application menu").max_rect(
                 egui::Rect::from_min_size(rect.min, egui::vec2(left_width, 32.0)),
             ));
         self.show_application_menu(&mut menu_ui, menu);
-        let tools_rect = egui::Rect::from_min_size(
+        let gallery_rect = egui::Rect::from_min_size(
             rect.min + egui::vec2(left_width, 0.0),
-            egui::vec2(80.0, 32.0),
+            egui::vec2(40.0, 32.0),
         );
+        let gallery_response = ui
+            .interact(gallery_rect, ui.id().with("Gallery"), egui::Sense::click())
+            .on_hover_text("Gallery");
+        let gallery_tint = if gallery_response.hovered() {
+            ui.visuals().text_color()
+        } else {
+            ui.visuals().weak_text_color()
+        };
+        egui::Image::new(egui::include_image!(
+            "../../../assets/icons/layout-grid.svg"
+        ))
+        .tint(gallery_tint)
+        .alt_text("Gallery")
+        .paint_at(
+            ui,
+            egui::Rect::from_center_size(gallery_rect.center(), egui::Vec2::splat(20.0)),
+        );
+        if gallery_response.clicked() {
+            egui::Popup::close_all(ui.ctx());
+            self.commands
+                .push(AppCommand::Navigation(NavigationCommand::ShowGallery));
+        }
+        let tools_rect =
+            egui::Rect::from_min_size(gallery_rect.right_top(), egui::vec2(80.0, 32.0));
         show_selection_tools(
             ui,
             tools_rect,
