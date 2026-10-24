@@ -137,12 +137,17 @@ fn settings_nav_item(ui: &mut egui::Ui, page: SettingsPage, selected: bool) -> b
     .clicked()
 }
 
+const SWAP_BUTTON_SIZE: f32 = 24.0;
+
 fn dimension_row(ui: &mut egui::Ui, label: &str, value: &mut u32, max: u32) -> egui::Response {
     ui.horizontal(|ui| {
         ui.label(label);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.weak("px");
-            ui.add(egui::DragValue::new(value).range(1..=max).speed(1))
+            let response = ui.add(egui::DragValue::new(value).range(1..=max).speed(1));
+            // Leaves room for the swap button that spans both size rows.
+            ui.add_space(SWAP_BUTTON_SIZE);
+            response
         })
         .inner
     })
@@ -254,7 +259,42 @@ impl GuiLayer {
                     width.request_focus();
                 }
                 ui.add_space(10.0);
-                let _ = dimension_row(ui, "Height", &mut dialog.height, max_dimension);
+                let height = dimension_row(ui, "Height", &mut dialog.height, max_dimension);
+                let swap_rect = egui::Rect::from_center_size(
+                    egui::pos2(
+                        width.rect.left() - ui.spacing().item_spacing.x - SWAP_BUTTON_SIZE / 2.0,
+                        (width.rect.center().y + height.rect.center().y) / 2.0,
+                    ),
+                    egui::Vec2::splat(SWAP_BUTTON_SIZE),
+                );
+                // Interacts without allocating, so the button doesn't push later rows.
+                let swap = ui
+                    .interact(swap_rect, ui.id().with("swap size"), egui::Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text("Swap width and height");
+                swap.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        true,
+                        "Swap width and height",
+                    )
+                });
+                let tint = if swap.hovered() {
+                    ui.visuals().strong_text_color()
+                } else {
+                    ui.visuals().text_color()
+                };
+                egui::Image::new(egui::include_image!(
+                    "../../../assets/icons/arrow-down-up.svg"
+                ))
+                .tint(tint)
+                .paint_at(
+                    ui,
+                    egui::Rect::from_center_size(swap_rect.center(), egui::Vec2::splat(14.0)),
+                );
+                if swap.clicked() {
+                    std::mem::swap(&mut dialog.width, &mut dialog.height);
+                }
                 ui.add_space(10.0);
                 background_row(ui, &mut dialog.background);
                 let validation = self
