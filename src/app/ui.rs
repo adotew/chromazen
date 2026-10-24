@@ -1335,9 +1335,9 @@ fn install_fonts(context: &egui::Context) {
         ))),
     );
     fonts.font_data.insert(
-        "hack".to_owned(),
+        "jetbrains_mono".to_owned(),
         std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
-            "../../assets/fonts/Hack-Regular.ttf"
+            "../../assets/fonts/JetBrainsMono-Regular.ttf"
         ))),
     );
     // Same downscale egui applies to its bundled copy of this font.
@@ -1358,7 +1358,7 @@ fn install_fonts(context: &egui::Context) {
     fonts.families.insert(
         egui::FontFamily::Monospace,
         vec![
-            "hack".to_owned(),
+            "jetbrains_mono".to_owned(),
             "inter".to_owned(),
             "noto_emoji".to_owned(),
         ],
