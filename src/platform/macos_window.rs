@@ -1,6 +1,10 @@
 use winit::window::Window;
 
 pub(crate) const WINDOW_CONTROLS_MARGIN: f32 = 12.0;
+// Matches the editor toolbar so the traffic lights sit centered in the editor controls panel.
+pub(crate) const WINDOW_CONTROLS_HEIGHT: f32 = 42.0;
+// Extra horizontal room before the traffic lights, matching their vertical padding in the panel.
+const WINDOW_CONTROLS_INSET: f32 = 5.0;
 
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn position_window_controls(_window: &Window) {}
@@ -39,10 +43,11 @@ pub(crate) fn position_window_controls(window: &Window) {
         return;
     };
     let mut frame = container.frame();
-    let height = 32.0 + f64::from(WINDOW_CONTROLS_MARGIN);
-    frame.origin.x = f64::from(WINDOW_CONTROLS_MARGIN);
+    let height = f64::from(WINDOW_CONTROLS_HEIGHT + WINDOW_CONTROLS_MARGIN);
+    let left = f64::from(WINDOW_CONTROLS_MARGIN + WINDOW_CONTROLS_INSET);
+    frame.origin.x = left;
     frame.origin.y += frame.size.height - height;
-    frame.size.width = ns_window.frame().size.width - f64::from(WINDOW_CONTROLS_MARGIN);
+    frame.size.width = ns_window.frame().size.width - left;
     frame.size.height = height;
     if container.frame() != frame {
         container.setFrame(frame);
@@ -77,7 +82,7 @@ pub(crate) fn position_window_controls(window: &Window) {
 
 #[cfg(any(target_os = "macos", test))]
 fn controls_center_y(height: f64, flipped: bool, top_space: f32) -> f64 {
-    let inset = f64::from(top_space) + 16.0;
+    let inset = f64::from(top_space + WINDOW_CONTROLS_HEIGHT / 2.0);
     if flipped { inset } else { height - inset }
 }
 
@@ -87,12 +92,12 @@ mod tests {
 
     #[test]
     fn controls_center_is_inset_from_the_top_in_both_coordinate_systems() {
-        assert_eq!(controls_center_y(900.0, true, WINDOW_CONTROLS_MARGIN), 28.0);
+        assert_eq!(controls_center_y(900.0, true, WINDOW_CONTROLS_MARGIN), 33.0);
         assert_eq!(
             controls_center_y(900.0, false, WINDOW_CONTROLS_MARGIN),
-            872.0
+            867.0
         );
-        assert_eq!(controls_center_y(900.0, true, 0.0), 16.0);
-        assert_eq!(controls_center_y(900.0, false, 0.0), 884.0);
+        assert_eq!(controls_center_y(900.0, true, 0.0), 21.0);
+        assert_eq!(controls_center_y(900.0, false, 0.0), 879.0);
     }
 }

@@ -7,7 +7,9 @@ mod wayland_tablet;
 mod windows_pen;
 
 pub(crate) use macos_pressure::MacosPressureMonitor;
-pub(crate) use macos_window::{WINDOW_CONTROLS_MARGIN, position_window_controls};
+pub(crate) use macos_window::{
+    WINDOW_CONTROLS_HEIGHT, WINDOW_CONTROLS_MARGIN, position_window_controls,
+};
 pub(crate) use pressure::PressureStateHandle;
 pub(crate) use wayland_tablet::WaylandTabletMonitor;
 pub(crate) use windows_pen::{WindowsPenMonitor, WindowsPenRouter};

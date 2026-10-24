@@ -93,24 +93,33 @@ impl GuiLayer {
         has_selection: bool,
         has_titlebar: bool,
     ) -> Option<EditorTool> {
+        const TOOL_SIZE: f32 = 40.0;
+        const PADDING: f32 = 6.0;
+
         let left_width = if has_titlebar {
             80.0
         } else if cfg!(target_os = "macos") {
-            6.0
+            0.0
         } else {
             36.0
         };
-        let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(left_width + 126.0, 32.0), egui::Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(
+                left_width + 3.0 * TOOL_SIZE + 2.0 * PADDING,
+                TOOL_RAIL_THICKNESS,
+            ),
+            egui::Sense::hover(),
+        );
         paint_rounded_panel(ui, rect, egui::CornerRadius::same(16));
+        let body = rect.shrink2(egui::vec2(PADDING, 0.0));
         let mut menu_ui =
             ui.new_child(egui::UiBuilder::new().id_salt("application menu").max_rect(
-                egui::Rect::from_min_size(rect.min, egui::vec2(left_width, 32.0)),
+                egui::Rect::from_min_size(body.min, egui::vec2(left_width, body.height())),
             ));
         self.show_application_menu(&mut menu_ui, menu);
         let gallery_rect = egui::Rect::from_min_size(
-            rect.min + egui::vec2(left_width, 0.0),
-            egui::vec2(40.0, 32.0),
+            body.min + egui::vec2(left_width, 0.0),
+            egui::vec2(TOOL_SIZE, body.height()),
         );
         let gallery_response = ui
             .interact(gallery_rect, ui.id().with("Gallery"), egui::Sense::click())
@@ -134,8 +143,10 @@ impl GuiLayer {
             self.commands
                 .push(AppCommand::Navigation(NavigationCommand::ShowGallery));
         }
-        let tools_rect =
-            egui::Rect::from_min_size(gallery_rect.right_top(), egui::vec2(80.0, 32.0));
+        let tools_rect = egui::Rect::from_min_size(
+            gallery_rect.right_top(),
+            egui::vec2(2.0 * TOOL_SIZE, body.height()),
+        );
         show_selection_tools(
             ui,
             tools_rect,

@@ -13,7 +13,8 @@ use super::apply_menu_item_padding;
 const HEADER_HEIGHT: f32 = 32.0;
 // On macOS the header sits in the transparent titlebar.
 #[cfg(target_os = "macos")]
-const HEADER_TOP_SPACE: f32 = crate::platform::WINDOW_CONTROLS_MARGIN;
+const HEADER_TOP_SPACE: f32 = crate::platform::WINDOW_CONTROLS_MARGIN
+    + (crate::platform::WINDOW_CONTROLS_HEIGHT - HEADER_HEIGHT) / 2.0;
 #[cfg(target_os = "macos")]
 const TITLE_SIZE: f32 = 20.0;
 #[cfg(not(target_os = "macos"))]
@@ -47,7 +48,7 @@ impl GalleryUi {
     ) {
         self.sync_thumbnails(artworks);
         let title_inset = if has_titlebar {
-            64.0 + crate::platform::WINDOW_CONTROLS_MARGIN
+            69.0 + crate::platform::WINDOW_CONTROLS_MARGIN
         } else {
             0.0
         };

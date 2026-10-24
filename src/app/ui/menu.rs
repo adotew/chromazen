@@ -6,7 +6,10 @@ use egui::containers::menu::SubMenuButton;
 #[cfg(not(target_os = "macos"))]
 impl GuiLayer {
     pub(super) fn show_application_menu(&mut self, ui: &mut egui::Ui, state: ApplicationMenuState) {
-        let response = ui.allocate_response(egui::vec2(36.0, 32.0), egui::Sense::click());
+        let response = ui.allocate_response(
+            egui::vec2(36.0, ui.available_height()),
+            egui::Sense::click(),
+        );
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Application menu")
         });
