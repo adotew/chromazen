@@ -118,12 +118,13 @@ impl GalleryUi {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let row = egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true);
                     ui.with_layout(row, |ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(32.0, 10.0);
+                        ui.spacing_mut().item_spacing = egui::vec2(32.0, 40.0);
                         for artwork in artworks {
                             ui.allocate_ui_with_layout(
                                 egui::vec2(220.0, 250.0),
                                 egui::Layout::top_down(egui::Align::Min),
                                 |ui| {
+                                    ui.spacing_mut().item_spacing.y = 10.0;
                                     egui::Frame::NONE.inner_margin(0).show(ui, |ui| {
                                         ui.set_width(198.0);
                                         let (open, content) =
