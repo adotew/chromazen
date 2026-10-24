@@ -62,21 +62,6 @@ fn appearance_settings(
     );
     setting_row(
         ui,
-        "Workspace background",
-        "Color of the area around the canvas.",
-        |ui| {
-            changed |= segmented_control(
-                ui,
-                workspace_background,
-                [
-                    (WorkspaceBackground::Standard, "Standard"),
-                    (WorkspaceBackground::NeutralGray, "Neutral Gray"),
-                ],
-            );
-        },
-    );
-    setting_row(
-        ui,
         "Interface backgrounds",
         "Use solid fills or blur the canvas behind panels.",
         |ui| {
@@ -86,6 +71,21 @@ fn appearance_settings(
                 [
                     (SurfaceStyle::Opaque, "Opaque"),
                     (SurfaceStyle::Frosted, "Frosted"),
+                ],
+            );
+        },
+    );
+    setting_row(
+        ui,
+        "Workspace background",
+        "Color of the area around the canvas.",
+        |ui| {
+            changed |= segmented_control(
+                ui,
+                workspace_background,
+                [
+                    (WorkspaceBackground::Standard, "Standard"),
+                    (WorkspaceBackground::NeutralGray, "Neutral Gray"),
                 ],
             );
         },
