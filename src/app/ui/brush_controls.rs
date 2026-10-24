@@ -135,7 +135,14 @@ fn panel_slider(
     range: std::ops::RangeInclusive<f32>,
     size: bool,
 ) -> egui::Response {
-    ui.add_sized([52.0, 20.0], egui::Label::new(label));
+    ui.allocate_ui_with_layout(
+        egui::vec2(52.0, 20.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_size(egui::vec2(52.0, 20.0));
+            ui.label(label);
+        },
+    );
     let mut fraction = slider_fraction(*value, &range, size);
     let response = ui
         .scope(|ui| {
