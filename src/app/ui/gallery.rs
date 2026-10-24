@@ -194,7 +194,7 @@ impl GalleryUi {
         let (menu, _) = MenuButton::from_button(
             egui::Button::image(icon)
                 .fill(egui::Color32::from_black_alpha(140))
-                .corner_radius(8)
+                .corner_radius(SIZE / 2.0)
                 .min_size(egui::Vec2::splat(SIZE)),
         )
         .ui(&mut overlay, |ui| {
