@@ -206,8 +206,10 @@ impl GuiLayer {
         };
         let mut close = false;
         let mut create = None;
-        let frame = egui::Frame::popup(&context.global_style()).inner_margin(24);
-        let response = egui::Modal::new(egui::Id::new("new artwork dialog"))
+        let frame = egui::Frame::popup(&context.global_style())
+            .corner_radius(28)
+            .inner_margin(24);
+        egui::Modal::new(egui::Id::new("new artwork dialog"))
             .frame(frame)
             .show(context, |ui| {
                 ui.set_width(260.0);
@@ -225,20 +227,36 @@ impl GuiLayer {
                     ui.colored_label(egui::Color32::LIGHT_RED, error);
                 }
                 ui.add_space(20.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let submit = ui.add_enabled(validation.is_ok(), egui::Button::new("Create"));
-                    if submit.clicked()
-                        || (validation.is_ok()
-                            && ui.input(|input| input.key_pressed(egui::Key::Enter)))
-                    {
-                        create = Some((dialog.width, dialog.height));
-                    }
-                    if ui.button("Cancel").clicked() {
-                        close = true;
-                    }
-                });
+                let submit = ui
+                    .horizontal(|ui| {
+                        let size = egui::vec2(
+                            (ui.available_width() - ui.spacing().item_spacing.x) / 2.0,
+                            36.0,
+                        );
+                        let accent = ui.visuals().selection;
+                        let submit = ui.add_enabled(
+                            validation.is_ok(),
+                            egui::Button::new(
+                                egui::RichText::new("Create").color(accent.stroke.color),
+                            )
+                            .fill(accent.bg_fill)
+                            .corner_radius(18)
+                            .min_size(size),
+                        );
+                        close = ui
+                            .add(egui::Button::new("Cancel").corner_radius(18).min_size(size))
+                            .clicked();
+                        submit
+                    })
+                    .inner;
+                if submit.clicked()
+                    || (validation.is_ok() && ui.input(|input| input.key_pressed(egui::Key::Enter)))
+                {
+                    create = Some((dialog.width, dialog.height));
+                }
             });
-        close |= response.should_close();
+        // Unlike other dialogs, a backdrop click doesn't dismiss this one.
+        close |= context.input(|input| input.key_pressed(egui::Key::Escape));
         if let Some((width, height)) = create {
             self.commands
                 .push(AppCommand::Navigation(NavigationCommand::CreateArtwork {
