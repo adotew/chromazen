@@ -380,74 +380,96 @@ impl GuiLayer {
         if !self.shortcuts_dialog_open {
             return;
         }
-        let response = egui::Modal::new(egui::Id::new("keyboard shortcuts")).show(context, |ui| {
-            ui.set_width(700.0);
-            ui.add_space(16.0);
-            egui::Frame::NONE
-                .inner_margin(egui::Margin::symmetric(12, 0))
-                .show(ui, |ui| {
-                    ui.heading("Keyboard Shortcuts");
-                });
-            ui.add_space(16.0);
-            egui::Frame::NONE
-                .inner_margin(egui::Margin::symmetric(12, 8))
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .max_height(520.0)
-                        .show(ui, |ui| {
-                            shortcut_section(
-                                ui,
-                                "Tools",
-                                &[
-                                    ("Brush / Eraser / Smudge", "D/B, E, S"),
-                                    ("Transform", "T"),
-                                    ("Freehand selection", "L"),
-                                    ("Cycle paint tools", "Shift-Tab"),
-                                    ("Show or hide sidebar", "Tab"),
-                                    ("Resize brush", "Shift-drag"),
-                                    ("Eyedropper", "Alt/Option"),
-                                    ("Quick menu", "Hold Q"),
-                                ],
-                            );
-                            ui.add_space(14.0);
-                            ui.add_space(14.0);
-                            shortcut_section(
-                                ui,
-                                "Canvas",
-                                &[
-                                    ("Pan", "Space-drag or middle/right-drag"),
-                                    ("Zoom", "Wheel"),
-                                    ("Rotate freely", "R-drag"),
-                                    ("Reset rotation", "Shift-R"),
-                                    ("Rotate left / right", ROTATE_SHORTCUT),
-                                    ("Flip horizontal / vertical", FLIP_SHORTCUT),
-                                    ("Crop or resize", CROP_SHORTCUT),
-                                ],
-                            );
-                            ui.add_space(14.0);
-                            ui.add_space(14.0);
-                            shortcut_section(
-                                ui,
-                                "Document",
-                                &[
-                                    ("Settings", SETTINGS_SHORTCUT),
-                                    ("Save", SAVE_SHORTCUT),
-                                    ("Export PNG", EXPORT_SHORTCUT),
-                                    ("Return to gallery", GALLERY_SHORTCUT),
-                                    ("Undo", UNDO_SHORTCUT),
-                                    ("Redo", REDO_SHORTCUT),
-                                    ("Apply transform or crop", "Enter"),
-                                    ("Cancel transform or crop, or deselect", "Escape"),
-                                ],
-                            );
-                        });
-                });
-            ui.add_space(12.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.button("Close").clicked()
-            })
-            .inner
-        });
+        let frame = egui::Frame::popup(&context.global_style())
+            .corner_radius(28)
+            .inner_margin(12);
+        let response = egui::Modal::new(egui::Id::new("keyboard shortcuts"))
+            .frame(frame)
+            .show(context, |ui| {
+                ui.set_width(700.0);
+                ui.add_space(12.0);
+                let close = egui::Frame::NONE
+                    .inner_margin(egui::Margin::symmetric(12, 0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.heading("Keyboard Shortcuts");
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let icon = egui::Image::new(egui::include_image!(
+                                    "../../../assets/icons/x.svg"
+                                ))
+                                .fit_to_exact_size(egui::Vec2::splat(18.0))
+                                .alt_text("Close");
+                                ui.add(
+                                    egui::Button::image(icon)
+                                        .frame(false)
+                                        .image_tint_follows_text_color(true),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text("Close")
+                                .clicked()
+                            })
+                            .inner
+                        })
+                        .inner
+                    })
+                    .inner;
+                ui.add_space(16.0);
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin::symmetric(12, 8))
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(520.0)
+                            .show(ui, |ui| {
+                                shortcut_section(
+                                    ui,
+                                    "Tools",
+                                    &[
+                                        ("Brush / Eraser / Smudge", "D/B, E, S"),
+                                        ("Transform", "T"),
+                                        ("Freehand selection", "L"),
+                                        ("Cycle paint tools", "Shift-Tab"),
+                                        ("Show or hide sidebar", "Tab"),
+                                        ("Resize brush", "Shift-drag"),
+                                        ("Eyedropper", "Alt/Option"),
+                                        ("Quick menu", "Hold Q"),
+                                    ],
+                                );
+                                ui.add_space(14.0);
+                                ui.add_space(14.0);
+                                shortcut_section(
+                                    ui,
+                                    "Canvas",
+                                    &[
+                                        ("Pan", "Space-drag or middle/right-drag"),
+                                        ("Zoom", "Wheel"),
+                                        ("Rotate freely", "R-drag"),
+                                        ("Reset rotation", "Shift-R"),
+                                        ("Rotate left / right", ROTATE_SHORTCUT),
+                                        ("Flip horizontal / vertical", FLIP_SHORTCUT),
+                                        ("Crop or resize", CROP_SHORTCUT),
+                                    ],
+                                );
+                                ui.add_space(14.0);
+                                ui.add_space(14.0);
+                                shortcut_section(
+                                    ui,
+                                    "Document",
+                                    &[
+                                        ("Settings", SETTINGS_SHORTCUT),
+                                        ("Save", SAVE_SHORTCUT),
+                                        ("Export PNG", EXPORT_SHORTCUT),
+                                        ("Return to gallery", GALLERY_SHORTCUT),
+                                        ("Undo", UNDO_SHORTCUT),
+                                        ("Redo", REDO_SHORTCUT),
+                                        ("Apply transform or crop", "Enter"),
+                                        ("Cancel transform or crop, or deselect", "Escape"),
+                                    ],
+                                );
+                            });
+                    });
+                ui.add_space(12.0);
+                close
+            });
         if response.inner || context.input(|input| input.key_pressed(egui::Key::Escape)) {
             self.shortcuts_dialog_open = false;
         }
