@@ -1160,16 +1160,22 @@ fn show_layer_row(ui: &mut egui::Ui, layer: LayerRow<'_>) -> LayerRowResponse {
         } else {
             (egui::Color32::from_gray(220), egui::Color32::from_gray(195))
         };
-        painter.rect_filled(thumbnail, 8, light);
-        let checker = thumbnail.shrink(3.0);
-        let checker_size = checker.width() / 4.0;
+        let checker_size = thumbnail.width() / 4.0;
         for y in 0..4 {
             for x in 0..4 {
                 let square = egui::Rect::from_min_size(
-                    checker.min + egui::vec2(x as f32 * checker_size, y as f32 * checker_size),
+                    thumbnail.min + egui::vec2(x as f32 * checker_size, y as f32 * checker_size),
                     egui::Vec2::splat(checker_size),
                 );
-                painter.rect_filled(square, 0, if (x + y) % 2 == 0 { light } else { dark });
+                // Round the outer corners of the corner squares to match the thumbnail.
+                let corner = |cx, cy| if (x, y) == (cx, cy) { 8 } else { 0 };
+                let radius = egui::CornerRadius {
+                    nw: corner(0, 0),
+                    ne: corner(3, 0),
+                    sw: corner(0, 3),
+                    se: corner(3, 3),
+                };
+                painter.rect_filled(square, radius, if (x + y) % 2 == 0 { light } else { dark });
             }
         }
         if let Some(texture_id) = texture_id {
