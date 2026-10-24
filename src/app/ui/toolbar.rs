@@ -110,7 +110,7 @@ impl GuiLayer {
             ),
             egui::Sense::hover(),
         );
-        paint_rounded_panel(ui, rect, egui::CornerRadius::same(16));
+        paint_rounded_panel(ui, rect, egui::CornerRadius::same(21));
         let body = rect.shrink2(egui::vec2(PADDING, 0.0));
         let mut menu_ui =
             ui.new_child(egui::UiBuilder::new().id_salt("application menu").max_rect(
@@ -168,7 +168,7 @@ impl GuiLayer {
             egui::vec2(5.0 * TOOL_SIZE + 2.0 * PADDING, TOOL_RAIL_THICKNESS),
             egui::Sense::hover(),
         );
-        paint_rounded_panel(ui, rect, egui::CornerRadius::same(16));
+        paint_rounded_panel(ui, rect, egui::CornerRadius::same(21));
         let body = rect.shrink2(egui::vec2(PADDING, 0.0));
 
         let mut selected_tool = None;
