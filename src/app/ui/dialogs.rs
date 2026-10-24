@@ -37,6 +37,12 @@ impl SettingsPage {
             Self::Appearance => "Appearance",
         }
     }
+
+    fn icon(self) -> egui::ImageSource<'static> {
+        match self {
+            Self::Appearance => egui::include_image!("../../../assets/icons/palette.svg"),
+        }
+    }
 }
 
 /// Returns whether any appearance setting changed.
@@ -119,10 +125,14 @@ fn setting_row(
     ui.add_space(20.0);
 }
 
-fn settings_nav_item(ui: &mut egui::Ui, title: &str, selected: bool) -> bool {
-    ui.add_sized(
-        egui::vec2(ui.available_width(), 30.0),
-        egui::Button::selectable(selected, title),
+fn settings_nav_item(ui: &mut egui::Ui, page: SettingsPage, selected: bool) -> bool {
+    let icon = egui::Image::new(page.icon())
+        .fit_to_exact_size(egui::Vec2::splat(16.0))
+        .tint(ui.visuals().text_color());
+    ui.add(
+        egui::Button::selectable(selected, (icon, page.title(), egui::Atom::grow()))
+            .min_size(egui::vec2(ui.available_width(), 30.0))
+            .gap(8.0),
     )
     .clicked()
 }
@@ -286,7 +296,9 @@ impl GuiLayer {
         let mut workspace_background = self.workspace_background;
         let mut changed = false;
         let mut close = false;
-        let frame = egui::Frame::popup(&context.global_style()).inner_margin(0);
+        let frame = egui::Frame::popup(&context.global_style())
+            .corner_radius(28)
+            .inner_margin(0);
         let response = egui::Modal::new(egui::Id::new("settings dialog"))
             .frame(frame)
             .show(context, |ui| {
@@ -297,10 +309,10 @@ impl GuiLayer {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     egui::Frame::NONE
                         .inner_margin(egui::Margin {
-                            left: 20,
+                            left: 24,
                             right: 12,
-                            top: 20,
-                            bottom: 20,
+                            top: 24,
+                            bottom: 24,
                         })
                         .show(ui, |ui| {
                             ui.vertical(|ui| {
@@ -309,18 +321,21 @@ impl GuiLayer {
                                 ui.heading("Settings");
                                 ui.add_space(12.0);
                                 for candidate in SettingsPage::ALL {
-                                    if settings_nav_item(ui, candidate.title(), page == candidate) {
+                                    if settings_nav_item(ui, candidate, page == candidate) {
                                         page = candidate;
                                     }
                                 }
                             });
                         });
                     egui::Frame::NONE
-                        .inner_margin(egui::Margin::symmetric(24, 20))
+                        .inner_margin(egui::Margin::same(24))
                         .show(ui, |ui| {
                             ui.vertical(|ui| {
                                 ui.set_width(SETTINGS_CONTENT_WIDTH);
-                                ui.heading(page.title());
+                                ui.horizontal(|ui| {
+                                    ui.heading(page.title());
+                                    close = dialog_close_button(ui);
+                                });
                                 ui.add_space(12.0);
                                 match page {
                                     SettingsPage::Appearance => {
@@ -332,17 +347,6 @@ impl GuiLayer {
                                         );
                                     }
                                 }
-                                let button_height = ui.spacing().interact_size.y;
-                                let used_height = ui.min_rect().height();
-                                ui.add_space(
-                                    (SETTINGS_MIN_HEIGHT - used_height - button_height).max(16.0),
-                                );
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        close = ui.button("Done").clicked();
-                                    },
-                                );
                             });
                         });
                 });
@@ -398,22 +402,7 @@ impl GuiLayer {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.heading("Keyboard Shortcuts");
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let icon = egui::Image::new(egui::include_image!(
-                                    "../../../assets/icons/x.svg"
-                                ))
-                                .fit_to_exact_size(egui::Vec2::splat(18.0))
-                                .alt_text("Close");
-                                ui.add(
-                                    egui::Button::image(icon)
-                                        .frame(false)
-                                        .image_tint_follows_text_color(true),
-                                )
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .on_hover_text("Close")
-                                .clicked()
-                            })
-                            .inner
+                            dialog_close_button(ui)
                         })
                         .inner
                     })
@@ -442,6 +431,23 @@ impl GuiLayer {
             self.shortcuts_dialog_open = false;
         }
     }
+}
+
+fn dialog_close_button(ui: &mut egui::Ui) -> bool {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let icon = egui::Image::new(egui::include_image!("../../../assets/icons/x.svg"))
+            .fit_to_exact_size(egui::Vec2::splat(18.0))
+            .alt_text("Close");
+        ui.add(
+            egui::Button::image(icon)
+                .frame(false)
+                .image_tint_follows_text_color(true),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Close")
+        .clicked()
+    })
+    .inner
 }
 
 const SHORTCUT_SECTIONS: &[(&str, &[(&str, &str)])] = &[
