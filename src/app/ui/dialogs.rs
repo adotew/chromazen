@@ -502,7 +502,7 @@ impl GuiLayer {
                 visuals.selection.stroke = egui::Stroke::new(1.0_f32, visuals.strong_text_color());
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
-                    let sidebar_background = ui.painter().add(egui::Shape::Noop);
+                    let section_background = ui.painter().add(egui::Shape::Noop);
                     let sidebar = egui::Frame::NONE
                         .inner_margin(egui::Margin {
                             left: 24,
@@ -545,19 +545,36 @@ impl GuiLayer {
                             });
                         });
                     // Spans the dialog's full height, which the content column may set.
-                    let rect = sidebar.with_max_y(ui.min_rect().bottom());
-                    ui.painter().set(
-                        sidebar_background,
+                    let dialog = ui.min_rect();
+                    let opaque = surface_style == SurfaceStyle::Opaque;
+                    let dark_mode = ui.visuals().dark_mode;
+                    // The opaque dark surface is already near black, so lift the content instead.
+                    let shape = if opaque && dark_mode {
                         egui::epaint::RectShape::filled(
-                            rect,
+                            dialog.with_min_x(sidebar.right()),
+                            egui::CornerRadius {
+                                ne: 28,
+                                se: 28,
+                                ..Default::default()
+                            },
+                            ui.visuals().text_color().gamma_multiply(0.09),
+                        )
+                    } else {
+                        egui::epaint::RectShape::filled(
+                            sidebar.with_max_y(dialog.bottom()),
                             egui::CornerRadius {
                                 nw: 28,
                                 sw: 28,
                                 ..Default::default()
                             },
-                            egui::Color32::from_black_alpha(90),
-                        ),
-                    );
+                            if opaque || !dark_mode {
+                                ui.visuals().text_color().gamma_multiply(0.09)
+                            } else {
+                                egui::Color32::from_black_alpha(90)
+                            },
+                        )
+                    };
+                    ui.painter().set(section_background, shape);
                 });
             });
         let close = response.should_close();
