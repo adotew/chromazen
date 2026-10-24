@@ -891,6 +891,12 @@ fn dialog_buttons(ui: &mut egui::Ui, buttons: &[DialogButton]) -> Option<usize> 
         let gap = ui.spacing().item_spacing.x;
         let size = egui::vec2((ui.available_width() - gap * (count - 1.0)) / count, 36.0);
         let mut clicked = None;
+        // Frosted surfaces have a translucent window fill; let the blur show through the fill too.
+        let fill_opacity = if ui.visuals().window_fill.a() < u8::MAX {
+            0.75
+        } else {
+            1.0
+        };
         for (index, button) in buttons.iter().enumerate() {
             let fill = match button.kind {
                 DialogButtonKind::Primary => Some(ui.visuals().selection.bg_fill),
@@ -908,7 +914,7 @@ fn dialog_buttons(ui: &mut egui::Ui, buttons: &[DialogButton]) -> Option<usize> 
             };
             let mut widget = egui::Button::new(text).corner_radius(18).min_size(size);
             if let Some(fill) = fill {
-                widget = widget.fill(fill);
+                widget = widget.fill(fill.gamma_multiply(fill_opacity));
             }
             if ui.add_enabled(button.enabled, widget).clicked() {
                 clicked = Some(index);
