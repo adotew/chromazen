@@ -14,6 +14,8 @@ use super::{
 };
 
 const HEADER_HEIGHT: f32 = 32.0;
+const MIN_THUMBNAIL_SIZE: f32 = 198.0;
+const COLUMN_GAP: f32 = 32.0;
 // On macOS the header sits in the transparent titlebar.
 #[cfg(target_os = "macos")]
 const HEADER_TOP_SPACE: f32 = crate::platform::WINDOW_CONTROLS_MARGIN
@@ -116,19 +118,22 @@ impl GalleryUi {
                 }
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    let row = egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true);
-                    ui.with_layout(row, |ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(32.0, 40.0);
-                        for artwork in artworks {
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(220.0, 250.0),
-                                egui::Layout::top_down(egui::Align::Min),
-                                |ui| {
-                                    ui.spacing_mut().item_spacing.y = 10.0;
-                                    egui::Frame::NONE.inner_margin(0).show(ui, |ui| {
-                                        ui.set_width(198.0);
-                                        let (open, content) =
-                                            show_artwork_thumbnail(ui, self.thumbnail(&artwork.id));
+                    let (columns, size) = gallery_columns(ui.available_width());
+                    ui.spacing_mut().item_spacing = egui::vec2(COLUMN_GAP, 40.0);
+                    for row in artworks.chunks(columns) {
+                        ui.horizontal_top(|ui| {
+                            for artwork in row {
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(size, size + 52.0),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| {
+                                        ui.spacing_mut().item_spacing.y = 10.0;
+                                        ui.set_width(size);
+                                        let (open, content) = show_artwork_thumbnail(
+                                            ui,
+                                            self.thumbnail(&artwork.id),
+                                            size,
+                                        );
                                         open.context_menu(|ui| {
                                             self.show_artwork_menu(ui, artwork, commands);
                                         });
@@ -145,11 +150,11 @@ impl GalleryUi {
                                             ui.strong(&artwork.title);
                                             ui.label(format_dimensions(artwork.dimensions));
                                         });
-                                    });
-                                },
-                            );
-                        }
-                    });
+                                    },
+                                );
+                            }
+                        });
+                    }
                 });
             });
         self.show_rename_dialog(ui.ctx(), commands);
@@ -374,6 +379,14 @@ fn select_all(
     state.clone().store(context, id);
 }
 
+/// Fits as many columns as keep thumbnails at least `MIN_THUMBNAIL_SIZE`, then grows the
+/// thumbnails so the outer columns touch both edges.
+fn gallery_columns(width: f32) -> (usize, f32) {
+    let columns = ((width + COLUMN_GAP) / (MIN_THUMBNAIL_SIZE + COLUMN_GAP)).max(1.0) as usize;
+    let size = (width - (columns - 1) as f32 * COLUMN_GAP) / columns as f32;
+    (columns, size.max(MIN_THUMBNAIL_SIZE))
+}
+
 fn format_dimensions(dimensions: [u32; 2]) -> String {
     format!("{} \u{00d7} {}", dimensions[0], dimensions[1])
 }
@@ -382,9 +395,9 @@ fn format_dimensions(dimensions: [u32; 2]) -> String {
 fn show_artwork_thumbnail(
     ui: &mut egui::Ui,
     thumbnail: Option<&Thumbnail>,
+    size: f32,
 ) -> (egui::Response, egui::Rect) {
-    const SIZE: f32 = 198.0;
-    let slot_size = egui::Vec2::splat(SIZE);
+    let slot_size = egui::Vec2::splat(size);
     let (slot, response) = ui.allocate_exact_size(slot_size, egui::Sense::click());
     let Some(thumbnail) = thumbnail else {
         egui::Image::new(egui::include_image!("../../../assets/icons/paintbrush.svg"))
@@ -398,9 +411,9 @@ fn show_artwork_thumbnail(
     };
 
     let content_size = if thumbnail.content_aspect >= 1.0 {
-        egui::vec2(SIZE, SIZE / thumbnail.content_aspect)
+        egui::vec2(size, size / thumbnail.content_aspect)
     } else {
-        egui::vec2(SIZE * thumbnail.content_aspect, SIZE)
+        egui::vec2(size * thumbnail.content_aspect, size)
     };
     let content = egui::Rect::from_center_size(slot.center(), content_size);
     egui::Image::new((thumbnail.texture.id(), content_size))
@@ -456,6 +469,19 @@ fn thumbnail_content_bounds(image: &image::RgbaImage) -> (egui::Rect, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gallery_thumbnails_grow_until_another_column_fits() {
+        assert_eq!(gallery_columns(100.0), (1, MIN_THUMBNAIL_SIZE));
+        assert_eq!(
+            gallery_columns(2.0 * MIN_THUMBNAIL_SIZE + COLUMN_GAP + 100.0),
+            (2, MIN_THUMBNAIL_SIZE + 50.0)
+        );
+        assert_eq!(
+            gallery_columns(3.0 * MIN_THUMBNAIL_SIZE + 2.0 * COLUMN_GAP),
+            (3, MIN_THUMBNAIL_SIZE)
+        );
+    }
 
     #[test]
     fn rename_dialog_opens_focused_with_the_title_selected() {
