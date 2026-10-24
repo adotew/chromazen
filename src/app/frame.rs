@@ -263,7 +263,11 @@ impl App {
         gui.sync_frost_texture(gpu);
         let frosted_surfaces = gui.prepare_frosted_surfaces(&mut full_output.shapes);
         let frost_visible = !frosted_surfaces.is_empty();
-        let pointer_over_ui = gui.context.is_pointer_over_egui();
+        // The titlebar strip drags the window instead of painting, so treat it like UI.
+        let pointer_in_titlebar = self.screen == AppScreen::Editor
+            && !self.input.has_active_document_drag()
+            && super::cursor_in_macos_titlebar(window, self.input.cursor_position());
+        let pointer_over_ui = gui.context.is_pointer_over_egui() || pointer_in_titlebar;
         let pointer_over_reference =
             self.screen == AppScreen::Editor && gui.pointer_over_reference();
         let reference_drag_active = self.screen == AppScreen::Editor && gui.reference_drag_active();

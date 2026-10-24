@@ -67,6 +67,11 @@ const MACOS_TITLEBAR_HEIGHT: f64 = 32.0 + crate::platform::WINDOW_CONTROLS_MARGI
 #[cfg(target_os = "linux")]
 const LINUX_APPLICATION_ID: &str = "io.github.adotew.chromazen";
 
+fn cursor_in_macos_titlebar(window: &Window, cursor_pos: [f32; 2]) -> bool {
+    ui::has_macos_titlebar(window.fullscreen().is_some())
+        && f64::from(cursor_pos[1]) < MACOS_TITLEBAR_HEIGHT * window.scale_factor()
+}
+
 enum AppEvent {
     Command(AppCommand),
     #[cfg_attr(not(any(target_os = "linux", target_os = "windows")), allow(dead_code))]
@@ -381,16 +386,14 @@ impl ApplicationHandler<AppEvent> for App {
                 // still reach the canvas beneath them.
                 let wheel_over_reference =
                     point_over_reference && matches!(&event, WindowEvent::MouseWheel { .. });
-                let press_in_titlebar = ui::has_macos_titlebar(window.fullscreen().is_some())
-                    && matches!(
+                let press_in_titlebar =
+                    matches!(
                         &event,
                         WindowEvent::MouseInput {
                             state: ElementState::Pressed,
                             ..
                         }
-                    )
-                    && f64::from(self.input.cursor_position()[1])
-                        < MACOS_TITLEBAR_HEIGHT * window.scale_factor();
+                    ) && cursor_in_macos_titlebar(&window, self.input.cursor_position());
                 if !egui_consumed
                     && matches!(
                         &event,
