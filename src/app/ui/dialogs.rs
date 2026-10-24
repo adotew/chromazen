@@ -69,20 +69,14 @@ fn appearance_settings(
         "Workspace background",
         "Color of the area around the canvas.",
         |ui| {
-            changed |= ui
-                .selectable_value(
-                    workspace_background,
-                    WorkspaceBackground::NeutralGray,
-                    "Neutral Gray",
-                )
-                .changed();
-            changed |= ui
-                .selectable_value(
-                    workspace_background,
-                    WorkspaceBackground::Standard,
-                    "Standard",
-                )
-                .changed();
+            changed |= segmented_control(
+                ui,
+                workspace_background,
+                [
+                    (WorkspaceBackground::Standard, "Standard"),
+                    (WorkspaceBackground::NeutralGray, "Neutral Gray"),
+                ],
+            );
         },
     );
     setting_row(
@@ -90,12 +84,14 @@ fn appearance_settings(
         "Interface backgrounds",
         "Use solid fills or blur the canvas behind panels.",
         |ui| {
-            changed |= ui
-                .selectable_value(surface_style, SurfaceStyle::Frosted, "Frosted")
-                .changed();
-            changed |= ui
-                .selectable_value(surface_style, SurfaceStyle::Opaque, "Opaque")
-                .changed();
+            changed |= segmented_control(
+                ui,
+                surface_style,
+                [
+                    (SurfaceStyle::Opaque, "Opaque"),
+                    (SurfaceStyle::Frosted, "Frosted"),
+                ],
+            );
         },
     );
     changed
@@ -123,6 +119,86 @@ fn setting_row(
         );
     });
     ui.add_space(20.0);
+}
+
+/// A pill-shaped two-option switch whose highlight slides to the selected option.
+fn segmented_control<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    value: &mut T,
+    options: [(T, &str); 2],
+) -> bool {
+    const PADDING: f32 = 3.0;
+    const SEGMENT_HEIGHT: f32 = 26.0;
+    const SEGMENT_MARGIN: f32 = 14.0;
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let galleys = options.map(|(_, label)| {
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), font.clone(), egui::Color32::PLACEHOLDER)
+    });
+    let segment_size = egui::vec2(
+        galleys[0].size().x.max(galleys[1].size().x) + 2.0 * SEGMENT_MARGIN,
+        SEGMENT_HEIGHT,
+    );
+    let size = egui::vec2(2.0 * segment_size.x, segment_size.y) + egui::Vec2::splat(2.0 * PADDING);
+    let (track, track_response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let segment = |offset: f32| {
+        egui::Rect::from_min_size(
+            track.min + egui::vec2(PADDING + offset * segment_size.x, PADDING),
+            segment_size,
+        )
+    };
+    let mut changed = false;
+    let hovered = [0, 1].map(|index| {
+        let (option, label) = options[index];
+        let response = ui
+            .interact(
+                segment(index as f32),
+                track_response.id.with(index),
+                egui::Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if response.clicked() && *value != option {
+            *value = option;
+            changed = true;
+        }
+        let selected = *value == option;
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, label)
+        });
+        response.hovered()
+    });
+    let position = ui.ctx().animate_bool_with_time_and_easing(
+        track_response.id,
+        *value == options[1].0,
+        0.1,
+        egui::emath::easing::cubic_in_out,
+    );
+    let visuals = ui.visuals();
+    let painter = ui.painter();
+    painter.rect_filled(
+        track,
+        size.y / 2.0,
+        visuals.text_color().gamma_multiply(0.06),
+    );
+    painter.rect_filled(
+        segment(position),
+        SEGMENT_HEIGHT / 2.0,
+        visuals.text_color().gamma_multiply(0.16),
+    );
+    for (index, galley) in galleys.into_iter().enumerate() {
+        let base = if hovered[index] {
+            visuals.text_color()
+        } else {
+            visuals.weak_text_color()
+        };
+        let highlight = 1.0 - (position - index as f32).abs();
+        painter.galley(
+            segment(index as f32).center() - galley.size() / 2.0,
+            galley,
+            base.lerp_to_gamma(visuals.strong_text_color(), highlight),
+        );
+    }
+    changed
 }
 
 fn settings_nav_item(ui: &mut egui::Ui, page: SettingsPage, selected: bool) -> bool {
