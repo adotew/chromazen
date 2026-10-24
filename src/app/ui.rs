@@ -302,6 +302,7 @@ struct NewArtworkDialog {
     width: u32,
     height: u32,
     background: egui::Color32,
+    focus_width: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

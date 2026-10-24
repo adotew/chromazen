@@ -137,14 +137,16 @@ fn settings_nav_item(ui: &mut egui::Ui, page: SettingsPage, selected: bool) -> b
     .clicked()
 }
 
-fn dimension_row(ui: &mut egui::Ui, label: &str, value: &mut u32, max: u32) {
+fn dimension_row(ui: &mut egui::Ui, label: &str, value: &mut u32, max: u32) -> egui::Response {
     ui.horizontal(|ui| {
         ui.label(label);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.weak("px");
-            ui.add(egui::DragValue::new(value).range(1..=max).speed(1));
-        });
-    });
+            ui.add(egui::DragValue::new(value).range(1..=max).speed(1))
+        })
+        .inner
+    })
+    .inner
 }
 
 fn background_row(ui: &mut egui::Ui, color: &mut egui::Color32) {
@@ -222,6 +224,7 @@ impl GuiLayer {
             width: DEFAULT_CANVAS_SIZE[0],
             height: DEFAULT_CANVAS_SIZE[1],
             background: egui::Color32::WHITE,
+            focus_width: true,
         });
         self.context.request_repaint();
     }
@@ -246,9 +249,12 @@ impl GuiLayer {
                 ui.heading("New Artwork");
                 ui.add_space(16.0);
                 let max_dimension = self.canvas_size_constraints.max_dimension;
-                dimension_row(ui, "Width", &mut dialog.width, max_dimension);
+                let width = dimension_row(ui, "Width", &mut dialog.width, max_dimension);
+                if std::mem::take(&mut dialog.focus_width) {
+                    width.request_focus();
+                }
                 ui.add_space(10.0);
-                dimension_row(ui, "Height", &mut dialog.height, max_dimension);
+                let _ = dimension_row(ui, "Height", &mut dialog.height, max_dimension);
                 ui.add_space(10.0);
                 background_row(ui, &mut dialog.background);
                 let validation = self
