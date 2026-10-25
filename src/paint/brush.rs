@@ -2,12 +2,15 @@ use chromazen_brush::PressureConfig;
 use chromazen_canvas::{BrushSpacing, StrokePoint};
 use egui::Color32;
 
+use super::PressureCurve;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BrushSettings {
     pub color: Color32,
     pub size: f32,
     pub opacity: f32,
     pub pressure: PressureConfig,
+    pub pen_pressure_curve: PressureCurve,
     pub spacing: BrushSpacing,
 }
 
@@ -17,12 +20,16 @@ impl BrushSettings {
     }
 
     pub fn radius(self, pressure: f32) -> f32 {
-        self.pressure.radius(self.size, pressure)
+        self.pressure
+            .radius(self.size, self.pen_pressure_curve.apply(pressure))
     }
 
     pub fn stroke_point(self, document_point: [f32; 2], pressure: f32) -> StrokePoint {
-        self.pressure
-            .stroke_point(document_point, self.size, pressure)
+        self.pressure.stroke_point(
+            document_point,
+            self.size,
+            self.pen_pressure_curve.apply(pressure),
+        )
     }
 }
 

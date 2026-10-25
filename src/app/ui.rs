@@ -38,7 +38,7 @@ use crate::{
         WorkspaceBackground,
     },
     gpu::GpuContext,
-    paint::{BrushSettings, PaintTool},
+    paint::{BrushSettings, PaintTool, PressureCurve},
 };
 
 #[cfg(not(target_os = "macos"))]
@@ -174,6 +174,7 @@ pub(crate) struct UiSettingsSnapshot {
     pub(crate) accent_color: [u8; 3],
     pub(crate) surface_style: SurfaceStyle,
     pub(crate) workspace_background: WorkspaceBackground,
+    pub(crate) pressure_curve: PressureCurve,
 }
 
 pub(crate) struct FrostedSurface {
@@ -429,7 +430,7 @@ impl GuiLayer {
             frost_texture_generation: gpu.frost_generation(),
             surface_style: config.surface_style,
             workspace_background: config.workspace_background,
-            brush: brush_settings_from_config(&config.brush, brush_preset),
+            brush: brush_settings_from_config(config, brush_preset),
             previous_brush_color: brush_color(&config.brush),
             settled_brush_color: brush_color(&config.brush),
             tool_brushes: [
@@ -653,6 +654,7 @@ impl GuiLayer {
             accent_color: rgb(self.accent_color),
             surface_style: self.surface_style,
             workspace_background: self.workspace_background,
+            pressure_curve: self.brush.pen_pressure_curve,
         }
     }
 
@@ -760,6 +762,7 @@ impl GuiLayer {
         self.panel_layout = config.panel_layout;
         self.set_surface_style(config.surface_style);
         self.workspace_background = config.workspace_background;
+        self.brush.pen_pressure_curve = config.pressure_curve;
         self.set_accent_color(egui::Color32::from_rgb(
             config.accent_color[0],
             config.accent_color[1],
@@ -1847,16 +1850,14 @@ fn paint_rounded_panel(ui: &egui::Ui, rect: egui::Rect, corner_radius: egui::Cor
         .rect_filled(rect, corner_radius, ui.visuals().window_fill());
 }
 
-fn brush_settings_from_config(
-    config: &CurrentBrushConfig,
-    loaded: &LoadedBrushPreset,
-) -> BrushSettings {
+fn brush_settings_from_config(config: &AppConfig, loaded: &LoadedBrushPreset) -> BrushSettings {
     let preset = &loaded.preset;
     BrushSettings {
-        color: brush_color(config),
-        size: config.size.clamp(preset.size.min, preset.size.max),
-        opacity: config.opacity,
+        color: brush_color(&config.brush),
+        size: config.brush.size.clamp(preset.size.min, preset.size.max),
+        opacity: config.brush.opacity,
         pressure: preset.pressure,
+        pen_pressure_curve: config.pressure_curve,
         spacing: preset.spacing.into(),
     }
 }

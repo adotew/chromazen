@@ -11,7 +11,7 @@ use chromazen_brush::{BrushError, DEFAULT_BRUSH_ID};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
-use crate::paint::PaintTool;
+use crate::paint::{PaintTool, PressureCurve};
 mod brush;
 mod brush_import;
 
@@ -42,6 +42,7 @@ pub(crate) struct AppConfig {
     pub(crate) panel_layout: PanelLayout,
     pub(crate) surface_style: SurfaceStyle,
     pub(crate) workspace_background: WorkspaceBackground,
+    pub(crate) pressure_curve: PressureCurve,
 }
 
 impl Default for AppConfig {
@@ -60,6 +61,7 @@ impl Default for AppConfig {
             panel_layout: PanelLayout::default(),
             surface_style: SurfaceStyle::default(),
             workspace_background: WorkspaceBackground::default(),
+            pressure_curve: PressureCurve::default(),
         }
     }
 }
@@ -171,7 +173,7 @@ impl AppConfig {
         ] {
             validate_opacity(name, opacity)?;
         }
-        Ok(())
+        self.pressure_curve.validate().map_err(ConfigError::new)
     }
 }
 
@@ -450,6 +452,11 @@ mod tests {
         config.brush.color = [1, 2, 3, 255];
         config.accent_color = [4, 5, 6];
         config.workspace_background = WorkspaceBackground::NeutralGray;
+        config.pressure_curve = PressureCurve {
+            zero_until: 0.1,
+            full_from: 0.8,
+            controls: [[0.0, 0.5], [0.25, 1.0]],
+        };
         config.panel_layout = PanelLayout {
             brush_panel_pos: [1.0, 2.0],
             color_panel_pos: [5.0, 6.0],
@@ -512,6 +519,21 @@ mod tests {
         let error = store.load_app_config().expect_err("invalid config");
 
         assert!(error.to_string().contains("brush.size"));
+    }
+
+    #[test]
+    fn invalid_pressure_curve_is_rejected() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+        fs::write(
+            store.config_path(),
+            "[pressure_curve]\nzero_until = 0.9\nfull_from = 0.2\n",
+        )
+        .expect("write config");
+
+        let error = store.load_app_config().expect_err("invalid config");
+
+        assert!(error.to_string().contains("pressure_curve"));
     }
 
     #[test]

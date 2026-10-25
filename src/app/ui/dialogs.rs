@@ -28,26 +28,28 @@ const SETTINGS_MIN_HEIGHT: f32 = 280.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SettingsPage {
     Appearance,
+    Pen,
 }
 
 impl SettingsPage {
-    const ALL: [Self; 1] = [Self::Appearance];
+    const ALL: [Self; 2] = [Self::Appearance, Self::Pen];
 
     fn title(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance",
+            Self::Pen => "Pen",
         }
     }
 
     fn icon(self) -> egui::ImageSource<'static> {
         match self {
             Self::Appearance => egui::include_image!("../../../assets/icons/palette.svg"),
+            Self::Pen => egui::include_image!("../../../assets/icons/pen-line.svg"),
         }
     }
 }
 
-/// Returns whether any appearance setting changed.
-fn appearance_settings(
+fn has_appearance_setting_changed(
     ui: &mut egui::Ui,
     accent_color: &mut egui::Color32,
     workspace_background: &mut WorkspaceBackground,
@@ -90,6 +92,162 @@ fn appearance_settings(
             );
         },
     );
+    changed
+}
+
+fn has_pen_setting_changed(ui: &mut egui::Ui, curve: &mut PressureCurve) -> bool {
+    let mut changed = false;
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(SETTINGS_LABEL_WIDTH);
+            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.label(egui::RichText::new("Pressure curve").color(ui.visuals().strong_text_color()));
+            ui.label(egui::RichText::new("How firmly you need to press.").size(12.0));
+        });
+        ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+            changed |= pressure_curve_editor(ui, curve);
+            ui.add_space(8.0);
+            if ui
+                .add_enabled(
+                    *curve != PressureCurve::default(),
+                    egui::Button::new("Reset"),
+                )
+                .clicked()
+            {
+                *curve = PressureCurve::default();
+                changed = true;
+            }
+        });
+    });
+    changed
+}
+
+fn pressure_curve_editor(ui: &mut egui::Ui, curve: &mut PressureCurve) -> bool {
+    const SIZE: f32 = 200.0;
+    const HANDLE_RADIUS: f32 = 5.0;
+    const EDGE_HANDLE_CLEARANCE: f32 = HANDLE_RADIUS + 3.0;
+    const ZERO_UNTIL: usize = 0;
+    const FIRST_CONTROL: usize = 1;
+    const SECOND_CONTROL: usize = 2;
+    const FULL_FROM: usize = 3;
+    let (allocated, graph_response) =
+        ui.allocate_exact_size(egui::Vec2::splat(SIZE), egui::Sense::hover());
+    let graph = allocated.shrink(EDGE_HANDLE_CLEARANCE);
+    let to_screen = |[x, y]: [f32; 2]| {
+        egui::pos2(
+            egui::lerp(graph.x_range(), x),
+            egui::lerp(graph.y_range(), 1.0 - y),
+        )
+    };
+    let handle_point = |curve: &PressureCurve, index: usize| match index {
+        ZERO_UNTIL => [curve.zero_until, 0.0],
+        FULL_FROM => [curve.full_from, 1.0],
+        _ => {
+            let [x, y] = curve.controls[index - FIRST_CONTROL];
+            [
+                curve.zero_until + (curve.full_from - curve.zero_until) * x,
+                y,
+            ]
+        }
+    };
+
+    let mut changed = false;
+    let mut active = [false; 4];
+    let lowest_to_highest_hit_priority = [ZERO_UNTIL, FULL_FROM, FIRST_CONTROL, SECOND_CONTROL];
+    for index in lowest_to_highest_hit_priority {
+        let rect = egui::Rect::from_center_size(
+            to_screen(handle_point(curve, index)),
+            egui::Vec2::splat(4.0 * HANDLE_RADIUS),
+        );
+        let response = ui
+            .interact(rect, graph_response.id.with(index), egui::Sense::drag())
+            .on_hover_cursor(egui::CursorIcon::Grab);
+        active[index] = response.hovered() || response.dragged();
+        if response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        }
+        let Some(pointer) = response
+            .interact_pointer_pos()
+            .filter(|_| response.dragged())
+        else {
+            continue;
+        };
+        let x = ((pointer.x - graph.left()) / graph.width()).clamp(0.0, 1.0);
+        let y = ((graph.bottom() - pointer.y) / graph.height()).clamp(0.0, 1.0);
+        match index {
+            ZERO_UNTIL => {
+                curve.zero_until = x.min(curve.full_from - PressureCurve::EDITOR_MIN_SPAN);
+            }
+            FULL_FROM => {
+                curve.full_from = x.max(curve.zero_until + PressureCurve::EDITOR_MIN_SPAN);
+            }
+            _ => {
+                let relative_x = (x - curve.zero_until) / (curve.full_from - curve.zero_until);
+                curve.controls[index - FIRST_CONTROL] = [relative_x.clamp(0.0, 1.0), y];
+            }
+        }
+        changed = true;
+    }
+
+    let visuals = ui.visuals();
+    let painter = ui.painter();
+    let faint = visuals.text_color().gamma_multiply(0.1);
+    painter.rect_filled(graph, 6, visuals.text_color().gamma_multiply(0.05));
+    for step in [0.25, 0.5, 0.75] {
+        painter.line_segment(
+            [to_screen([step, 0.0]), to_screen([step, 1.0])],
+            egui::Stroke::new(1.0, faint),
+        );
+        painter.line_segment(
+            [to_screen([0.0, step]), to_screen([1.0, step])],
+            egui::Stroke::new(1.0, faint),
+        );
+    }
+    painter.line_segment(
+        [to_screen([0.0, 0.0]), to_screen([1.0, 1.0])],
+        egui::Stroke::new(1.0, faint),
+    );
+    let weak = egui::Stroke::new(1.0, visuals.weak_text_color());
+    for (end, control) in [(ZERO_UNTIL, FIRST_CONTROL), (FULL_FROM, SECOND_CONTROL)] {
+        painter.line_segment(
+            [
+                to_screen(handle_point(curve, end)),
+                to_screen(handle_point(curve, control)),
+            ],
+            weak,
+        );
+    }
+    const SEGMENTS: usize = 48;
+    let points = std::iter::once([0.0, 0.0])
+        .chain(
+            (0..=SEGMENTS)
+                .map(|step| curve.pen_and_brush_pressure_at(step as f32 / SEGMENTS as f32)),
+        )
+        .chain(std::iter::once([1.0, 1.0]))
+        .map(to_screen)
+        .collect();
+    painter.add(egui::Shape::line(
+        points,
+        egui::Stroke::new(2.0, visuals.strong_text_color()),
+    ));
+    for (index, active) in active.into_iter().enumerate() {
+        let center = to_screen(handle_point(curve, index));
+        let radius = if active {
+            HANDLE_RADIUS + 1.5
+        } else {
+            HANDLE_RADIUS
+        };
+        if matches!(index, ZERO_UNTIL | FULL_FROM) {
+            painter.circle_filled(center, radius, visuals.strong_text_color());
+        } else {
+            painter.circle(
+                center,
+                radius,
+                visuals.window_fill(),
+                egui::Stroke::new(1.5, visuals.strong_text_color()),
+            );
+        }
+    }
     changed
 }
 
@@ -517,6 +675,7 @@ impl GuiLayer {
         let mut accent_color = self.accent_color;
         let mut surface_style = self.surface_style;
         let mut workspace_background = self.workspace_background;
+        let mut pressure_curve = self.brush.pen_pressure_curve;
         let mut changed = false;
         let frame = dialog_frame(context).inner_margin(0);
         let response = egui::Modal::new(egui::Id::new("settings dialog"))
@@ -559,12 +718,15 @@ impl GuiLayer {
                                 ui.add_space(12.0);
                                 match page {
                                     SettingsPage::Appearance => {
-                                        changed |= appearance_settings(
+                                        changed |= has_appearance_setting_changed(
                                             ui,
                                             &mut accent_color,
                                             &mut workspace_background,
                                             &mut surface_style,
                                         );
+                                    }
+                                    SettingsPage::Pen => {
+                                        changed |= has_pen_setting_changed(ui, &mut pressure_curve);
                                     }
                                 }
                             });
@@ -608,6 +770,7 @@ impl GuiLayer {
             self.set_accent_color(accent_color);
             self.set_surface_style(surface_style);
             self.workspace_background = workspace_background;
+            self.brush.pen_pressure_curve = pressure_curve;
         }
         if close {
             self.settings_dialog_open = false;
