@@ -159,13 +159,21 @@ impl GuiLayer {
                         self.panel_layout.color_panel_pos[0],
                         self.panel_layout.color_panel_pos[1],
                     ))
-                    .default_width(280.0)
-                    .resizable(false)
+                    .default_width(self.panel_layout.color_panel_width)
+                    .min_width(PANEL_MIN_WIDTH)
+                    .max_width(PANEL_MAX_WIDTH)
+                    .resizable([true, false])
                     .collapsible(false)
-                    .show(ui.ctx(), |ui| self.show_brush_color_picker(ui))
+                    .show(ui.ctx(), |ui| {
+                        self.show_brush_color_picker(ui);
+                        ui.max_rect().width()
+                    })
             {
                 let min = response.response.rect.min;
                 self.panel_layout.color_panel_pos = [min.x, min.y];
+                if let Some(width) = response.inner {
+                    self.panel_layout.color_panel_width = width;
+                }
                 let swatch_rect = egui::Rect::from_min_size(
                     response.response.rect.left_top() + egui::vec2(8.0, 8.0),
                     egui::vec2(72.0, 24.0),
@@ -189,16 +197,21 @@ impl GuiLayer {
                         self.panel_layout.brush_panel_pos[0],
                         self.panel_layout.brush_panel_pos[1],
                     ))
-                    .auto_sized()
-                    .default_width(BRUSH_PANEL_WIDTH)
-                    .min_width(BRUSH_PANEL_WIDTH)
-                    .max_width(BRUSH_PANEL_WIDTH)
-                    .resizable(false)
+                    .default_width(self.panel_layout.brush_panel_width)
+                    .min_width(PANEL_MIN_WIDTH)
+                    .max_width(PANEL_MAX_WIDTH)
+                    .resizable([true, false])
                     .collapsible(false)
-                    .show(ui.ctx(), |ui| self.show_brush_panel(ui, paint_tool))
+                    .show(ui.ctx(), |ui| {
+                        self.show_brush_panel(ui, paint_tool);
+                        ui.max_rect().width()
+                    })
             {
                 let min = response.response.rect.min;
                 self.panel_layout.brush_panel_pos = [min.x, min.y];
+                if let Some(width) = response.inner {
+                    self.panel_layout.brush_panel_width = width;
+                }
             }
 
             if !self.sidebar_visible && self.layers_window_open {
@@ -208,18 +221,21 @@ impl GuiLayer {
                         self.panel_layout.layers_panel_pos[0],
                         self.panel_layout.layers_panel_pos[1],
                     ))
-                    .auto_sized()
-                    .default_width(LAYER_PANEL_WIDTH)
-                    .min_width(LAYER_PANEL_WIDTH)
-                    .max_width(LAYER_PANEL_WIDTH)
-                    .max_height(LAYER_LIST_MAX_HEIGHT + 48.0)
+                    .default_size(self.panel_layout.layers_panel_size)
+                    .min_size([PANEL_MIN_WIDTH, LAYERS_PANEL_MIN_HEIGHT])
+                    .max_width(PANEL_MAX_WIDTH)
+                    .resizable(true)
                     .collapsible(false)
                     .show(ui.ctx(), |ui| {
-                        self.show_layers_panel(ui, layers, background)
+                        self.show_layers_panel(ui, layers, background);
+                        ui.max_rect().size()
                     });
                 if let Some(response) = layers_response {
                     let min = response.response.rect.min;
                     self.panel_layout.layers_panel_pos = [min.x, min.y];
+                    if let Some(size) = response.inner {
+                        self.panel_layout.layers_panel_size = [size.x, size.y];
+                    }
                     let button_rect = egui::Rect::from_min_size(
                         response.response.rect.left_top() + egui::vec2(8.0, 6.0),
                         egui::Vec2::splat(28.0),
@@ -404,6 +420,31 @@ fn show_sidebar_frame(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn floating_panel_reports_the_size_it_was_restored_with() {
+        let context = egui::Context::default();
+        let size = egui::vec2(360.0, 500.0);
+        let mut reported = None;
+        for _ in 0..3 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1600.0, 1200.0),
+                )),
+                ..Default::default()
+            };
+            let _ = context.run_ui(input, |ui| {
+                reported = egui::Window::new("Layers")
+                    .default_size(size)
+                    .resizable(true)
+                    .show(ui.ctx(), |ui| ui.max_rect().size())
+                    .and_then(|response| response.inner);
+            });
+        }
+        // Saving a larger size than was restored would grow the panel on every launch.
+        assert_eq!(reported, Some(size));
+    }
 
     #[test]
     fn sidebar_frame_tracks_content_instead_of_window_height() {

@@ -93,11 +93,20 @@ pub(crate) struct PanelLayout {
     pub(crate) color_panel_pos: [f32; 2],
     /// Top-left corner of the floating Layers panel, in points.
     pub(crate) layers_panel_pos: [f32; 2],
+    /// Content width of the floating Color panel, in points.
+    pub(crate) color_panel_width: f32,
+    /// Content width of the floating Brush panel, in points.
+    pub(crate) brush_panel_width: f32,
+    /// Content size of the floating Layers panel, in points.
+    pub(crate) layers_panel_size: [f32; 2],
 }
 
 pub(crate) const DEFAULT_BRUSH_PANEL_POS: [f32; 2] = [1016.0, 80.0];
 pub(crate) const DEFAULT_COLOR_PANEL_POS: [f32; 2] = [24.0, 80.0];
 pub(crate) const DEFAULT_LAYERS_PANEL_POS: [f32; 2] = [340.0, 80.0];
+pub(crate) const DEFAULT_COLOR_PANEL_WIDTH: f32 = 280.0;
+pub(crate) const DEFAULT_BRUSH_PANEL_WIDTH: f32 = 240.0;
+pub(crate) const DEFAULT_LAYERS_PANEL_SIZE: [f32; 2] = [300.0, 360.0];
 
 impl Default for PanelLayout {
     fn default() -> Self {
@@ -105,6 +114,9 @@ impl Default for PanelLayout {
             brush_panel_pos: DEFAULT_BRUSH_PANEL_POS,
             color_panel_pos: DEFAULT_COLOR_PANEL_POS,
             layers_panel_pos: DEFAULT_LAYERS_PANEL_POS,
+            color_panel_width: DEFAULT_COLOR_PANEL_WIDTH,
+            brush_panel_width: DEFAULT_BRUSH_PANEL_WIDTH,
+            layers_panel_size: DEFAULT_LAYERS_PANEL_SIZE,
         }
     }
 }
@@ -430,6 +442,9 @@ mod tests {
         assert_eq!(layout.brush_panel_pos, DEFAULT_BRUSH_PANEL_POS);
         assert_eq!(layout.color_panel_pos, [5.0, 6.0]);
         assert_eq!(layout.layers_panel_pos, [70.0, 80.0]);
+        assert_eq!(layout.color_panel_width, DEFAULT_COLOR_PANEL_WIDTH);
+        assert_eq!(layout.brush_panel_width, DEFAULT_BRUSH_PANEL_WIDTH);
+        assert_eq!(layout.layers_panel_size, DEFAULT_LAYERS_PANEL_SIZE);
     }
 
     #[test]
@@ -465,6 +480,9 @@ mod tests {
             brush_panel_pos: [1.0, 2.0],
             color_panel_pos: [5.0, 6.0],
             layers_panel_pos: [70.0, 80.0],
+            color_panel_width: 320.0,
+            brush_panel_width: 300.0,
+            layers_panel_size: [360.0, 500.0],
         };
 
         store.save_app_config(&config).expect("save config");

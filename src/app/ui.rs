@@ -53,10 +53,10 @@ use super::{
 
 const SIDEBAR_WIDTH: f32 = 300.0;
 const TOOL_RAIL_THICKNESS: f32 = 42.0;
-const BRUSH_PANEL_WIDTH: f32 = 240.0;
 const BRUSH_PRESET_LIST_MAX_HEIGHT: f32 = 320.0;
-const LAYER_PANEL_WIDTH: f32 = 300.0;
-const LAYER_LIST_MAX_HEIGHT: f32 = 440.0;
+const PANEL_MIN_WIDTH: f32 = 220.0;
+const PANEL_MAX_WIDTH: f32 = 520.0;
+const LAYERS_PANEL_MIN_HEIGHT: f32 = 160.0;
 
 #[cfg(target_os = "macos")]
 const SETTINGS_SHORTCUT: &str = "⌘ ,";
