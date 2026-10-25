@@ -5,8 +5,8 @@
 @group(0) @binding(4) var<uniform> layerSettings: LayerSettings;
 @group(0) @binding(5) var<uniform> clippingBaseSettings: LayerSettings;
 @group(0) @binding(6) var previewMask: texture_2d<f32>;
-// The painted layer's tile. Commit passes bind only the tile uniform because they render into
-// the tile.
+// The painted layer's tile. Commit passes render into the tile, so they bind only the tile
+// uniform, except pigment commits, which bind the tile as it was before the stroke.
 @group(1) @binding(0) var layerTile: texture_2d<f32>;
 @group(1) @binding(1) var<uniform> tile: Tile;
 // The clipping base tile at the same coordinate.
@@ -30,6 +30,7 @@ struct View {
 
 struct Stroke {
   color: vec4f,
+  colorMixing: u32,
 };
 
 struct Tile {
@@ -66,8 +67,12 @@ fn combined_preview_coverage(uv: vec2f) -> f32 {
 fn preview_brush(layer: vec4f, uv: vec2f) -> vec4f {
   let coverage = combined_preview_coverage(uv);
   let source = stroke.color * coverage;
+  var painted = source + layer * (1.0 - source.a);
+  if (stroke.colorMixing == COLOR_MIXING_PIGMENT) {
+    painted = pigment_over(source, layer);
+  }
   // The composed layer is premultiplied, so opacity scales every channel.
-  return (source + layer * (1.0 - source.a)) * layerSettings.opacity;
+  return painted * layerSettings.opacity;
 }
 
 fn preview_eraser(layer: vec4f, uv: vec2f) -> vec4f {
@@ -162,6 +167,13 @@ fn committed_coverage(pos: vec4f) -> f32 {
 @fragment
 fn fs_commit_brush(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   return stroke.color * committed_coverage(pos);
+}
+
+// Replaces the tile's pixels, reading the pre-stroke paint from `layerTile`.
+@fragment
+fn fs_commit_pigment(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let original = textureLoad(layerTile, vec2i(pos.xy), 0);
+  return pigment_over(stroke.color * committed_coverage(pos), original);
 }
 
 @fragment

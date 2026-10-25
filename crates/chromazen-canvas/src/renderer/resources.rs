@@ -83,6 +83,7 @@ pub(crate) struct RenderResources {
     pub(crate) mask_pipeline: wgpu::RenderPipeline,
     pub(crate) mask_clear_pipeline: wgpu::RenderPipeline,
     pub(crate) smudge_pipeline: wgpu::RenderPipeline,
+    pub(crate) pigment_smudge_pipeline: wgpu::RenderPipeline,
     pub(crate) cursor_pipeline: wgpu::RenderPipeline,
     pub(crate) screen_pipeline: wgpu::RenderPipeline,
     pub(crate) background_pipeline: wgpu::RenderPipeline,
@@ -100,6 +101,7 @@ pub(crate) struct RenderResources {
     pub(crate) group_clipped_eraser_preview_pipeline: wgpu::RenderPipeline,
     pub(crate) layer_thumbnail_pipeline: wgpu::RenderPipeline,
     pub(crate) brush_commit_pipeline: wgpu::RenderPipeline,
+    pub(crate) pigment_commit_pipeline: wgpu::RenderPipeline,
     pub(crate) eraser_commit_pipeline: wgpu::RenderPipeline,
     pub(crate) transform_pipeline: wgpu::RenderPipeline,
 }
@@ -152,7 +154,7 @@ impl RenderResources {
         });
         let stroke_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("stroke uniform buffer"),
-            contents: bytemuck::bytes_of(&StrokeUniform { color: [0.0; 4] }),
+            contents: bytemuck::bytes_of(&StrokeUniform::new([0.0; 4], Default::default())),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let layer_preview_uniform_buffer =
@@ -562,6 +564,15 @@ impl RenderResources {
                 ],
                 immediate_size: 0,
             });
+        let pigment_commit_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("pigment stroke commit pipeline layout"),
+                bind_group_layouts: &[
+                    Some(&stroke_commit_bind_group_layout),
+                    Some(&tile_bind_group_layout),
+                ],
+                immediate_size: 0,
+            });
         let transform_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("layer transform pipeline layout"),
@@ -578,7 +589,13 @@ impl RenderResources {
         });
         let smudge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("smudge shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/smudge.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                concat!(
+                    include_str!("shaders/pigment.wgsl"),
+                    include_str!("shaders/smudge.wgsl")
+                )
+                .into(),
+            ),
         });
         let cursor_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("brush cursor shader"),
@@ -614,7 +631,13 @@ impl RenderResources {
         });
         let stroke_composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("stroke composite shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/stroke_composite.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                concat!(
+                    include_str!("shaders/pigment.wgsl"),
+                    include_str!("shaders/stroke_composite.wgsl")
+                )
+                .into(),
+            ),
         });
         let layer_preview_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("layer preview shader"),
@@ -626,7 +649,10 @@ impl RenderResources {
         });
 
         let create_stamp_pipeline =
-            |label, shader: &wgpu::ShaderModule, source_factor: Option<wgpu::BlendFactor>| {
+            |label,
+             shader: &wgpu::ShaderModule,
+             entry_point,
+             source_factor: Option<wgpu::BlendFactor>| {
                 device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some(label),
                     layout: Some(&smudge_pipeline_layout),
@@ -638,7 +664,7 @@ impl RenderResources {
                     },
                     fragment: Some(wgpu::FragmentState {
                         module: shader,
-                        entry_point: Some("fs"),
+                        entry_point: Some(entry_point),
                         compilation_options: Default::default(),
                         targets: &[Some(wgpu::ColorTargetState {
                             format: DOCUMENT_FORMAT,
@@ -667,7 +693,13 @@ impl RenderResources {
                     cache: None,
                 })
             };
-        let smudge_pipeline = create_stamp_pipeline("smudge pipeline", &smudge_shader, None);
+        let smudge_pipeline = create_stamp_pipeline("smudge pipeline", &smudge_shader, "fs", None);
+        let pigment_smudge_pipeline = create_stamp_pipeline(
+            "pigment smudge pipeline",
+            &smudge_shader,
+            "fs_pigment",
+            None,
+        );
         let mask_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("stroke mask pipeline"),
             layout: Some(&stamp_pipeline_layout),
@@ -1058,10 +1090,10 @@ impl RenderResources {
         };
         let layer_thumbnail_pipeline =
             create_thumbnail_pipeline("layer thumbnail pipeline", "fs_layer");
-        let create_commit_pipeline = |label, entry_point, blend| {
+        let create_commit_pipeline = |label, layout, entry_point, blend| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
-                layout: Some(&stroke_commit_pipeline_layout),
+                layout: Some(layout),
                 vertex: wgpu::VertexState {
                     module: &stroke_composite_shader,
                     entry_point: Some("vs_commit"),
@@ -1074,7 +1106,7 @@ impl RenderResources {
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: DOCUMENT_FORMAT,
-                        blend: Some(blend),
+                        blend,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
@@ -1090,8 +1122,17 @@ impl RenderResources {
         };
         let brush_commit_pipeline = create_commit_pipeline(
             "brush stroke commit pipeline",
+            &stroke_commit_pipeline_layout,
             "fs_commit_brush",
-            wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+        );
+        // Mixing reads the destination, which fixed-function blending cannot express, so the
+        // pass samples the pre-stroke tile and replaces the copy it renders into.
+        let pigment_commit_pipeline = create_commit_pipeline(
+            "pigment stroke commit pipeline",
+            &pigment_commit_pipeline_layout,
+            "fs_commit_pigment",
+            None,
         );
         let erase_blend = wgpu::BlendComponent {
             operation: wgpu::BlendOperation::Add,
@@ -1100,11 +1141,12 @@ impl RenderResources {
         };
         let eraser_commit_pipeline = create_commit_pipeline(
             "eraser stroke commit pipeline",
+            &stroke_commit_pipeline_layout,
             "fs_commit_eraser",
-            wgpu::BlendState {
+            Some(wgpu::BlendState {
                 color: erase_blend,
                 alpha: erase_blend,
-            },
+            }),
         );
         let transform_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("layer transform pipeline"),
@@ -1188,6 +1230,7 @@ impl RenderResources {
             mask_pipeline,
             mask_clear_pipeline,
             smudge_pipeline,
+            pigment_smudge_pipeline,
             cursor_pipeline,
             screen_pipeline,
             background_pipeline,
@@ -1205,6 +1248,7 @@ impl RenderResources {
             group_clipped_eraser_preview_pipeline,
             layer_thumbnail_pipeline,
             brush_commit_pipeline,
+            pigment_commit_pipeline,
             eraser_commit_pipeline,
             transform_pipeline,
         })
@@ -1259,13 +1303,9 @@ impl RenderResources {
         queue: &wgpu::Queue,
         layer_settings_buffer: &wgpu::Buffer,
         clipping_base_settings_buffer: Option<&wgpu::Buffer>,
-        color: [f32; 4],
+        stroke: StrokeUniform,
     ) {
-        queue.write_buffer(
-            &self.stroke_uniform_buffer,
-            0,
-            bytemuck::bytes_of(&StrokeUniform { color }),
-        );
+        queue.write_buffer(&self.stroke_uniform_buffer, 0, bytemuck::bytes_of(&stroke));
         let base_settings_buffer = clipping_base_settings_buffer.unwrap_or(layer_settings_buffer);
         self.stroke_preview_bind_group =
             Some(device.create_bind_group(&wgpu::BindGroupDescriptor {

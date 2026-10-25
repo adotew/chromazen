@@ -35,7 +35,7 @@ pub use self::{
     persistence::LayerReadback,
     view::PaintViewSnapshot,
 };
-use crate::{BlendMode, BrushSpacing, PaintTool, StrokePoint};
+use crate::{BlendMode, BrushSpacing, ColorMixing, PaintTool, StrokePoint};
 
 pub const DEFAULT_CANVAS_SIZE: [u32; 2] = [4000, 4000];
 pub(crate) const DEFAULT_BACKGROUND_COLOR: [f32; 4] = [1.0; 4];
@@ -104,6 +104,18 @@ struct ViewUniform {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct StrokeUniform {
     color: [f32; 4],
+    color_mixing: u32,
+    padding: [u32; 3],
+}
+
+impl StrokeUniform {
+    fn new(color: [f32; 4], color_mixing: ColorMixing) -> Self {
+        Self {
+            color,
+            color_mixing: color_mixing as u32,
+            padding: [0; 3],
+        }
+    }
 }
 
 #[repr(C)]
@@ -334,6 +346,7 @@ struct ActiveStroke {
     tool: PaintTool,
     color: [f32; 4],
     opacity: f32,
+    color_mixing: ColorMixing,
 }
 
 struct ActiveLayerTransform {
@@ -351,12 +364,19 @@ struct Selection {
 }
 
 impl ActiveStroke {
-    fn new(layer_id: LayerId, tool: PaintTool, color: [f32; 4], opacity: f32) -> Self {
+    fn new(
+        layer_id: LayerId,
+        tool: PaintTool,
+        color: [f32; 4],
+        opacity: f32,
+        color_mixing: ColorMixing,
+    ) -> Self {
         Self {
             layer_id,
             tool,
             color: premultiply(color),
             opacity,
+            color_mixing,
         }
     }
 
@@ -386,6 +406,8 @@ pub struct Canvas {
     selection: LayerId,
     background_color: [f32; 4],
     workspace_background_color: wgpu::Color,
+    /// Applies to strokes that begin after it changes.
+    color_mixing: ColorMixing,
     next_layer_id: u64,
     next_layer_number: u64,
     next_layer_resource_id: u64,
@@ -459,6 +481,7 @@ impl Canvas {
                 b: f64::from(workspace_background_color[2]),
                 a: 1.0,
             },
+            color_mixing: ColorMixing::default(),
             next_layer_id: 2,
             next_layer_number: 2,
             next_layer_resource_id: 2,
@@ -498,6 +521,10 @@ impl Canvas {
             b: f64::from(color[2]),
             a: 1.0,
         };
+    }
+
+    pub fn set_color_mixing(&mut self, color_mixing: ColorMixing) {
+        self.color_mixing = color_mixing;
     }
     pub fn zoom(&self) -> f32 {
         self.view.zoom()
@@ -1678,7 +1705,7 @@ impl Canvas {
         if !self.history.begin_stroke(layer_id) {
             return false;
         }
-        let active_stroke = ActiveStroke::new(layer_id, tool, color, opacity);
+        let active_stroke = ActiveStroke::new(layer_id, tool, color, opacity, self.color_mixing);
         self.active_stroke = Some(active_stroke);
         if active_stroke.render_path() == StrokeRenderPath::Mask {
             let clipped: Vec<_> = self.layers.iter().map(|layer| layer.clipped).collect();
@@ -1689,7 +1716,7 @@ impl Canvas {
                 &self.queue,
                 &self.layers[layer_index].settings_buffer,
                 clipping_base,
-                active_stroke.color,
+                StrokeUniform::new(active_stroke.color, active_stroke.color_mixing),
             );
         }
         if tool == PaintTool::Smudge {
@@ -1755,7 +1782,11 @@ impl Canvas {
             for span in &spans {
                 self.prepare_tile_for_write(&mut encoder, layer_index, span.coord);
             }
-            let commit_pipeline = if active_stroke.tool == PaintTool::Brush {
+            let pigment = active_stroke.tool == PaintTool::Brush
+                && active_stroke.color_mixing == ColorMixing::Pigment;
+            let commit_pipeline = if pigment {
+                &self.resources.pigment_commit_pipeline
+            } else if active_stroke.tool == PaintTool::Brush {
                 &self.resources.brush_commit_pipeline
             } else {
                 &self.resources.eraser_commit_pipeline
@@ -1772,13 +1803,18 @@ impl Canvas {
                     wgpu::LoadOp::Load,
                 );
                 let local = span.local_rect();
+                let slot = self.resources.tile_slot(span.coord);
+                let tile_bind_group = if pigment {
+                    match self.stroke_original_tiles.get(&span.coord) {
+                        Some(Some(original)) => &original.bind_group,
+                        _ => &slot.empty_tile_bind_group,
+                    }
+                } else {
+                    &slot.origin_bind_group
+                };
                 pass.set_pipeline(commit_pipeline);
                 pass.set_bind_group(0, &self.resources.stroke_commit_bind_group, &[]);
-                pass.set_bind_group(
-                    1,
-                    &self.resources.tile_slot(span.coord).origin_bind_group,
-                    &[],
-                );
+                pass.set_bind_group(1, tile_bind_group, &[]);
                 pass.set_scissor_rect(local.x, local.y, local.width, local.height);
                 pass.draw(0..3, 0..1);
             }
@@ -2389,7 +2425,7 @@ impl Canvas {
             .expect("active stroke layer must exist");
         self.layers[layer_index].preview_dirty = true;
         if active_stroke.render_path() == StrokeRenderPath::DirectSmudge {
-            self.flush_smudge_stamps(encoder, layer_index, &raw);
+            self.flush_smudge_stamps(encoder, layer_index, &raw, active_stroke.color_mixing);
             return;
         }
 
@@ -2454,6 +2490,7 @@ impl Canvas {
         encoder: &mut wgpu::CommandEncoder,
         layer_index: usize,
         stamps: &[StampRaw],
+        color_mixing: ColorMixing,
     ) {
         for (index, stamp) in stamps.iter().copied().enumerate() {
             let spans: Vec<_> = tile_spans(stamp.target_rect()).collect();
@@ -2468,7 +2505,10 @@ impl Canvas {
                 let local = span.local_rect();
                 let mut pass =
                     begin_color_pass(encoder, "smudge pass", &tile.view, wgpu::LoadOp::Load);
-                pass.set_pipeline(&self.resources.smudge_pipeline);
+                pass.set_pipeline(match color_mixing {
+                    ColorMixing::Digital => &self.resources.smudge_pipeline,
+                    ColorMixing::Pigment => &self.resources.pigment_smudge_pipeline,
+                });
                 pass.set_bind_group(0, &self.resources.smudge_snapshot().bind_group, &[]);
                 pass.set_bind_group(
                     1,
@@ -3126,12 +3166,26 @@ mod tests {
 
     #[test]
     fn active_stroke_captures_layer_tool_and_premultiplied_color() {
-        let stroke = ActiveStroke::new(LayerId(7), PaintTool::Brush, [0.8, 0.4, 0.2, 0.5], 0.75);
+        let stroke = ActiveStroke::new(
+            LayerId(7),
+            PaintTool::Brush,
+            [0.8, 0.4, 0.2, 0.5],
+            0.75,
+            ColorMixing::Digital,
+        );
 
         assert_eq!(stroke.layer_id, LayerId(7));
         assert_eq!(stroke.tool, PaintTool::Brush);
         assert_eq!(stroke.color, [0.4, 0.2, 0.1, 0.5]);
         assert_eq!(stroke.opacity, 0.75);
+    }
+
+    #[test]
+    fn stroke_uniform_matches_wgsl_struct_size() {
+        // `Stroke { color: vec4f, colorMixing: u32 }` rounds up to its 16-byte alignment.
+        assert_eq!(std::mem::size_of::<StrokeUniform>(), 32);
+        let uniform = StrokeUniform::new([0.0; 4], ColorMixing::Pigment);
+        assert_eq!(bytemuck::bytes_of(&uniform)[16..20], 1u32.to_ne_bytes());
     }
 
     #[test]
@@ -3145,15 +3199,27 @@ mod tests {
         let color = [0.0, 0.0, 0.0, 1.0];
 
         assert_eq!(
-            ActiveStroke::new(LayerId(1), PaintTool::Brush, color, 0.25)
-                .stamp_point(point)
-                .opacity,
+            ActiveStroke::new(
+                LayerId(1),
+                PaintTool::Brush,
+                color,
+                0.25,
+                ColorMixing::Digital
+            )
+            .stamp_point(point)
+            .opacity,
             0.2
         );
         assert_eq!(
-            ActiveStroke::new(LayerId(1), PaintTool::Smudge, color, 0.25)
-                .stamp_point(point)
-                .opacity,
+            ActiveStroke::new(
+                LayerId(1),
+                PaintTool::Smudge,
+                color,
+                0.25,
+                ColorMixing::Digital
+            )
+            .stamp_point(point)
+            .opacity,
             0.8
         );
     }
@@ -3342,15 +3408,36 @@ mod tests {
         let color = [0.0, 0.0, 0.0, 1.0];
 
         assert_eq!(
-            ActiveStroke::new(LayerId(1), PaintTool::Brush, color, 1.0).render_path(),
+            ActiveStroke::new(
+                LayerId(1),
+                PaintTool::Brush,
+                color,
+                1.0,
+                ColorMixing::Digital
+            )
+            .render_path(),
             StrokeRenderPath::Mask
         );
         assert_eq!(
-            ActiveStroke::new(LayerId(1), PaintTool::Eraser, color, 1.0).render_path(),
+            ActiveStroke::new(
+                LayerId(1),
+                PaintTool::Eraser,
+                color,
+                1.0,
+                ColorMixing::Digital
+            )
+            .render_path(),
             StrokeRenderPath::Mask
         );
         assert_eq!(
-            ActiveStroke::new(LayerId(1), PaintTool::Smudge, color, 1.0).render_path(),
+            ActiveStroke::new(
+                LayerId(1),
+                PaintTool::Smudge,
+                color,
+                1.0,
+                ColorMixing::Digital
+            )
+            .render_path(),
             StrokeRenderPath::DirectSmudge
         );
     }

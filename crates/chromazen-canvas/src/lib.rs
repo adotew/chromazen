@@ -10,6 +10,19 @@ pub use renderer::{
 };
 pub use smoothing::{StrokePositionFilter, StrokeSmoother};
 
+/// How brush and smudge strokes combine their color with existing paint.
+///
+/// Discriminants are shared with `pigment.wgsl`; serialized names are persisted in configs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorMixing {
+    /// Composites in sRGB, like most digital painting software.
+    #[default]
+    Digital = 0,
+    /// Mixes like physical paint using Kubelka-Munk reflectance from spectral.js.
+    Pigment = 1,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PaintTool {
     #[default]

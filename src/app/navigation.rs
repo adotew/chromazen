@@ -32,6 +32,7 @@ impl App {
                 surface_style,
                 workspace_background,
                 pressure_curve,
+                color_mixing,
             } = gui.settings_for_save();
             if let Some(effect) = self.settings.handle_command(SettingsCommand::Save {
                 brush,
@@ -43,6 +44,7 @@ impl App {
                 surface_style,
                 workspace_background,
                 pressure_curve,
+                color_mixing,
             }) {
                 match effect {
                     SettingsEffect::Success(_) => {}

@@ -294,6 +294,7 @@ impl App {
                     surface_style,
                     workspace_background,
                     pressure_curve,
+                    color_mixing,
                 }) = self.gui.as_ref().map(GuiLayer::settings_for_save)
                 else {
                     return;
@@ -308,6 +309,7 @@ impl App {
                     surface_style,
                     workspace_background,
                     pressure_curve,
+                    color_mixing,
                 }]);
             }
             AppSettingsCommand::ReloadConfiguration => {

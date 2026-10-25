@@ -38,7 +38,7 @@ use crate::{
         WorkspaceBackground,
     },
     gpu::GpuContext,
-    paint::{BrushSettings, PaintTool, PressureCurve},
+    paint::{BrushSettings, ColorMixing, PaintTool, PressureCurve},
 };
 
 #[cfg(not(target_os = "macos"))]
@@ -175,6 +175,7 @@ pub(crate) struct UiSettingsSnapshot {
     pub(crate) surface_style: SurfaceStyle,
     pub(crate) workspace_background: WorkspaceBackground,
     pub(crate) pressure_curve: PressureCurve,
+    pub(crate) color_mixing: ColorMixing,
 }
 
 pub(crate) struct FrostedSurface {
@@ -190,6 +191,7 @@ pub struct GuiLayer {
     frost_texture_generation: u64,
     surface_style: SurfaceStyle,
     workspace_background: WorkspaceBackground,
+    color_mixing: ColorMixing,
     pub brush: BrushSettings,
     previous_brush_color: egui::Color32,
     settled_brush_color: egui::Color32,
@@ -430,6 +432,7 @@ impl GuiLayer {
             frost_texture_generation: gpu.frost_generation(),
             surface_style: config.surface_style,
             workspace_background: config.workspace_background,
+            color_mixing: config.color_mixing,
             brush: brush_settings_from_config(config, brush_preset),
             previous_brush_color: brush_color(&config.brush),
             settled_brush_color: brush_color(&config.brush),
@@ -655,7 +658,12 @@ impl GuiLayer {
             surface_style: self.surface_style,
             workspace_background: self.workspace_background,
             pressure_curve: self.brush.pen_pressure_curve,
+            color_mixing: self.color_mixing,
         }
+    }
+
+    pub(crate) fn color_mixing(&self) -> ColorMixing {
+        self.color_mixing
     }
 
     pub(crate) fn workspace_background_color(&self) -> [f32; 3] {
@@ -763,6 +771,7 @@ impl GuiLayer {
         self.set_surface_style(config.surface_style);
         self.workspace_background = config.workspace_background;
         self.brush.pen_pressure_curve = config.pressure_curve;
+        self.color_mixing = config.color_mixing;
         self.set_accent_color(egui::Color32::from_rgb(
             config.accent_color[0],
             config.accent_color[1],

@@ -87,13 +87,31 @@ fn selection_coverage(document: vec2i) -> f32 {
   return textureLoad(selectionMask, clamp(document, vec2i(0), last), 0).r;
 }
 
-@fragment
-fn fs(in: VertexOut) -> @location(0) vec4f {
+struct SmudgeSample {
+  targetColor: vec4f,
+  draggedColor: vec4f,
+  strength: f32,
+};
+
+fn smudge_sample(in: VertexOut) -> SmudgeSample {
   let document = vec2i(in.position.xy + tile.origin);
   let mask = textureSample(brushStamp, brushSampler, in.uv).a;
   let base = clamp(in.strength * mask, 0.0, 1.0);
-  let strength = SMUDGE_MAX_ADVECTION * base * selection_coverage(document);
-  let targetColor = textureLoad(sourceTexture, document, 0);
-  let draggedColor = sample_source(in.sourcePos);
-  return mix(targetColor, draggedColor, strength);
+  return SmudgeSample(
+    textureLoad(sourceTexture, document, 0),
+    sample_source(in.sourcePos),
+    SMUDGE_MAX_ADVECTION * base * selection_coverage(document),
+  );
+}
+
+@fragment
+fn fs(in: VertexOut) -> @location(0) vec4f {
+  let smudged = smudge_sample(in);
+  return mix(smudged.targetColor, smudged.draggedColor, smudged.strength);
+}
+
+@fragment
+fn fs_pigment(in: VertexOut) -> @location(0) vec4f {
+  let smudged = smudge_sample(in);
+  return pigment_mix(smudged.targetColor, smudged.draggedColor, smudged.strength);
 }

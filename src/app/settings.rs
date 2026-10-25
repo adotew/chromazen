@@ -3,7 +3,7 @@ use crate::{
         AppConfig, BrushCatalog, ConfigError, ConfigStore, CurrentBrushConfig, LoadedBrushPreset,
         PanelLayout, SurfaceStyle, WorkspaceBackground,
     },
-    paint::{PaintTool, PressureCurve},
+    paint::{ColorMixing, PaintTool, PressureCurve},
 };
 
 pub(super) enum SettingsCommand {
@@ -17,6 +17,7 @@ pub(super) enum SettingsCommand {
         surface_style: SurfaceStyle,
         workspace_background: WorkspaceBackground,
         pressure_curve: PressureCurve,
+        color_mixing: ColorMixing,
     },
     SwitchBrush {
         tool: PaintTool,
@@ -171,6 +172,7 @@ impl SettingsController {
                 surface_style,
                 workspace_background,
                 pressure_curve,
+                color_mixing,
             } => {
                 self.config.brush = brush;
                 self.config.brush.size = tool_sizes[0];
@@ -187,6 +189,7 @@ impl SettingsController {
                 self.config.surface_style = surface_style;
                 self.config.workspace_background = workspace_background;
                 self.config.pressure_curve = pressure_curve;
+                self.config.color_mixing = color_mixing;
                 let Some(store) = &self.store else {
                     return Some(SettingsEffect::Error(
                         "The configuration directory is unavailable".to_owned(),

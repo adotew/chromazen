@@ -1,8 +1,8 @@
 use std::sync::mpsc;
 
 use chromazen_canvas::{
-    BlendMode, BrushCursor, BrushSpacing, Canvas, CanvasDocument, LayerId, LayerInfo, LayerSample,
-    LayerTransform, PaintTool, StrokePoint, composite_samples,
+    BlendMode, BrushCursor, BrushSpacing, Canvas, CanvasDocument, ColorMixing, LayerId, LayerInfo,
+    LayerSample, LayerTransform, PaintTool, StrokePoint, composite_samples,
 };
 
 const RENDER_SIZE: [u32; 2] = [64, 64];
@@ -91,6 +91,8 @@ async fn run() {
     selection_limits_painting_across_tiles(&device, &queue);
     selection_transform_moves_only_selected_pixels(&device, &queue);
     preview_is_visible_but_not_committed(&device, &queue);
+    pigment_brush_mixes_blue_over_yellow_into_green(&device, &queue);
+    pigment_smudge_mixes_blue_into_yellow_as_green(&device, &queue);
     run_brush_cursor_contrast(&device, &queue);
     run_adjustment_preview_over_reference(&device, &queue);
     run_workspace_background_colors(&device, &queue);
@@ -392,6 +394,108 @@ fn preview_is_visible_but_not_committed(device: &wgpu::Device, queue: &wgpu::Que
         .finish()
         .expect("preview pixels");
     assert_eq!(layers[0].1.get_pixel(48, 32)[3], 0);
+}
+
+fn render_canvas(device: &wgpu::Device, queue: &wgpu::Queue, document: [u32; 2]) -> Canvas {
+    let brush = image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4]));
+    Canvas::new(
+        device.clone(),
+        queue.clone(),
+        wgpu::TextureFormat::Rgba8Unorm,
+        RENDER_SIZE,
+        document,
+        &brush,
+        [0.16; 3],
+    )
+    .expect("render-sized canvas")
+}
+
+fn is_green(rgb: [u8; 3]) -> bool {
+    rgb[1] > rgb[0].saturating_add(20) && rgb[1] > rgb[2].saturating_add(20)
+}
+
+fn pigment_brush_mixes_blue_over_yellow_into_green(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let mut canvas = render_canvas(device, queue, RENDER_SIZE);
+    let yellow = image::Rgba([255, 255, 0, 255]);
+    load_single_layer(
+        &mut canvas,
+        image::RgbaImage::from_pixel(RENDER_SIZE[0], RENDER_SIZE[1], yellow),
+    );
+    let point = StrokePoint {
+        x: 32.0,
+        y: 32.0,
+        radius: 6.0,
+        opacity: 1.0,
+    };
+    let blue = [0.0, 0.0, 1.0, 1.0];
+    let center = ((32 * RENDER_SIZE[0] + 32) * 4) as usize;
+
+    canvas.set_color_mixing(ColorMixing::Pigment);
+    assert!(canvas.begin_stroke(PaintTool::Brush, point, blue, 0.5));
+    assert!(canvas.queue_stamp(point));
+    let preview = render_pixels(device, queue, &mut canvas, None);
+    let preview: [u8; 3] = preview[center..center + 3].try_into().expect("rgb");
+    assert!(is_green(preview), "pigment preview {preview:?}");
+    canvas.end_stroke();
+    let committed = read_layers(&canvas)[0].get_pixel(32, 32).0;
+    assert!(
+        is_green([committed[0], committed[1], committed[2]]),
+        "{committed:?}"
+    );
+    assert_eq!(committed[3], 255);
+    let preview_matches = preview
+        .iter()
+        .zip(&committed)
+        .all(|(a, b)| a.abs_diff(*b) <= 2);
+    assert!(
+        preview_matches,
+        "preview {preview:?} committed {committed:?}"
+    );
+    // Pixels outside the dab keep their exact color.
+    assert_eq!(read_layers(&canvas)[0].get_pixel(4, 4), &yellow);
+
+    assert!(canvas.undo());
+    assert_eq!(read_layers(&canvas)[0].get_pixel(32, 32), &yellow);
+    canvas.set_color_mixing(ColorMixing::Digital);
+    assert!(canvas.begin_stroke(PaintTool::Brush, point, blue, 0.5));
+    assert!(canvas.queue_stamp(point));
+    canvas.end_stroke();
+    let digital = read_layers(&canvas)[0].get_pixel(32, 32).0;
+    assert!(
+        !is_green([digital[0], digital[1], digital[2]]),
+        "{digital:?}"
+    );
+}
+
+fn pigment_smudge_mixes_blue_into_yellow_as_green(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let mut canvas = render_canvas(device, queue, RENDER_SIZE);
+    let image = image::RgbaImage::from_fn(RENDER_SIZE[0], RENDER_SIZE[1], |x, _| {
+        if x < 24 {
+            image::Rgba([0, 0, 255, 255])
+        } else {
+            image::Rgba([255, 255, 0, 255])
+        }
+    });
+    load_single_layer(&mut canvas, image);
+    let from = StrokePoint {
+        x: 16.0,
+        y: 32.0,
+        radius: 8.0,
+        opacity: 1.0,
+    };
+    let to = StrokePoint { x: 40.0, ..from };
+    canvas.set_color_mixing(ColorMixing::Pigment);
+    assert!(canvas.begin_stroke(PaintTool::Smudge, from, [0.0; 4], 1.0));
+    assert!(canvas.queue_stamp(from));
+    canvas.stamp_line(from, to, BrushSpacing::default());
+    canvas.end_stroke();
+
+    let smudged = read_layers(&canvas)[0].get_pixel(32, 32).0;
+    assert!(
+        is_green([smudged[0], smudged[1], smudged[2]]),
+        "{smudged:?}"
+    );
+    assert_eq!(smudged[3], 255);
 }
 
 fn run_brush_cursor_contrast(device: &wgpu::Device, queue: &wgpu::Queue) {

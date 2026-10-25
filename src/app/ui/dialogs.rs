@@ -28,15 +28,17 @@ const SETTINGS_MIN_HEIGHT: f32 = 280.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SettingsPage {
     Appearance,
+    Painting,
     Pen,
 }
 
 impl SettingsPage {
-    const ALL: [Self; 2] = [Self::Appearance, Self::Pen];
+    const ALL: [Self; 3] = [Self::Appearance, Self::Painting, Self::Pen];
 
     fn title(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance",
+            Self::Painting => "Painting",
             Self::Pen => "Pen",
         }
     }
@@ -44,6 +46,7 @@ impl SettingsPage {
     fn icon(self) -> egui::ImageSource<'static> {
         match self {
             Self::Appearance => egui::include_image!("../../../assets/icons/palette.svg"),
+            Self::Painting => egui::include_image!("../../../assets/icons/paintbrush.svg"),
             Self::Pen => egui::include_image!("../../../assets/icons/pen-line.svg"),
         }
     }
@@ -88,6 +91,26 @@ fn has_appearance_setting_changed(
                 [
                     (WorkspaceBackground::Standard, "Standard"),
                     (WorkspaceBackground::NeutralGray, "Neutral Gray"),
+                ],
+            );
+        },
+    );
+    changed
+}
+
+fn has_painting_setting_changed(ui: &mut egui::Ui, color_mixing: &mut ColorMixing) -> bool {
+    let mut changed = false;
+    setting_row(
+        ui,
+        "Color mixing",
+        "Pigment mixes like real paint, so blue and yellow make green.",
+        |ui| {
+            changed |= segmented_control(
+                ui,
+                color_mixing,
+                [
+                    (ColorMixing::Digital, "Digital"),
+                    (ColorMixing::Pigment, "Pigment"),
                 ],
             );
         },
@@ -676,6 +699,7 @@ impl GuiLayer {
         let mut surface_style = self.surface_style;
         let mut workspace_background = self.workspace_background;
         let mut pressure_curve = self.brush.pen_pressure_curve;
+        let mut color_mixing = self.color_mixing;
         let mut changed = false;
         let frame = dialog_frame(context).inner_margin(0);
         let response = egui::Modal::new(egui::Id::new("settings dialog"))
@@ -725,6 +749,10 @@ impl GuiLayer {
                                             &mut surface_style,
                                         );
                                     }
+                                    SettingsPage::Painting => {
+                                        changed |=
+                                            has_painting_setting_changed(ui, &mut color_mixing);
+                                    }
                                     SettingsPage::Pen => {
                                         changed |= has_pen_setting_changed(ui, &mut pressure_curve);
                                     }
@@ -771,6 +799,7 @@ impl GuiLayer {
             self.set_surface_style(surface_style);
             self.workspace_background = workspace_background;
             self.brush.pen_pressure_curve = pressure_curve;
+            self.color_mixing = color_mixing;
         }
         if close {
             self.settings_dialog_open = false;

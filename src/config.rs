@@ -11,7 +11,7 @@ use chromazen_brush::{BrushError, DEFAULT_BRUSH_ID};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
-use crate::paint::{PaintTool, PressureCurve};
+use crate::paint::{ColorMixing, PaintTool, PressureCurve};
 mod brush;
 mod brush_import;
 
@@ -43,6 +43,7 @@ pub(crate) struct AppConfig {
     pub(crate) surface_style: SurfaceStyle,
     pub(crate) workspace_background: WorkspaceBackground,
     pub(crate) pressure_curve: PressureCurve,
+    pub(crate) color_mixing: ColorMixing,
 }
 
 impl Default for AppConfig {
@@ -62,6 +63,7 @@ impl Default for AppConfig {
             surface_style: SurfaceStyle::default(),
             workspace_background: WorkspaceBackground::default(),
             pressure_curve: PressureCurve::default(),
+            color_mixing: ColorMixing::default(),
         }
     }
 }
@@ -395,6 +397,7 @@ mod tests {
         assert_eq!(config.active_brush, "charcoal");
         assert_eq!(config.surface_style, SurfaceStyle::Opaque);
         assert_eq!(config.workspace_background, WorkspaceBackground::Standard);
+        assert_eq!(config.color_mixing, ColorMixing::Digital);
     }
 
     #[test]
@@ -457,6 +460,7 @@ mod tests {
             full_from: 0.8,
             controls: [[0.0, 0.5], [0.25, 1.0]],
         };
+        config.color_mixing = ColorMixing::Pigment;
         config.panel_layout = PanelLayout {
             brush_panel_pos: [1.0, 2.0],
             color_panel_pos: [5.0, 6.0],
@@ -519,6 +523,32 @@ mod tests {
         let error = store.load_app_config().expect_err("invalid config");
 
         assert!(error.to_string().contains("brush.size"));
+    }
+
+    #[test]
+    fn color_mixing_is_saved_by_name() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+        let config = AppConfig {
+            color_mixing: ColorMixing::Pigment,
+            ..AppConfig::default()
+        };
+
+        store.save_app_config(&config).expect("save config");
+
+        let saved = fs::read_to_string(store.config_path()).expect("read config");
+        assert!(saved.contains("color_mixing = \"pigment\""), "{saved}");
+    }
+
+    #[test]
+    fn unknown_color_mixing_is_rejected() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = ConfigStore::from_root(temp.path());
+        fs::write(store.config_path(), "color_mixing = \"watercolor\"\n").expect("write config");
+
+        let error = store.load_app_config().expect_err("invalid config");
+
+        assert!(error.to_string().contains("watercolor"), "{error}");
     }
 
     #[test]

@@ -359,6 +359,7 @@ impl App {
             .flatten();
         let (render_texture, render_view) = fallback_frame.unwrap_or((&frame.texture, &view));
         paint.set_workspace_background_color(gui.workspace_background_color());
+        paint.set_color_mixing(gui.color_mixing());
         // Adjustment previews sit above references (egui); ordinary cursors remain below UI.
         paint.render_to_view(
             &mut encoder,
