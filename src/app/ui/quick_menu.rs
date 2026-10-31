@@ -241,9 +241,14 @@ impl QuickGroup {
         }
     }
 
-    fn icon(self) -> egui::ImageSource<'static> {
+    /// The tool group shows the active paint tool, falling back to the brush for other tools.
+    fn icon(self, tool: EditorTool) -> egui::ImageSource<'static> {
         match self {
-            Self::Tool => egui::include_image!("../../../assets/icons/pencil-ruler.svg"),
+            Self::Tool => match tool.paint_tool() {
+                Some(PaintTool::Eraser) => QuickAction::Eraser.icon(),
+                Some(PaintTool::Smudge) => QuickAction::Smudge.icon(),
+                _ => QuickAction::Brush.icon(),
+            },
             Self::Brush => egui::include_image!("../../../assets/icons/paintbrush.svg"),
             Self::Layer => egui::include_image!("../../../assets/icons/layers.svg"),
             Self::Canvas => egui::include_image!("../../../assets/icons/frame.svg"),
@@ -282,10 +287,10 @@ impl QuickSlot {
         }
     }
 
-    fn icon(self) -> egui::ImageSource<'static> {
+    fn icon(self, tool: EditorTool) -> egui::ImageSource<'static> {
         match self {
             Self::Action(action) => action.icon(),
-            Self::Group(group) => group.icon(),
+            Self::Group(group) => group.icon(tool),
         }
     }
 
@@ -598,7 +603,7 @@ fn paint_quick_menu(
                     icon_rect.scale_from_center(QUICK_MENU_STAMP_SIZE / QUICK_MENU_ICON_SIZE);
                 paint_stamp(ui, stamp_rect, brushes[index].texture, tint);
             }
-            _ => egui::Image::new(quick_slot.icon())
+            _ => egui::Image::new(quick_slot.icon(context.tool))
                 .tint(tint)
                 .alt_text(quick_slot.label())
                 .paint_at(ui, icon_rect),
