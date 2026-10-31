@@ -33,7 +33,7 @@
 <div class="pointer-events-auto relative" bind:this={root}>
   <button
     bind:this={trigger}
-    class="grid size-9 cursor-pointer place-items-center border-0 bg-transparent p-0 text-[#c7c4bc] hover:text-white focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+    class="grid size-[42px] cursor-pointer place-items-center rounded-full border-0 bg-[rgb(18_18_16/0.72)] p-0 text-[#c7c4bc] backdrop-blur-[18px] backdrop-saturate-120 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
     type="button"
     aria-label="Application menu"
     title="Application menu"

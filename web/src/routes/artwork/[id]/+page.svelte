@@ -292,10 +292,9 @@
       return
     }
     if (event.code !== 'Space' || activePointer !== undefined) return
-    const target = event.target
-    // Mouse-clicked controls keep focus; only let Space activate keyboard-focused ones.
-    if (target instanceof Element && target.matches(':focus-visible')) return
     event.preventDefault()
+    // Space always pans; drop focus so it can't open or activate a toolbar control.
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     spacePressed = true
   }
 
@@ -369,86 +368,67 @@
 </svelte:head>
 
 <main class="flex min-h-svh bg-[#292926] p-0">
-  <header
-    class="pointer-events-none fixed top-0 left-0 z-2 flex min-h-17 w-full items-center justify-between gap-4 px-4 py-[0.65rem] max-[35rem]:min-h-12 max-[35rem]:p-2"
-  >
+  <header class="pointer-events-none fixed top-3 left-3 z-2">
     <Menu onSave={manualSave} onReturnToGallery={saver.returnToGallery} />
-    <div
-      class="pointer-events-auto absolute top-0 left-1/2 flex h-12 -translate-x-1/2 items-center gap-[0.6rem] rounded-b-[1.5rem] bg-[rgb(18_18_16/0.72)] px-4 py-2 backdrop-blur-[18px] backdrop-saturate-120 max-[35rem]:gap-[0.4rem] max-[35rem]:px-[0.65rem]"
-      aria-label="Painting tools"
-    >
-      <div class="flex -translate-y-0.5 items-center gap-[0.6rem]">
-        <button
-          class={[
-            'grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs focus:outline-none max-[35rem]:px-2',
-            tool === 'brush' ? 'text-[#0a84ff]' : 'text-[#c7c4bc]',
-          ]}
-          type="button"
-          aria-label="Brush"
-          title="Brush"
-          onclick={() => selectTool('brush')}
-        >
-          <Brush size={20} aria-hidden="true" />
-        </button>
-        <button
-          class={[
-            'grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs focus:outline-none max-[35rem]:px-2',
-            tool === 'eraser' ? 'text-[#0a84ff]' : 'text-[#c7c4bc]',
-          ]}
-          type="button"
-          aria-label="Eraser"
-          title="Eraser"
-          onclick={() => selectTool('eraser')}
-        >
-          <Eraser size={20} aria-hidden="true" />
-        </button>
-        <button
-          class={[
-            'grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs focus:outline-none max-[35rem]:px-2',
-            tool === 'smudge' ? 'text-[#0a84ff]' : 'text-[#c7c4bc]',
-          ]}
-          type="button"
-          aria-label="Smudge"
-          title="Smudge"
-          onclick={() => selectTool('smudge')}
-        >
-          <WavesHorizontal size={20} aria-hidden="true" />
-        </button>
-      </div>
-
-      <select
-        class="h-8 -translate-y-0.5 cursor-pointer rounded-[0.35rem] border-0 bg-transparent px-1 text-xs text-[#c7c4bc] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-        aria-label="Brush preset"
-        value={brushId}
-        onchange={(event) => selectBrush(event.currentTarget.value)}
-      >
-        {#each brushes as brush (brush.id)}
-          <option value={brush.id}>{brush.name}</option>
-        {/each}
-      </select>
-
-      <label
-        class="grid size-8 -translate-y-0.5 place-items-center overflow-hidden rounded-full border border-white/[0.18]"
-        aria-label="Brush color"
-      >
-        <input
-          class="color-input size-8 cursor-pointer appearance-none rounded-full border-0 bg-transparent p-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-          type="color"
-          bind:value={color}
-          oninput={(event) => applyColor(event.currentTarget.value, true)}
-        />
-      </label>
-    </div>
   </header>
 
+  <div
+    class="toolbar fixed inset-x-0 z-2 mx-auto flex h-[42px] w-fit max-w-[calc(100%-1rem)] items-center gap-1 rounded-full bg-[rgb(18_18_16/0.72)] px-[0.4rem] backdrop-blur-[18px] backdrop-saturate-120"
+    role="toolbar"
+    aria-label="Painting tools"
+  >
+    {#each [['brush', 'Brush', Brush], ['eraser', 'Eraser', Eraser], ['smudge', 'Smudge', WavesHorizontal]] as const as [id, label, Icon] (id)}
+      <button
+        class={[
+          'grid size-8 shrink-0 cursor-pointer place-items-center rounded-full border-0 bg-transparent p-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground',
+          tool === id ? 'text-[#0a84ff]' : 'text-[#c7c4bc] hover:text-white',
+        ]}
+        type="button"
+        aria-label={label}
+        aria-pressed={tool === id}
+        title={label}
+        onclick={() => selectTool(id)}
+      >
+        <Icon size={20} aria-hidden="true" />
+      </button>
+    {/each}
+
+    <select
+      class="h-8 min-w-0 shrink cursor-pointer rounded-full border-0 bg-transparent px-1 text-xs text-[#c7c4bc] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+      aria-label="Brush preset"
+      value={brushId}
+      onchange={(event) => {
+        selectBrush(event.currentTarget.value)
+        event.currentTarget.blur()
+      }}
+    >
+      {#each brushes as brush (brush.id)}
+        <option value={brush.id}>{brush.name}</option>
+      {/each}
+    </select>
+
+    <label
+      class="grid size-8 shrink-0 place-items-center overflow-hidden rounded-full border border-white/[0.18]"
+      aria-label="Brush color"
+    >
+      <input
+        class="color-input size-8 cursor-pointer appearance-none rounded-full border-0 bg-transparent p-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+        type="color"
+        bind:value={color}
+        oninput={(event) => applyColor(event.currentTarget.value, true)}
+      />
+    </label>
+
+  </div>
+
   <aside
-    class="side-controls fixed top-1/2 right-0 z-2 flex w-12 -translate-y-1/2 flex-col items-center gap-3 rounded-l-[1.5rem] bg-[rgb(18_18_16/0.72)] px-2 pt-4 pb-2 backdrop-blur-[18px] backdrop-saturate-120"
+    class="side-controls fixed top-1/2 right-3 z-2 flex w-[42px] -translate-y-1/2 flex-col items-center gap-3 rounded-full bg-[rgb(18_18_16/0.72)] py-4 backdrop-blur-[18px] backdrop-saturate-120"
     aria-label="Canvas controls"
   >
     <label class="size-control flex items-center gap-2 text-xs text-muted">
-      <span class="max-[35rem]:hidden">Size</span>
+      <span class="sr-only">Size</span>
       <input
-        class="h-32 w-6 accent-foreground [direction:rtl] [writing-mode:vertical-lr]"
+        class="accent-foreground"
         type="range"
         min={activeBrush?.sizeMin ?? 1}
         max={activeBrush?.sizeMax ?? 2000}
@@ -456,53 +436,43 @@
         bind:value={brushSize}
         oninput={resizeBrush}
       />
-      <output class="w-auto text-right text-foreground tabular-nums max-[35rem]:hidden"
-        >{brushSize}</output
-      >
+      <output class="text-foreground tabular-nums">{brushSize}</output>
     </label>
-
-    <div class="actions flex items-center gap-[0.6rem]">
-      <button
-        class="grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs text-[#c7c4bc] hover:text-white focus-visible:bg-white/[0.08] focus-visible:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground max-[35rem]:px-2"
-        type="button"
-        aria-label="Undo"
-        title="Undo"
-        onclick={() => command('undo')}
-      >
-        <Undo2 size={20} aria-hidden="true" />
-      </button>
-      <button
-        class="grid min-h-8 w-8 cursor-pointer place-items-center rounded-[0.35rem] border-0 bg-transparent p-[0.35rem] text-xs text-[#c7c4bc] hover:text-white focus-visible:bg-white/[0.08] focus-visible:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground max-[35rem]:px-2"
-        type="button"
-        aria-label="Redo"
-        title="Redo"
-        onclick={() => command('redo')}
-      >
-        <Redo2 size={20} aria-hidden="true" />
-      </button>
+    <div class="flex flex-col items-center gap-1">
+      {#each [['undo', 'Undo', Undo2], ['redo', 'Redo', Redo2]] as const as [action, label, Icon] (action)}
+        <button
+          class="grid size-8 shrink-0 cursor-pointer place-items-center rounded-full border-0 bg-transparent p-0 text-[#c7c4bc] hover:text-white focus-visible:bg-white/[0.08] focus-visible:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+          type="button"
+          aria-label={label}
+          title={label}
+          onclick={() => command(action)}
+        >
+          <Icon size={20} aria-hidden="true" />
+        </button>
+      {/each}
     </div>
   </aside>
 
   {#if persistenceError}
     <div
-      class="fixed right-3 bottom-3 z-3 rounded-[0.4rem] bg-[rgb(18_18_16/0.72)] px-[0.6rem] py-[0.35rem] text-xs text-[#ffb4ab] backdrop-blur-[18px]"
+      class="fixed top-3 right-3 z-3 rounded-full bg-[rgb(18_18_16/0.72)] px-3 py-[0.35rem] text-xs text-[#ffb4ab] backdrop-blur-[18px]"
       title={persistenceError}>Not saved</div
     >
   {:else if manualSaving && saveState === 'saving'}
     <div
-      class="fixed right-3 bottom-3 z-3 rounded-[0.4rem] bg-[rgb(18_18_16/0.72)] px-[0.6rem] py-[0.35rem] text-xs text-muted backdrop-blur-[18px]"
+      class="fixed top-3 right-3 z-3 rounded-full bg-[rgb(18_18_16/0.72)] px-3 py-[0.35rem] text-xs text-muted backdrop-blur-[18px]"
       >Saving…</div
     >
   {:else if manualSaved}
     <div
-      class="fixed right-3 bottom-3 z-3 rounded-[0.4rem] bg-[rgb(18_18_16/0.72)] px-[0.6rem] py-[0.35rem] text-xs text-muted backdrop-blur-[18px]"
+      class="fixed top-3 right-3 z-3 rounded-full bg-[rgb(18_18_16/0.72)] px-3 py-[0.35rem] text-xs text-muted backdrop-blur-[18px]"
       >Saved</div
     >
   {/if}
 
   {#if pressureHint}
     <div
-      class="fixed bottom-3 left-3 z-3 flex max-w-[22rem] items-start gap-2 rounded-[0.4rem] bg-[rgb(18_18_16/0.72)] py-[0.35rem] pr-1 pl-[0.6rem] text-xs leading-relaxed text-muted backdrop-blur-[18px] max-[52rem]:top-15 max-[52rem]:bottom-auto"
+      class="fixed top-17 left-3 z-3 flex max-w-[22rem] items-start gap-2 rounded-[0.8rem] bg-[rgb(18_18_16/0.72)] py-[0.35rem] pr-1 pl-[0.6rem] text-xs leading-relaxed text-muted backdrop-blur-[18px]"
       role="status"
     >
       <span>Pen pressure isn't available in Safari on macOS. Use a different browser for pressure-sensitive drawing.</span>
@@ -573,34 +543,18 @@
     border-radius: 50%;
   }
 
-  .side-controls .size-control,
-  .side-controls .actions {
+  .toolbar {
+    bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .side-controls .size-control {
     flex-direction: column;
   }
 
-  @media (max-width: 52rem), (max-height: 32rem) {
-    .side-controls {
-      top: auto;
-      right: 50%;
-      bottom: 0;
-      width: auto;
-      flex-direction: row;
-      gap: 1rem;
-      padding: 0.5rem 0.85rem calc(0.5rem + env(safe-area-inset-bottom));
-      border-radius: 1rem 1rem 0 0;
-      transform: translateX(50%);
-    }
-
-    .side-controls .size-control,
-    .side-controls .actions {
-      flex-direction: row;
-    }
-
-    .size-control input {
-      width: 6rem;
-      height: 1.5rem;
-      direction: ltr;
-      writing-mode: horizontal-tb;
-    }
+  .side-controls .size-control input {
+    width: 1.5rem;
+    height: 8rem;
+    direction: rtl;
+    writing-mode: vertical-lr;
   }
 </style>
