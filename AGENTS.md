@@ -8,7 +8,7 @@ Artwork persistence lives under `src/artwork/`: `format.rs` defines and validate
 
 Platform input belongs in `src/platform/`, behind the appropriate `cfg` gates: AppKit pressure on macOS, Windows Ink on Windows, and Wayland tablet-v2 on Linux. `src/gpu.rs` owns wgpu device/surface setup and frame presentation. `crates/chromazen-canvas` owns window-independent canvas state, stroke smoothing, layers, history, persistence readback, stamps, sampling, GPU resources, view transforms, and WGSL programs.
 
-Keep bundled brushes, icons, fonts, and app icons in `assets/`. macOS bundle metadata and assembly scripts live in `packaging/macos/`. Treat `target/` and `dist/` as generated output. Unit tests stay beside their implementation in `#[cfg(test)]` modules.
+Keep bundled brushes, icons, fonts, and app icons in `assets/`. macOS bundle metadata and assembly scripts live in `packaging/macos/`. Treat `target/` and `dist/` as generated output. Unit tests live in a sibling `tests.rs` file loaded with `#[cfg(test)] mod tests;` (for example `src/app/autosave.rs` → `src/app/autosave/tests.rs`), so they keep private access but stay out of implementation diffs.
 
 ## Build, Test, and Development Commands
 
