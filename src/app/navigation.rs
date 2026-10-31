@@ -159,6 +159,11 @@ impl App {
             }
             return;
         }
+        let orientation = chromazen_canvas::CanvasOrientation {
+            rotation: opened.document.rotation,
+            flip: opened.document.flip,
+        };
+        paint.set_canvas_orientation(orientation);
         let versions = paint.document_versions();
         if let Some(gui) = self.gui.as_mut() {
             gui.set_brush_color(opened.document.brush_color);
@@ -178,6 +183,7 @@ impl App {
                 versions,
                 self.references.versions(),
                 opened.document.brush_color,
+                orientation,
             );
         } else {
             self.pending_reference_load = Some(PendingReferenceLoad {
@@ -185,6 +191,7 @@ impl App {
                 title: opened.title,
                 paint_versions: versions,
                 brush_color: opened.document.brush_color,
+                orientation,
             });
             self.reference_load
                 .start(opened.id, opened.reference_sources);

@@ -40,6 +40,8 @@ pub(crate) fn document_manifest(document: CanvasDocument) -> DocumentManifest {
         height: document.size[1],
         background: document.background,
         brush_color: [170, 187, 204, 255],
+        rotation: 0.0,
+        flip: [false; 2],
         selected_layer: document.selected_layer.0,
         layers: document
             .layers
@@ -70,6 +72,8 @@ mod tests {
             height: 30,
             background: [1, 2, 3],
             brush_color: [4, 5, 6, 255],
+            rotation: 0.0,
+            flip: [false; 2],
             selected_layer: 7,
             layers: vec![LayerManifest {
                 id: 7,

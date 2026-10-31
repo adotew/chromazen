@@ -33,7 +33,7 @@ pub use self::{
         DropEdge, LayerId, LayerInfo, LayerResourceId, LayerSnapshot, merge_down_target_index,
     },
     persistence::LayerReadback,
-    view::PaintViewSnapshot,
+    view::{CanvasOrientation, PaintViewSnapshot},
 };
 use crate::{BlendMode, BrushSpacing, ColorMixing, PaintTool, StrokePoint};
 
@@ -618,6 +618,15 @@ impl Canvas {
         self.view.reset_rotation_around(center)
     }
 
+    pub fn canvas_orientation(&self) -> CanvasOrientation {
+        self.view.orientation()
+    }
+
+    pub fn set_canvas_orientation(&mut self, orientation: CanvasOrientation) {
+        self.view.set_orientation(orientation);
+        self.fit_to_screen();
+    }
+
     pub fn toggle_canvas_flip_horizontal(&mut self) {
         self.view.toggle_flip_horizontal();
     }
@@ -1046,7 +1055,7 @@ impl Canvas {
         self.stamp_queue.clear();
         self.history.clear();
         self.clipping_bind_groups_dirty = true;
-        self.view.reset_orientation();
+        self.view.set_orientation(CanvasOrientation::default());
         self.fit_to_screen();
         self.reset_change_tracking(true);
         Ok(())
@@ -1243,7 +1252,7 @@ impl Canvas {
         self.stamp_queue.clear();
         self.history.clear();
         self.clipping_bind_groups_dirty = true;
-        self.view.reset_orientation();
+        self.view.set_orientation(CanvasOrientation::default());
         self.fit_to_screen();
         self.reset_change_tracking(false);
         Ok(())

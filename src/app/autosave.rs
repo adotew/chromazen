@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chromazen_canvas::{Canvas, DocumentVersions, LayerId};
+use chromazen_canvas::{Canvas, CanvasOrientation, DocumentVersions, LayerId};
 use image::imageops::FilterType;
 
 use crate::artwork::{
@@ -28,11 +28,12 @@ pub(super) enum SaveStatus {
     Failed(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 struct SaveVersions {
     paint: DocumentVersions,
     references: ReferenceVersions,
     brush_color: [u8; 4],
+    orientation: CanvasOrientation,
 }
 
 struct SaveCompletion {
@@ -89,6 +90,7 @@ impl AutosaveController {
                     assets: Vec::new(),
                 },
                 brush_color,
+                orientation: CanvasOrientation::default(),
             },
             in_flight: None,
             dirty_since: Some(Instant::now()),
@@ -104,6 +106,7 @@ impl AutosaveController {
         versions: DocumentVersions,
         reference_versions: ReferenceVersions,
         brush_color: [u8; 4],
+        orientation: CanvasOrientation,
     ) {
         self.brush_color = brush_color;
         self.session = Some(ArtworkSession {
@@ -113,6 +116,7 @@ impl AutosaveController {
                 paint: versions,
                 references: reference_versions,
                 brush_color,
+                orientation,
             },
             in_flight: None,
             dirty_since: None,
@@ -224,6 +228,8 @@ impl AutosaveController {
         let session = self.session.as_mut().expect("save requires a session");
         let mut document = crate::artwork::document_manifest(paint.document_snapshot());
         document.brush_color = self.brush_color;
+        document.rotation = versions.orientation.rotation;
+        document.flip = versions.orientation.flip;
         document.references = references.manifest();
         let reference_images: Vec<_> = references
             .images()
@@ -308,6 +314,7 @@ fn capture_save_versions(
         paint: paint.document_versions(),
         references: references.versions(),
         brush_color,
+        orientation: paint.canvas_orientation(),
     }
 }
 
@@ -395,7 +402,22 @@ fn encode_thumbnail(
         return Err("thumbnail layers do not match document metadata".to_owned());
     }
 
-    let (thumbnail_width, thumbnail_height) = fit_thumbnail_dimensions(source_size, THUMBNAIL_SIZE);
+    // shortcut: thumbnails snap to the nearest quarter turn; sample at the exact angle if
+    // free-angle rotation becomes common.
+    let quarter_turns = (document.rotation / std::f32::consts::FRAC_PI_2)
+        .round()
+        .rem_euclid(4.0) as u8;
+    let sideways = quarter_turns % 2 == 1;
+    let oriented_size = if sideways {
+        (source_size.1, source_size.0)
+    } else {
+        source_size
+    };
+    let (mut thumbnail_width, mut thumbnail_height) =
+        fit_thumbnail_dimensions(oriented_size, THUMBNAIL_SIZE);
+    if sideways {
+        std::mem::swap(&mut thumbnail_width, &mut thumbnail_height);
+    }
     let resized: Vec<_> = layers
         .iter()
         .map(|(_, layer)| {
@@ -418,11 +440,24 @@ fn encode_thumbnail(
             blend_mode: metadata.blend_mode,
         })
         .collect();
-    let composite = flatten_premultiplied_layers(&composite_layers, document.background)?;
+    let mut composite = flatten_premultiplied_layers(&composite_layers, document.background)?;
+    // The canvas view mirrors before it rotates.
+    if document.flip[0] {
+        image::imageops::flip_horizontal_in_place(&mut composite);
+    }
+    if document.flip[1] {
+        image::imageops::flip_vertical_in_place(&mut composite);
+    }
+    let composite = match quarter_turns {
+        1 => image::imageops::rotate90(&composite),
+        2 => image::imageops::rotate180(&composite),
+        3 => image::imageops::rotate270(&composite),
+        _ => composite,
+    };
 
     let mut thumbnail = image::RgbaImage::new(THUMBNAIL_SIZE, THUMBNAIL_SIZE);
-    let x = (THUMBNAIL_SIZE - thumbnail_width) / 2;
-    let y = (THUMBNAIL_SIZE - thumbnail_height) / 2;
+    let x = (THUMBNAIL_SIZE - composite.width()) / 2;
+    let y = (THUMBNAIL_SIZE - composite.height()) / 2;
     image::imageops::replace(&mut thumbnail, &composite, i64::from(x), i64::from(y));
     encode_png(&thumbnail)
 }
@@ -455,6 +490,8 @@ mod tests {
             height: size.1,
             background,
             brush_color: [170, 187, 204, 255],
+            rotation: 0.0,
+            flip: [false; 2],
             selected_layer: 1,
             layers: vec![crate::artwork::LayerManifest {
                 id: 1,
@@ -525,6 +562,32 @@ mod tests {
         assert_eq!(pixel[1], 0);
         assert!((126..=127).contains(&pixel[2]));
         assert_eq!(pixel[3], 255);
+    }
+
+    #[test]
+    fn thumbnail_follows_canvas_rotation_and_flip() {
+        let mut layer = image::RgbaImage::from_pixel(4, 2, image::Rgba([0, 0, 255, 255]));
+        layer.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
+        let mut document = thumbnail_document((4, 2), [0, 0, 0]);
+        let at = |document: &crate::artwork::DocumentManifest, x: u32, y: u32| {
+            let png = encode_thumbnail(&[(LayerId(1), layer.clone())], document).unwrap();
+            *image::load_from_memory(&png)
+                .unwrap()
+                .to_rgba8()
+                .get_pixel(x, y)
+        };
+        let red = image::Rgba([255, 0, 0, 255]);
+        let near = THUMBNAIL_SIZE / 2 - 100;
+        let far = THUMBNAIL_SIZE / 2 + 100;
+
+        document.rotation = std::f32::consts::FRAC_PI_2;
+        // A clockwise quarter turn moves the top-left corner to the top-right, in a tall frame.
+        assert_eq!(at(&document, far + 20, 20), red);
+        assert_eq!(at(&document, 20, THUMBNAIL_SIZE / 2)[3], 0);
+
+        document.rotation = 0.0;
+        document.flip = [true, false];
+        assert_eq!(at(&document, THUMBNAIL_SIZE - 20, near + 20), red);
     }
 
     #[test]

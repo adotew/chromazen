@@ -2,6 +2,12 @@ const MIN_ZOOM: f32 = 0.01;
 const MAX_ZOOM: f32 = 32.0;
 const TAU: f32 = std::f32::consts::TAU;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CanvasOrientation {
+    pub rotation: f32,
+    pub flip: [bool; 2],
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PaintViewSnapshot {
     pub zoom: f32,
@@ -221,9 +227,18 @@ impl PaintView {
         ];
     }
 
-    pub(crate) fn reset_orientation(&mut self) {
-        self.rotation = 0.0;
-        self.flip = [1.0, 1.0];
+    pub(crate) fn orientation(&self) -> CanvasOrientation {
+        CanvasOrientation {
+            rotation: self.rotation,
+            flip: self.flip.map(|axis| axis < 0.0),
+        }
+    }
+
+    pub(crate) fn set_orientation(&mut self, orientation: CanvasOrientation) {
+        self.rotation = normalize_angle(orientation.rotation);
+        self.flip = orientation
+            .flip
+            .map(|flipped| if flipped { -1.0 } else { 1.0 });
     }
 }
 

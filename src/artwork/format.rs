@@ -2,7 +2,8 @@ use chromazen_canvas::BlendMode;
 use serde::{Deserialize, Serialize};
 
 pub(crate) const PROJECT_SCHEMA_VERSION: u32 = 1;
-pub(crate) const DOCUMENT_SCHEMA_VERSION: u32 = 4;
+pub(crate) const DOCUMENT_SCHEMA_VERSION: u32 = 5;
+const ORIENTATIONLESS_DOCUMENT_SCHEMA_VERSION: u32 = 4;
 const BLEND_MODELESS_DOCUMENT_SCHEMA_VERSION: u32 = 3;
 const LEGACY_DOCUMENT_SCHEMA_VERSION: u32 = 2;
 
@@ -29,6 +30,11 @@ pub(crate) struct DocumentManifest {
     pub(crate) background: [u8; 3],
     #[serde(default = "default_brush_color")]
     pub(crate) brush_color: [u8; 4],
+    /// Canvas view rotation in radians; flips are horizontal then vertical and apply first.
+    #[serde(default)]
+    pub(crate) rotation: f32,
+    #[serde(default)]
+    pub(crate) flip: [bool; 2],
     pub(crate) selected_layer: u64,
     pub(crate) layers: Vec<LayerManifest>,
     #[serde(default)]
@@ -64,7 +70,7 @@ impl DocumentManifest {
     pub(crate) fn migrate(mut self) -> Result<Self, String> {
         match self.schema_version {
             DOCUMENT_SCHEMA_VERSION => Ok(self),
-            BLEND_MODELESS_DOCUMENT_SCHEMA_VERSION => {
+            ORIENTATIONLESS_DOCUMENT_SCHEMA_VERSION | BLEND_MODELESS_DOCUMENT_SCHEMA_VERSION => {
                 self.schema_version = DOCUMENT_SCHEMA_VERSION;
                 Ok(self)
             }
@@ -88,6 +94,9 @@ impl DocumentManifest {
         }
         if self.width == 0 || self.height == 0 {
             return Err("document dimensions must be non-zero".to_owned());
+        }
+        if !self.rotation.is_finite() {
+            return Err("document rotation must be finite".to_owned());
         }
         if self.layers.is_empty() {
             return Err("document must contain at least one layer".to_owned());
@@ -166,6 +175,8 @@ mod tests {
             height: 4000,
             background: [255; 3],
             brush_color: default_brush_color(),
+            rotation: 0.0,
+            flip: [false; 2],
             selected_layer: 1,
             layers: vec![LayerManifest {
                 id: 1,
@@ -244,13 +255,43 @@ mod tests {
     fn version_three_document_is_migrated_with_normal_blend_modes() {
         let source = toml::to_string(&document()).unwrap();
         let version_three = source
-            .replace("schema_version = 4\n", "schema_version = 3\n")
+            .replace("schema_version = 5\n", "schema_version = 3\n")
+            .replace("rotation = 0.0\nflip = [false, false]\n", "")
             .replace("blend_mode = \"normal\"\n", "");
         let decoded: DocumentManifest = toml::from_str(&version_three).unwrap();
         let migrated = decoded.migrate().unwrap();
         assert_eq!(migrated.schema_version, DOCUMENT_SCHEMA_VERSION);
         assert_eq!(migrated.layers[0].blend_mode, BlendMode::Normal);
         assert!(migrated.validate().is_ok());
+    }
+
+    #[test]
+    fn version_four_document_is_migrated_upright() {
+        let source = toml::to_string(&document()).unwrap();
+        let version_four = source
+            .replace("schema_version = 5\n", "schema_version = 4\n")
+            .replace("rotation = 0.0\nflip = [false, false]\n", "");
+        assert_ne!(version_four, source);
+        let migrated = toml::from_str::<DocumentManifest>(&version_four)
+            .unwrap()
+            .migrate()
+            .unwrap();
+        assert_eq!(migrated, document());
+    }
+
+    #[test]
+    fn orientation_round_trips_and_must_be_finite() {
+        let mut document = document();
+        document.rotation = 1.25;
+        document.flip = [true, false];
+        let source = toml::to_string(&document).unwrap();
+        assert_eq!(
+            toml::from_str::<DocumentManifest>(&source).unwrap(),
+            document
+        );
+
+        document.rotation = f32::NAN;
+        assert!(document.validate().is_err());
     }
 
     #[test]

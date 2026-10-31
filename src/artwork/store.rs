@@ -554,6 +554,8 @@ mod tests {
                 height: 1,
                 background: [255; 3],
                 brush_color: [170, 187, 204, 255],
+                rotation: 0.0,
+                flip: [false; 2],
                 selected_layer: 1,
                 layers: vec![LayerManifest {
                     id: 1,
