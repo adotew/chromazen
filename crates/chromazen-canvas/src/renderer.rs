@@ -1472,12 +1472,14 @@ impl Canvas {
         let name = layer_name(self.next_layer_number);
         self.next_layer_number += 1;
         let resource_id = self.allocate_layer_resource_id();
-        let layer = self.resources.create_paint_layer(
-            &self.device,
-            id,
-            resource_id,
-            LayerProperties::new(name),
-        );
+        // Inserting below a clipped layer must join its group, or the layers above would lose their base.
+        let properties = LayerProperties {
+            clipped: self.layers.get(index).is_some_and(|layer| layer.clipped),
+            ..LayerProperties::new(name)
+        };
+        let layer = self
+            .resources
+            .create_paint_layer(&self.device, id, resource_id, properties);
         self.layers.insert(index, layer);
         self.selection = id;
         self.history
